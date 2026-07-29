@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Note: CI never builds or publishes a release artifact. Release packages are
+# built locally and signed on an offline machine.
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26.x"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # Fails if any shipped file cites the private planning documents. Runs
+      # first because it is instant and catches an easy mistake.
+      - name: Documentation boundary
+        run: ./scripts/check-boundary.sh
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.12.2
+          args: --timeout=5m
+
+      # A v1-shaped config is not an error to golangci-lint — it is silently
+      # partly ignored, which would leave the dependency rules unenforced.
+      - name: Verify lint config
+        run: golangci-lint config verify
+
+      # `run` does not check formatters; this is the gate that does.
+      - name: Formatting
+        run: golangci-lint fmt --diff ./...
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: Build
+        run: make build
+      - name: Test
+        run: make test
+      - name: Module tidiness
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

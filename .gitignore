@@ -1,0 +1,40 @@
+# ── Private planning documents and source material (not published) ──
+/internal_docs/
+/references/
+
+# ── Build output ──
+/bin/
+/builds/
+docker-images/
+*.s9pk
+node_modules/
+javascript/
+deno.lock
+/scripts/embassy.js
+
+# ── Go ──
+*.test
+*.out
+coverage.*
+
+# ── Local runtime data ──
+/data/
+
+# ── Credentials and secrets (defensive — none of this should ever be committed) ──
+.env
+.env.local
+*.cookie
+*.macaroon
+secret.key
+/creds/
+
+# ── Local overrides, OS and editor cruft ──
+docker-compose.override.yml
+docker-compose.override.yaml
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+*.bak
+tmp/

@@ -1,0 +1,75 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - depguard
+    - errorlint
+    - gocritic
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - sqlclosecheck
+    - unconvert
+    - usetesting
+
+  settings:
+    depguard:
+      rules:
+        # Decision logic must stay pure: no storage, no event bus, no network.
+        # Enforced by lint because the split between decision and I/O is what
+        # makes the state machine testable without containers.
+        pure-logic:
+          files:
+            - "**/internal/sentinel/logic.go"
+            - "**/internal/sentinel/forkpoint.go"
+            - "**/internal/sentinel/cadence.go"
+          deny:
+            - pkg: net
+              desc: decision logic must not perform I/O
+            - pkg: net/http
+              desc: decision logic must not perform I/O
+            - pkg: database/sql
+              desc: decision logic must not touch storage
+            - pkg: github.com/paulscode/forktower/internal/store
+              desc: decision logic must not touch storage
+            - pkg: github.com/paulscode/forktower/internal/bus
+              desc: decision logic must not publish events
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+      disabled-checks:
+        - ifElseChain
+
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - noctx
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/paulscode/forktower
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

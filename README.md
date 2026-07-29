@@ -1,0 +1,86 @@
+# Forktower
+
+**Protects Lightning channels during a chain split.**
+
+If your Bitcoin node and your channel partner's node end up following different
+chains, your Lightning node can only see one of them. Forktower watches the other
+one on your behalf, tells you if a channel is being closed there, and works out
+how long you have to respond.
+
+> **Status: early development.** Not usable yet. If you are looking for what to
+> do about the RDTS activation right now, read
+> [Lightning channels and the RDTS activation](docs/lightning-and-the-rdts-activation.md) —
+> the decisions available to you today need none of this software.
+
+## The problem, briefly
+
+A Lightning channel is secured by a deadline. If your channel partner publishes
+an old, already-revoked channel state, you can take the entire channel balance as
+a penalty — but only within a fixed window, commonly 144 to 2016 blocks. That
+threat is what keeps everyone honest, and it depends on your node *seeing* the
+old state get confirmed.
+
+Your Lightning node learns about the blockchain from your Bitcoin node, and your
+Bitcoin node follows one chain. During a persistent split it cannot see the
+other. A partner holding an old state can publish it on the chain you are not
+watching, wait out the window there, and take the money — while on your chain the
+channel still appears open and healthy. If your chain is later abandoned, you
+find out after the window has closed. If it persists, nothing happened and they
+lost nothing by trying. That asymmetry is the problem: during a split, publishing
+a revoked state stops being a gamble and becomes a free option.
+
+## What Forktower does about it
+
+- **Watches the chain your node is not following** and detects spends of your
+  channels' funding outputs there.
+- **Works out how long you have** for each one, in time rather than block counts,
+  and escalates as the window closes.
+- **Drives a watchtower** with a view of that chain, so the penalty transaction
+  can be published where it is needed.
+- **Mirrors transactions** that are valid on both chains, so your cooperative
+  closes and sweeps exist wherever they can.
+- **Tells you, loudly**, through your node appliance's own notifications or a
+  channel of your choosing — and tests that the alarm works, because an untested
+  alarm is not one.
+
+It never holds your channel keys, your seed, or anything that can spend your
+money. It cannot sign a transaction, and no part of it will ever ask you for a
+recovery phrase.
+
+Forktower takes no position on which chain is legitimate. The exposure it
+addresses comes from the split itself, in either direction — it protects you on
+whichever chain survives.
+
+## Documentation
+
+| | |
+|---|---|
+| [Lightning channels and the RDTS activation](docs/lightning-and-the-rdts-activation.md) | What is happening, why Lightning is a special case, and what you can do — with a deadline |
+| [Residual risks](docs/residual-risks.md) | What a correct, fully configured install still cannot protect you from |
+
+## Building
+
+Requires Go 1.25 or newer. `./scripts/dev-setup.sh` installs a pinned toolchain
+with checksum verification if you would rather not do it by hand.
+
+```sh
+make build     # binaries into bin/
+make test      # unit and component tests, race detector on
+make lint      # static analysis and formatting
+make help      # everything else
+```
+
+## Contributing
+
+Bug reports and corrections are welcome, particularly to the user-facing
+documentation — it is aimed at people making a real decision on a real deadline,
+and getting it right matters more than getting it published.
+
+This is security software for a situation that cannot be rehearsed on mainnet
+before it happens. Changes come with tests, and anything touching credentials,
+transaction handling, or what the user is told is reviewed on the assumption that
+being wrong costs someone their money.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Paul Lamb.

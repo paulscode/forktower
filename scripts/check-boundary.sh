@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#
+# The project's planning documents are private and are not published with this
+# repository. Anything that ships must therefore stand on its own: a reader of
+# this repository cannot follow a reference into a document they do not have, so
+# a dangling reference is worse than no reference at all.
+#
+# This checks that no tracked file outside the private directory cites one of
+# those documents, their internal identifiers, or the maintainer's test hosts.
+# When something needs saying publicly, it belongs in docs/ — written for its
+# reader, not as a pointer.
+#
+# Run by `make lint` and in CI. Exits non-zero on the first violation.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [ -t 1 ]; then R=$'\033[1;31m'; G=$'\033[1;32m'; N=$'\033[0m'; else R=""; G=""; N=""; fi
+
+# Patterns are assembled from fragments so that this file does not match itself.
+ids="$(printf 'F''T-[0-9]{3}|Q''-[0-9]{1,2}|S''-[0-9]{1,2}')"
+priv="$(printf 'internal''_docs')"
+hosts="$(printf 'worthy''-maverick|wide''-treason|pauls''-umbrel')"
+PATTERN="${priv}|${ids}|${hosts}"
+
+# Files exempt by nature: this script (it names the patterns), .gitignore (it
+# must name the private directory in order to ignore it), and the private
+# directory itself (which is not shipped).
+mapfile -t candidates < <(
+  git ls-files -z 2>/dev/null | tr '\0' '\n' |
+    grep -v '^scripts/check-boundary\.sh$' |
+    grep -v '^\.gitignore$' |
+    grep -v '^internal_docs/' || true
+)
+
+if [ "${#candidates[@]}" -eq 0 ]; then
+  echo "  boundary: no tracked files yet, nothing to check"
+  exit 0
+fi
+
+violations=0
+for f in "${candidates[@]}"; do
+  [ -f "$f" ] || continue
+  # Text files only; skip anything binary.
+  if ! grep -Iq . "$f" 2>/dev/null; then continue; fi
+  if hits=$(grep -nEI "$PATTERN" "$f" 2>/dev/null); then
+    if [ "$violations" -eq 0 ]; then
+      printf '%sboundary check failed%s — shipped files must not reference the private planning docs:\n\n' "$R" "$N"
+    fi
+    while IFS= read -r line; do
+      printf '  %s:%s\n' "$f" "$line"
+    done <<< "$hits"
+    violations=$((violations + 1))
+  fi
+done
+
+if [ "$violations" -gt 0 ]; then
+  printf '\nMove the content into docs/ and reference that instead.\n'
+  exit 1
+fi
+
+printf '  %sboundary%s: %d tracked files clean\n' "$G" "$N" "${#candidates[@]}"
