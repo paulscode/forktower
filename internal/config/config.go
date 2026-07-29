@@ -1,0 +1,373 @@
+// Package config loads and validates the daemon's configuration.
+//
+// Validation collects every problem and reports them together, rather than
+// stopping at the first, because a user fixing a config file should learn about
+// all of it in one pass.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+
+	"github.com/BurntSushi/toml"
+)
+
+// Defaults applied before the file is read, so an omitted key means "the sensible
+// value" rather than a zero. Anything security-relevant is deliberately absent
+// from this list: see ForkDescriptor.
+const (
+	DefaultUIListen           = "127.0.0.1:8330"
+	DefaultPollIntervalSecs   = 10
+	DefaultSplitConfirmDepth  = 3
+	DefaultMaxAncestorWalk    = 20000
+	DefaultSQStallFactor      = 6.0
+	DefaultSelfTestIntervalHr = 168
+	DefaultCriticalRepeatMins = 30
+	DefaultTimelineMaxMB      = 256
+	DefaultLogLevel           = "info"
+	DefaultStorePath          = "/data/forktower.db"
+
+	// ReorgMarginKnown applies when the divergence height is known; the wider
+	// ReorgMarginUnknown applies when it is not. The trust anchor is capped by
+	// the minimum of several terms, and the cost of a cap that is too low is a
+	// little redundant verification, while the cost of one that is too high is
+	// anchoring to the wrong branch. So when we know less, we bias lower.
+	ReorgMarginKnown   = 100
+	ReorgMarginUnknown = 2016
+)
+
+// Config is the whole configuration. Field names and TOML tags match the
+// documented file exactly; the shape is deliberately flat and boring.
+type Config struct {
+	SF       RPCEndpoint    `toml:"sf"`
+	SQ       SQConfig       `toml:"sq"`
+	Fork     ForkDescriptor `toml:"fork"`
+	LN       LNConfig       `toml:"ln"`
+	Sentinel SentinelConfig `toml:"sentinel"`
+	Alerts   AlertsConfig   `toml:"alerts"`
+	Tower    TowerConfig    `toml:"tower"`
+	UI       UIConfig       `toml:"ui"`
+	Store    StoreConfig    `toml:"store"`
+	Log      LogConfig      `toml:"log"`
+
+	// Warnings are non-fatal problems found while loading: unknown keys,
+	// permissive file modes, values we will ignore. They are reported rather
+	// than swallowed, because a config that "works" while silently discarding
+	// half of what the user wrote is worse than one that complains.
+	Warnings []string `toml:"-"`
+
+	// Path is the file this was loaded from, empty if built from defaults.
+	Path string `toml:"-"`
+}
+
+// RPCEndpoint describes how to reach a bitcoind. Authentication is either a
+// cookie file or a user/password pair, never both.
+type RPCEndpoint struct {
+	RPCURL        string `toml:"rpc_url"`
+	RPCCookiePath string `toml:"rpc_cookie_path"`
+	RPCUser       string `toml:"rpc_user"`
+	RPCPass       string `toml:"rpc_pass"`
+	ZMQRawBlock   string `toml:"zmq_rawblock"`
+	ZMQRawTx      string `toml:"zmq_rawtx"`
+}
+
+// HasCookieAuth reports whether a cookie file was configured.
+func (e RPCEndpoint) HasCookieAuth() bool { return e.RPCCookiePath != "" }
+
+// HasUserPassAuth reports whether a user and password were configured.
+func (e RPCEndpoint) HasUserPassAuth() bool { return e.RPCUser != "" || e.RPCPass != "" }
+
+// SQConfig selects and configures the backend for the chain the user's own node
+// is not following.
+type SQConfig struct {
+	Tier      string          `toml:"tier"`
+	Bitcoind  RPCEndpoint     `toml:"bitcoind"`
+	Witnesses WitnessesConfig `toml:"witnesses"`
+	Neutrino  NeutrinoConfig  `toml:"neutrino"`
+}
+
+// WitnessesConfig configures independent second opinions about the other chain's
+// tip. Parsed but not yet used.
+type WitnessesConfig struct {
+	NeutrinoHeaders bool     `toml:"neutrino_headers"`
+	Electrum        []string `toml:"electrum"`
+}
+
+// NeutrinoConfig configures the light-client backend. Parsed but not yet used.
+type NeutrinoConfig struct {
+	Peers   []string `toml:"peers"`
+	DataDir string   `toml:"datadir"`
+}
+
+// ForkDescriptor labels the fork and, in one field, constrains how far the
+// daemon will trust the user's node as validated history.
+//
+// These values are an *override*, not the source of truth: they are normally
+// derived from the node itself, which cannot go stale and generalises to any
+// future fork of the same shape. A zero means "not configured, derive it".
+type ForkDescriptor struct {
+	Name string `toml:"name"`
+	// SignalBit is the version bit miners set to signal. -1 when unknown.
+	SignalBit int32 `toml:"signal_bit"`
+	// DivergenceHeight is the first height at which the two rule sets can
+	// disagree about a block's validity — for a mandatory-signalling fork, the
+	// start of that window, which is where a chain can first split.
+	//
+	// This is the only security-relevant field here: it caps how far the daemon
+	// treats the user's node as validated history. Setting it too high straddles
+	// the point where the chains separated and would anchor the second view to
+	// blocks from the first, which is the exact failure the cap prevents. When in
+	// doubt it is left at zero, and a wider, node-derived margin is used instead.
+	DivergenceHeight int32 `toml:"divergence_height"`
+	// RuleActivationHeight is when the new transaction rules begin to bind.
+	// Labelling and user-facing text only; nothing security-relevant reads it.
+	RuleActivationHeight int32 `toml:"rule_activation_height"`
+	// ExpiryHeight is when a temporary fork's rules stop being enforced, or 0
+	// for a permanent one. Labelling only. Note that expiry does not heal a
+	// split: blocks already rejected stay rejected.
+	ExpiryHeight int32 `toml:"expiry_height"`
+}
+
+// DivergenceHeightKnown reports whether a divergence height was configured.
+func (f ForkDescriptor) DivergenceHeightKnown() bool { return f.DivergenceHeight > 0 }
+
+// LNConfig holds zero or more Lightning nodes of each implementation. Parsed but
+// not yet used.
+type LNConfig struct {
+	LND []LNDConfig `toml:"lnd"`
+	CLN []CLNConfig `toml:"cln"`
+}
+
+// LNDConfig describes how to reach an LND node read-only.
+type LNDConfig struct {
+	GRPCAddr     string `toml:"grpc_addr"`
+	TLSCertPath  string `toml:"tls_cert_path"`
+	MacaroonPath string `toml:"macaroon_path"`
+}
+
+// CLNConfig describes how to reach a Core Lightning node read-only.
+type CLNConfig struct {
+	RESTAddr   string `toml:"rest_addr"`
+	Rune       string `toml:"rune"`
+	CACertPath string `toml:"ca_cert_path"`
+}
+
+// SentinelConfig tunes split detection.
+type SentinelConfig struct {
+	PollIntervalSecs  int     `toml:"poll_interval_secs"`
+	SplitConfirmDepth int32   `toml:"split_confirm_depth"`
+	MaxAncestorWalk   int32   `toml:"max_ancestor_walk"`
+	SQStallFactor     float64 `toml:"sq_stall_factor"`
+	// ReorgMargin is the safety margin below the user's node's tip when
+	// computing the trust anchor. Zero means "choose for me", which resolves to
+	// ReorgMarginKnown or ReorgMarginUnknown depending on whether the divergence
+	// height is configured. Use EffectiveReorgMargin rather than this field.
+	ReorgMargin int32 `toml:"reorg_margin"`
+}
+
+// EffectiveReorgMargin returns the margin to use, widening it when the
+// divergence height is unknown. An explicit non-zero configured value is
+// honoured as-is.
+func (c Config) EffectiveReorgMargin() int32 {
+	if c.Sentinel.ReorgMargin > 0 {
+		return c.Sentinel.ReorgMargin
+	}
+	if c.Fork.DivergenceHeightKnown() {
+		return ReorgMarginKnown
+	}
+	return ReorgMarginUnknown
+}
+
+// AlertsConfig configures notification delivery.
+type AlertsConfig struct {
+	SelfTestIntervalHours int               `toml:"self_test_interval_hours"`
+	CriticalRepeatMins    int               `toml:"critical_repeat_mins"`
+	Transport             []TransportConfig `toml:"transport"`
+}
+
+// TransportConfig is one notification channel.
+type TransportConfig struct {
+	Name    string `toml:"name"`
+	Type    string `toml:"type"`
+	MinTier string `toml:"min_tier"`
+	URL     string `toml:"url"`
+	Token   string `toml:"token"`
+
+	// IncludeDetail controls whether the payload names the channel, the amount
+	// and the time remaining. It defaults to false for third-party transports
+	// and true for platform-local ones: an alert otherwise tells whoever runs
+	// that server that this user is under attack and how long they have, which
+	// is the most useful thing an attacker could learn. A platform notification
+	// has no such operator.
+	//
+	// Nil means "not set, apply the per-type default". Use EffectiveIncludeDetail.
+	IncludeDetail *bool `toml:"include_detail"`
+
+	// SMTP-only fields.
+	Host     string `toml:"host"`
+	Port     int    `toml:"port"`
+	User     string `toml:"user"`
+	Pass     string `toml:"pass"`
+	From     string `toml:"from"`
+	To       string `toml:"to"`
+	StartTLS bool   `toml:"starttls"`
+}
+
+// PlatformLocalTransports are delivered by the user's own device, so there is no
+// third party to leak alert timing to.
+var PlatformLocalTransports = map[string]bool{"startos": true, "umbrel": true}
+
+// EffectiveIncludeDetail resolves IncludeDetail against the per-type default.
+func (t TransportConfig) EffectiveIncludeDetail() bool {
+	if t.IncludeDetail != nil {
+		return *t.IncludeDetail
+	}
+	return PlatformLocalTransports[t.Type]
+}
+
+// TowerConfig configures companion watchtowers. Parsed but not yet used.
+type TowerConfig struct {
+	LND  TowerInstance `toml:"lnd"`
+	TEOS TowerInstance `toml:"teos"`
+}
+
+// TowerInstance is one companion tower.
+type TowerInstance struct {
+	Enabled bool   `toml:"enabled"`
+	Listen  string `toml:"listen"`
+}
+
+// UIConfig configures the dashboard and HTTP API.
+type UIConfig struct {
+	Listen string `toml:"listen"`
+	// Auth is one of AuthNone, AuthPlatform or AuthPassword. It is never
+	// inferred from the environment: delegating authentication has to be a
+	// decision someone wrote down.
+	Auth         string `toml:"auth"`
+	PasswordHash string `toml:"password_hash"`
+}
+
+// UI authentication modes.
+const (
+	// AuthNone serves without authentication and is confined to loopback.
+	AuthNone = "none"
+	// AuthPlatform permits a non-loopback bind, delegating authentication to the
+	// app proxy that fronts it. Required because a container must bind a
+	// routable address for its platform to reach it.
+	AuthPlatform = "platform"
+	// AuthPassword checks a bcrypt hash and issues a session cookie.
+	AuthPassword = "password"
+)
+
+// StoreConfig configures on-disk state.
+type StoreConfig struct {
+	Path string `toml:"path"`
+	// TimelineMaxMB is the size above which the event timeline is rotated into
+	// an archive file. Rotation, never deletion: an audit trail that can be
+	// quietly trimmed is not an audit trail.
+	TimelineMaxMB int `toml:"timeline_max_mb"`
+}
+
+// LogConfig configures logging.
+type LogConfig struct {
+	Level string `toml:"level"`
+}
+
+// Default returns the configuration with defaults applied and nothing else.
+func Default() Config {
+	return Config{
+		SQ:   SQConfig{Tier: TierBitcoind},
+		Fork: ForkDescriptor{SignalBit: -1},
+		Sentinel: SentinelConfig{
+			PollIntervalSecs:  DefaultPollIntervalSecs,
+			SplitConfirmDepth: DefaultSplitConfirmDepth,
+			MaxAncestorWalk:   DefaultMaxAncestorWalk,
+			SQStallFactor:     DefaultSQStallFactor,
+		},
+		Alerts: AlertsConfig{
+			SelfTestIntervalHours: DefaultSelfTestIntervalHr,
+			CriticalRepeatMins:    DefaultCriticalRepeatMins,
+		},
+		UI:    UIConfig{Listen: DefaultUIListen, Auth: AuthNone},
+		Store: StoreConfig{Path: DefaultStorePath, TimelineMaxMB: DefaultTimelineMaxMB},
+		Log:   LogConfig{Level: DefaultLogLevel},
+	}
+}
+
+// Backend tiers.
+const (
+	// TierBitcoind uses a second full node. The only tier accepted so far.
+	TierBitcoind = "bitcoind"
+	// TierNeutrino uses a light client. Not yet implemented.
+	TierNeutrino = "neutrino"
+	// TierElectrum uses a remote server. Not yet implemented.
+	TierElectrum = "electrum"
+)
+
+// Load reads the file at path, applies environment overrides, and validates the
+// result. A non-empty path that does not exist is an error; an empty path yields
+// defaults plus environment overrides.
+//
+// The returned Config is usable only when err is nil. Non-fatal problems are in
+// Config.Warnings and the caller is expected to log them.
+func Load(path string) (Config, error) {
+	cfg := Default()
+	cfg.Path = path
+
+	if path != "" {
+		md, err := toml.DecodeFile(path, &cfg)
+		if err != nil {
+			return Config{}, fmt.Errorf("reading config %s: %w", path, err)
+		}
+		for _, key := range md.Undecoded() {
+			cfg.Warnings = append(cfg.Warnings,
+				fmt.Sprintf("unknown config key %q ignored", key.String()))
+		}
+		if w := checkFileMode(path); w != "" {
+			cfg.Warnings = append(cfg.Warnings, w)
+		}
+	}
+
+	envWarnings, err := applyEnv(&cfg, os.LookupEnv)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Warnings = append(cfg.Warnings, envWarnings...)
+
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+// checkFileMode returns a warning when a file holding credentials is readable by
+// anyone other than its owner. A warning rather than an error: a permissive mode
+// is worth telling the user about, but refusing to start would leave them with no
+// protection at all, which is worse.
+func checkFileMode(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		return fmt.Sprintf(
+			"config file %s is readable by other users (mode %04o); it holds credentials — run: chmod 600 %s",
+			path, perm, filepath.Clean(path))
+	}
+	return ""
+}
+
+// ErrNoConfig is returned when a configuration file is required but absent.
+var ErrNoConfig = errors.New("config: no configuration file")
+
+// Exists reports whether a readable file is present at path.
+func Exists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir() && info.Mode()&fs.ModeType == 0
+}

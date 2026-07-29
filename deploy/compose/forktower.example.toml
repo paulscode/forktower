@@ -1,0 +1,122 @@
+# Forktower configuration.
+#
+# Every value here has a sensible default, and on a node appliance the platform
+# fills in the endpoints and credentials for you. This file is for people running
+# it themselves with Docker Compose or a bare binary.
+#
+# Any setting can be overridden by an environment variable: FORKTOWER_ followed
+# by the section and key in capitals, e.g. FORKTOWER_SQ_BITCOIND_RPC_URL.
+# An override always beats the file.
+
+# ── Your Bitcoin node ─────────────────────────────────────────────────────────
+# Read-only. Forktower never sends it anything.
+[sf]
+rpc_url = "http://10.0.0.2:8332"
+rpc_cookie_path = ""                  # either a cookie file OR user+pass, not both
+rpc_user = "forktower"
+rpc_pass = "change-me"
+zmq_rawblock = ""                     # optional; without it Forktower polls instead
+
+# ── The other chain ───────────────────────────────────────────────────────────
+# A second Bitcoin node, following the chain your own node is not. Pruned is
+# fine — Forktower only needs blocks from the point the chains separated.
+[sq]
+tier = "bitcoind"                     # the only tier implemented so far
+
+[sq.bitcoind]
+rpc_url = "http://sq-bitcoind:8432"
+rpc_cookie_path = "/data/sq/.cookie"
+rpc_user = ""
+rpc_pass = ""
+zmq_rawblock = "tcp://sq-bitcoind:28433"
+zmq_rawtx = "tcp://sq-bitcoind:28434"
+
+# ── The fork ──────────────────────────────────────────────────────────────────
+# Normally you do not need to set any of this: Forktower reads it from your own
+# node, which is more reliable than a value copied from a web page and cannot go
+# stale. These are here for a node that does not report the deployment, and as an
+# override if you know better.
+#
+# divergence_height is the one that matters. It is the first height at which the
+# two rule sets can disagree about a block, and it limits how far Forktower will
+# treat your node's history as already verified. Setting it too high is worse
+# than leaving it unset: leave it at 0 unless you are sure.
+[fork]
+name = "BIP-110"
+signal_bit = -1                       # -1 = read it from the node
+divergence_height = 0                 # 0 = read it from the node
+rule_activation_height = 0            # 0 = read it from the node
+expiry_height = 0                     # 0 = permanent, or read it from the node
+
+# ── Your Lightning nodes ──────────────────────────────────────────────────────
+# Zero or more of each. Not used yet.
+#
+# [[ln.lnd]]
+# grpc_addr = "10.0.0.3:10009"
+# tls_cert_path = "/creds/lnd/tls.cert"
+# macaroon_path = "/creds/lnd/forktower.macaroon"
+#
+# [[ln.cln]]
+# rest_addr = "https://10.0.0.4:3010"
+# rune = ""
+# ca_cert_path = ""
+
+# ── Split detection ───────────────────────────────────────────────────────────
+[sentinel]
+poll_interval_secs = 10
+split_confirm_depth = 3               # blocks past the split point, on both chains
+max_ancestor_walk = 20000             # how far back to search for the split point
+sq_stall_factor = 6.0                 # how quiet a chain must go to count as stalled
+reorg_margin = 0                      # 0 = choose automatically (see fork above)
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+# An alarm nobody has proven works is not an alarm, so Forktower tests every
+# channel on a schedule and tells you when one stops working.
+[alerts]
+self_test_interval_hours = 168
+critical_repeat_mins = 30             # keep repeating urgent alerts until acknowledged
+
+# [[alerts.transport]]
+# name = "my-phone"
+# type = "ntfy"                       # ntfy | webhook | smtp | telegram
+# min_tier = "warning"                # info | warning | critical
+# url = "https://ntfy.example.com/pick-something-unguessable"
+# token = ""
+# include_detail = false              # off by default for anything third-party:
+#                                     # otherwise every alert tells whoever runs
+#                                     # that server that you are under attack and
+#                                     # how long you have. Your own dashboard
+#                                     # always shows the full picture.
+
+# ── Companion watchtowers (not used yet) ──────────────────────────────────────
+[tower.lnd]
+enabled = false
+listen = ""                           # a Tor address or a specific LAN address;
+                                      # never 0.0.0.0
+
+[tower.teos]
+enabled = false
+listen = ""
+
+# ── Independent second opinions about the other chain (not used yet) ──────────
+[sq.witnesses]
+neutrino_headers = false
+electrum = []
+
+# ── The dashboard ─────────────────────────────────────────────────────────────
+# auth = "none"      no password, and only reachable from this machine
+#        "platform"  reachable over the network, with your node appliance's own
+#                    login in front of it
+#        "password"  reachable over the network, with a password of its own
+[ui]
+listen = "127.0.0.1:8330"
+auth = "none"
+password_hash = ""                    # bcrypt; required when auth = "password"
+
+# ── Storage ───────────────────────────────────────────────────────────────────
+[store]
+path = "/data/forktower.db"
+timeline_max_mb = 256                 # older history is archived, never deleted
+
+[log]
+level = "info"                        # debug | info | warn | error
