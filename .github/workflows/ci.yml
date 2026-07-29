@@ -1,12 +1,19 @@
 name: CI
 
+# UNVERIFIED DRAFT — this workflow has never executed.
+#
+# The project is not published yet, so there is no remote and nothing has run
+# this. Expect to iterate on it the first time it does. Until then `make check`
+# is the real gate and is deliberately a superset of the jobs below, so that
+# nothing is waiting on a build server that does not exist.
+#
+# CI never builds or publishes a release artifact. Release packages are built
+# locally and signed on an offline machine.
+
 on:
   push:
     branches: [main]
   pull_request:
-
-# Note: CI never builds or publishes a release artifact. Release packages are
-# built locally and signed on an offline machine.
 permissions:
   contents: read
 

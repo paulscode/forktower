@@ -24,7 +24,16 @@ GOLANGCI   ?= golangci-lint
 
 .DEFAULT_GOAL := build
 .PHONY: build test lint fmt integration run-dev forkbench-up forkbench-down \
-        check-boundary vuln tidy clean help
+        check check-boundary tidy-check vuln tidy clean help
+
+## check: everything that must pass before a commit — the only gate there is
+#
+# There is no continuous integration yet: the project is not published, so the
+# workflow in .github/ has never run. Until it does, this target is the whole
+# safety net, which is why it includes the two checks that would otherwise only
+# happen on a build server — module tidiness and the vulnerability database.
+check: build lint test tidy-check vuln
+	@printf '\n  all checks passed\n'
 
 ## build: compile all binaries into bin/
 build:
@@ -54,9 +63,25 @@ fmt:
 integration:
 	go test -race -count=1 -tags integration ./...
 
-## vuln: check dependencies against the Go vulnerability database
+## vuln: check dependencies against the Go vulnerability database (needs network)
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+## tidy-check: fail if go.mod or go.sum would change — catches an uncommitted
+## dependency, which on a clean checkout becomes a build that does not work
+tidy-check:
+	@cp go.mod go.mod.checkbak
+	@[ -f go.sum ] && cp go.sum go.sum.checkbak || true
+	@go mod tidy
+	@ok=1; \
+	 cmp -s go.mod go.mod.checkbak || ok=0; \
+	 if [ -f go.sum ] || [ -f go.sum.checkbak ]; then cmp -s go.sum go.sum.checkbak || ok=0; fi; \
+	 mv go.mod.checkbak go.mod; \
+	 [ -f go.sum.checkbak ] && mv go.sum.checkbak go.sum || true; \
+	 if [ "$$ok" = "0" ]; then \
+	   echo "  go.mod/go.sum are not tidy — run: make tidy"; exit 1; \
+	 fi
+	@echo "  modules tidy"
 
 ## check-boundary: no shipped file may reference the private planning documents
 check-boundary:

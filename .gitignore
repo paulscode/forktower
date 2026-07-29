@@ -16,6 +16,8 @@ deno.lock
 *.test
 *.out
 coverage.*
+# Left behind only if `make tidy-check` is interrupted mid-recipe.
+*.checkbak
 
 # ── Local runtime data ──
 /data/
