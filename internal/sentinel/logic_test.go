@@ -1,6 +1,7 @@
 package sentinel
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -889,5 +890,181 @@ func TestHeaderCacheWithoutALimitUsesTheDefault(t *testing.T) {
 	}
 	if c.Len() != 50 {
 		t.Errorf("cache holds %d of 50 headers", c.Len())
+	}
+}
+
+// Someone who installs Forktower *because* they heard the chains had split is the
+// likely user during a real fork, not an edge case. Arming is impossible then —
+// it requires the chains to agree — so without this the daemon sits at "getting
+// set up, nothing to do yet" forever while their funds are exposed.
+func TestRowUnarmedStraightToSplitWhenTheChainsAlreadyDisagree(t *testing.T) {
+	t.Parallel()
+
+	obs := Observation{
+		At:                1_790_000_000,
+		SplitConfirmDepth: 3,
+		SFTip:             meta(2, 850_010, 1_790_000_000),
+		SQTip:             meta(3, 850_008, 1_790_000_000),
+		SFHealth:          chainview.HealthOK,
+		SQHealth:          chainview.HealthOK,
+		ForkCandidate:     ref(850_000),
+	}
+
+	next, effects := Step(NewState(), obs)
+
+	if next.Phase != PhaseSplit {
+		t.Fatalf("phase = %q, want SPLIT — a daemon that starts during a split must "+
+			"still find it", next.Phase)
+	}
+	if next.Fork == nil || next.Fork.Height != 850_000 {
+		t.Errorf("fork = %+v, want the separation point recorded", next.Fork)
+	}
+	if next.DetectedAt != obs.At {
+		t.Errorf("detected_at = %d, want when it was found", next.DetectedAt)
+	}
+
+	// And it says so, rather than describing something it did not witness.
+	var announced bool
+	for _, e := range effects {
+		if e.Kind == EffectPhaseChanged && e.NewPhase == PhaseSplit {
+			announced = true
+			if !strings.Contains(e.Detail, "already") {
+				t.Errorf("detail = %q, want it to say the split was found, not watched",
+					e.Detail)
+			}
+		}
+	}
+	if !announced {
+		t.Error("entering a split from a standing start was not announced")
+	}
+}
+
+// The same from a rejected block, which is the strongest evidence there is and
+// needs no separation point to have been found.
+func TestRowUnarmedStraightToSplitOnARejectedBranch(t *testing.T) {
+	t.Parallel()
+
+	sqTip := meta(3, 850_008, 1_790_000_000)
+	obs := Observation{
+		At:                1_790_000_000,
+		SplitConfirmDepth: 3,
+		SFTip:             meta(2, 850_010, 1_790_000_000),
+		SQTip:             sqTip,
+		SFHealth:          chainview.HealthOK,
+		SQHealth:          chainview.HealthOK,
+		SFTips: []chainview.ChainTip{
+			{Hash: sqTip.Hash, Height: sqTip.Height, Status: chainview.TipInvalid},
+		},
+	}
+
+	next, _ := Step(NewState(), obs)
+	if next.Phase != PhaseSplit {
+		t.Fatalf("phase = %q, want SPLIT", next.Phase)
+	}
+	// No separation point was found, and that must not hold up the alarm.
+	if next.DetectedAt != obs.At {
+		t.Errorf("detected_at = %d, want the split recorded anyway", next.DetectedAt)
+	}
+}
+
+// The evidence bar is exactly the same from a standing start as from watching.
+// Nothing about having witnessed a separation makes it more real, and nothing
+// about arriving late makes weaker evidence sufficient.
+func TestUnarmedDoesNotBelieveLessEvidenceThanArmed(t *testing.T) {
+	t.Parallel()
+
+	// One block past the separation, against a confirmation depth of three: a
+	// difference this small is ordinary reorganisation noise.
+	obs := Observation{
+		At:                1_790_000_000,
+		SplitConfirmDepth: 3,
+		SFTip:             meta(2, 850_001, 1_790_000_000),
+		SQTip:             meta(3, 850_001, 1_790_000_000),
+		SFHealth:          chainview.HealthOK,
+		SQHealth:          chainview.HealthOK,
+		ForkCandidate:     ref(850_000),
+	}
+
+	fromUnarmed, _ := Step(NewState(), obs)
+	if fromUnarmed.Phase != PhaseUnarmed {
+		t.Errorf("phase = %q, want UNARMED: shallow divergence is not a split",
+			fromUnarmed.Phase)
+	}
+
+	armed := NewState()
+	armed.Phase = PhaseArmed
+	fromArmed, _ := Step(armed, obs)
+	if fromArmed.Phase != PhaseArmed {
+		t.Errorf("phase = %q, want ARMED", fromArmed.Phase)
+	}
+}
+
+// A view that cannot be trusted must not produce a split from a standing start
+// either: an unusable view's tip says nothing about which chain it is on.
+func TestUnarmedIgnoresAnUnusableView(t *testing.T) {
+	t.Parallel()
+
+	base := Observation{
+		At:                1_790_000_000,
+		SplitConfirmDepth: 1,
+		SFTip:             meta(2, 850_010, 1_790_000_000),
+		SQTip:             meta(3, 850_008, 1_790_000_000),
+		ForkCandidate:     ref(850_000),
+	}
+
+	for _, health := range []chainview.HealthState{
+		chainview.HealthSyncing, chainview.HealthEclipseSuspect,
+		chainview.HealthWrongBranch, chainview.HealthDown,
+	} {
+		obs := base
+		obs.SFHealth, obs.SQHealth = chainview.HealthOK, health
+		if next, _ := Step(NewState(), obs); next.Phase != PhaseUnarmed {
+			t.Errorf("with the other view %q the phase became %q, want UNARMED",
+				health, next.Phase)
+		}
+
+		obs.SFHealth, obs.SQHealth = health, chainview.HealthOK
+		if next, _ := Step(NewState(), obs); next.Phase != PhaseUnarmed {
+			t.Errorf("with your own view %q the phase became %q, want UNARMED",
+				health, next.Phase)
+		}
+	}
+}
+
+// A view that is merely behind is not a chain that disagrees, and from a standing
+// start there is no prior agreement to fall back on — so this is the case where
+// getting it wrong would invent a split out of one slow node.
+//
+// What stops it is that the depth test applies to *both* chains. A lagging node's
+// tip is the separation point itself, so it has built nothing past it.
+func TestUnarmedDoesNotMistakeALaggingNodeForASplit(t *testing.T) {
+	t.Parallel()
+
+	// Eight blocks behind on the same chain, which is further than the
+	// confirmation depth, so this cannot be waved through as agreement either.
+	obs := Observation{
+		At:                1_790_000_000,
+		SplitConfirmDepth: 3,
+		SFTip:             meta(10, 850_010, 1_790_000_000),
+		SQTip:             meta(2, 850_002, 1_790_000_000),
+		SFHealth:          chainview.HealthOK,
+		SQHealth:          chainview.HealthOK,
+		// The separation point a real search would return for a node that is
+		// simply behind: its own tip.
+		ForkCandidate: ref(850_002),
+	}
+
+	next, _ := Step(NewState(), obs)
+	if next.Phase == PhaseSplit {
+		t.Fatal("one node being eight blocks behind was reported as a chain split")
+	}
+	if next.Phase != PhaseUnarmed {
+		t.Errorf("phase = %q, want UNARMED until the node catches up", next.Phase)
+	}
+
+	// And once it has caught up, it arms normally.
+	obs.SQTip = meta(10, 850_010, 1_790_000_000)
+	if caught, _ := Step(NewState(), obs); caught.Phase != PhaseArmed {
+		t.Errorf("phase = %q after catching up, want ARMED", caught.Phase)
 	}
 }

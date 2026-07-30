@@ -463,11 +463,7 @@ func decidePhase(s State, obs Observation) (phase Phase, detail string) {
 
 	switch s.Phase {
 	case PhaseUnarmed:
-		if s.SFHealth.Usable() && s.SQHealth.Usable() &&
-			tipsAgree(s.SFTip, s.SQTip, obs.SplitConfirmDepth, obs.SFAncestry, obs.SQAncestry) {
-			return PhaseArmed, "both chains can be seen and they agree"
-		}
-		return PhaseUnarmed, ""
+		return decideFromUnarmed(s, obs)
 
 	case PhaseArmed:
 		return decideFromArmed(s, obs)
@@ -495,24 +491,83 @@ func decidePhase(s State, obs Observation) (phase Phase, detail string) {
 	}
 }
 
+// decideFromUnarmed decides what to do before there is anything to compare
+// against.
+//
+// Two ways out. The ordinary one is that the chains agree, which establishes the
+// shared baseline everything downstream is measured from.
+//
+// The other exists because arming is impossible during a split — it requires
+// agreement, and there is none — so a daemon started *after* a split began would
+// otherwise sit here forever, showing "Getting set up, nothing to do yet" while
+// the user's funds were exposed. That is the calmest message this software has,
+// at the worst possible moment, and someone who installed Forktower *because*
+// they heard the chains had split is the likely user, not an edge case.
+//
+// The evidence required is exactly the same as from armed. Nothing about having
+// watched the separation happen makes it more real than finding it already
+// there; what having watched provides is the shared history, and that comes from
+// the trust anchor instead, which is bounded below the separation point for
+// precisely this case.
+func decideFromUnarmed(s State, obs Observation) (phase Phase, detail string) {
+	if !s.SFHealth.Usable() || !s.SQHealth.Usable() {
+		return PhaseUnarmed, ""
+	}
+	if tipsAgree(s.SFTip, s.SQTip, obs.SplitConfirmDepth, obs.SFAncestry, obs.SQAncestry) {
+		return PhaseArmed, "both chains can be seen and they agree"
+	}
+
+	rejected, diverged := splitEvidence(s, obs)
+	switch {
+	case rejected:
+		return PhaseSplit, "your node had already rejected a block from the other chain"
+	case diverged:
+		return PhaseSplit, "the chains had already separated before Forktower started"
+	default:
+		// They disagree, but not yet by enough to tell a split from one node being
+		// briefly behind. Staying here is right: this is the state that says so.
+		return PhaseUnarmed, ""
+	}
+}
+
 func decideFromArmed(s State, obs Observation) (phase Phase, detail string) {
 	if tipsAgree(s.SFTip, s.SQTip, obs.SplitConfirmDepth, obs.SFAncestry, obs.SQAncestry) {
 		return PhaseArmed, ""
 	}
 
-	// The user's own node has fetched a block from the other chain and refused it.
-	// The strongest evidence available, and it needs no agreement from any peer, so
-	// it is enough on its own.
+	rejected, diverged := splitEvidence(s, obs)
+	switch {
+	case rejected:
+		return PhaseSplit, "your node has rejected a block from the other chain"
+	case diverged:
+		return PhaseSplit, "both chains have built past the point where they separated"
+	default:
+		return PhaseArmed, ""
+	}
+}
+
+// splitEvidence reports what has been seen that would justify believing the two
+// chains have genuinely separated.
+//
+// Shared by both callers, deliberately: the same facts settle it whether the
+// separation was watched happening or found already there. Only the sentence
+// differs, and that is decided at the call site where it can be read.
+//
+// rejectedBlock is the strongest thing available — the user's own node fetched a
+// block from the other chain and refused it. It needs no agreement from any peer
+// and cannot be fabricated by one, so it is enough on its own.
+//
+// divergedFar means both chains have built past the separation point by more than
+// ordinary reorganisation noise would explain.
+func splitEvidence(s State, obs Observation) (rejectedBlock, divergedFar bool) {
 	if s.SQTip != nil {
 		for _, tip := range obs.SFTips {
 			if invalidTipMatchesSQ(obs.SQAncestry, s.SQTip.Hash, tip) {
-				return PhaseSplit, "your node has rejected a block from the other chain"
+				return true, false
 			}
 		}
 	}
 
-	// Otherwise both chains must have built far enough past the separation point
-	// that this cannot be ordinary reorganisation noise.
 	if obs.ForkCandidate != nil && s.SFTip != nil && s.SQTip != nil {
 		depth := obs.SplitConfirmDepth
 		if depth < 1 {
@@ -521,11 +576,11 @@ func decideFromArmed(s State, obs Observation) (phase Phase, detail string) {
 		sfDepth := divergedDepth(s.SFTip.Height, obs.ForkCandidate.Height)
 		sqDepth := divergedDepth(s.SQTip.Height, obs.ForkCandidate.Height)
 		if sfDepth >= depth && sqDepth >= depth {
-			return PhaseSplit, "both chains have built past the point where they separated"
+			return false, true
 		}
 	}
 
-	return PhaseArmed, ""
+	return false, false
 }
 
 func decideFromSplit(s State, obs Observation) (phase Phase, detail string) {

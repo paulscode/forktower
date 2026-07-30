@@ -457,3 +457,57 @@ func runContext(t *testing.T) context.Context {
 	t.Cleanup(cancel)
 	return ctx
 }
+
+// Someone who installs Forktower *because* they heard the chains had split is
+// the likely user during a real fork. Before this worked, the daemon sat at
+// "getting set up, nothing to do yet" forever — the calmest message it has, at
+// the worst possible moment — because arming requires the chains to agree and
+// there was no path from there to a split.
+func TestADaemonStartedAfterASplitStillFindsIt(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, func(c *config.Config, sf, sq *chainviewtest.View) {
+		c.Sentinel.SplitConfirmDepth = 2
+		// The chains have already parted ways before anything starts.
+		sf.Extend("ours", 5)
+		sq.Extend("theirs", 5)
+	})
+	h.start(t)
+
+	waitFor(t, "the split to be found from a standing start", func() bool {
+		status := h.status(t)
+		split, _ := status["split"].(map[string]any)
+		return split != nil && split["state"] == string(store.StateSplit)
+	})
+
+	status := h.status(t)
+	headline := status["headline"].(map[string]any)
+	if headline["state"] == "getting_ready" {
+		t.Fatal("a live split is being reported as ordinary start-up")
+	}
+	if !strings.Contains(headline["detail"].(string), "separated") {
+		t.Errorf("the headline does not mention the split: %v", headline["detail"])
+	}
+
+	// And the user is told, rather than only shown.
+	waitFor(t, "an alert about the split", func() bool {
+		for _, raw := range listOf(t, h, "/api/v1/alerts") {
+			if entry, ok := raw.(map[string]any); ok && entry["kind"] == "split_detected" {
+				return true
+			}
+		}
+		return false
+	})
+
+	// The separation point is recorded, which is what bounds how far the user's
+	// own chain is trusted — the reason a late install needed care in the first
+	// place.
+	split := status["split"].(map[string]any)
+	fork, _ := split["fork"].(map[string]any)
+	if fork == nil {
+		t.Fatal("no separation point was recorded")
+	}
+	if height, _ := fork["height"].(float64); int32(height) != sharedHistory {
+		t.Errorf("separation point at height %v, want %d", fork["height"], sharedHistory)
+	}
+}
