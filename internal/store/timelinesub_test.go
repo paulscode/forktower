@@ -70,6 +70,8 @@ func TestTheTimelineRecordsEveryKindOfEvent(t *testing.T) {
 		bus.SplitBranchExtended{Branch: "sq", Block: bus.BlockMetaJSON{Height: 5}},
 		bus.ViewHealthChanged{View: "sq", Old: "OK", New: "DOWN"},
 		bus.AlertRaised{AlertID: 1, Tier: "warning", AlertKind: "x", Message: "something"},
+		bus.ChannelUpserted{New: true, Channel: bus.ChannelJSON{ID: 1, Relevance: "relevant"}},
+		bus.ChannelClosedSF{ChannelID: 1, State: "pending_close"},
 	}
 	for _, e := range events {
 		b.Publish(e)

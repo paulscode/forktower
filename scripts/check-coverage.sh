@@ -68,11 +68,13 @@ declare -A MIN=(
   # interface over stdlib rather than gRPC, so it is testable against an httptest
   # server like everything else and has no excuse for a low floor.
   [internal/registry/lnd]=85
-  # The shared ChannelRecord and the short-channel-id conversion both adapters
-  # go through — the one piece of behaviour here, and the one that caught them
-  # recording the same channel two different ways. The engine arrives with the
-  # relevance classifier and the floor goes up with it.
-  [internal/registry]=85
+  # The relevance classifier decides which channels get watched, and a wrong
+  # answer there is a channel nobody is looking at. Pure, table-driven against the
+  # doc-01 scenario matrix, and exhaustive over every combination of its inputs.
+  # The engine around it is I/O, but it is I/O against an in-process SQLite
+  # database and fakes, so it needs no container either. Floor raised from 85 when
+  # the engine landed, as the plan said it would.
+  [internal/registry]=88
   # Same shape and same stakes as the LND adapter: the two delays decide when a
   # deadline expires, and the credential check decides whether an unrestricted
   # rune is noticed.

@@ -427,6 +427,8 @@ func TestEventKindsMatchTheirConstants(t *testing.T) {
 		{SplitBranchExtended{}, KindSplitBranchExtended},
 		{ViewHealthChanged{}, KindViewHealthChanged},
 		{AlertRaised{}, KindAlertRaised},
+		{ChannelUpserted{}, KindChannelUpserted},
+		{ChannelClosedSF{}, KindChannelClosedSF},
 	}
 	for _, tc := range cases {
 		if got := tc.event.Kind(); got != tc.want {
@@ -447,5 +449,13 @@ func TestEventKindsMatchTheirConstants(t *testing.T) {
 		if !listed[tc.want] {
 			t.Errorf("%q has an event type but is missing from AllKinds", tc.want)
 		}
+	}
+
+	// And the other direction, which was not checked before: a kind listed in
+	// AllKinds with no event type behind it means every subscriber filtering on
+	// it waits forever for something nothing publishes.
+	if len(cases) != len(AllKinds()) {
+		t.Errorf("AllKinds lists %d kinds but only %d have an event type here",
+			len(AllKinds()), len(cases))
 	}
 }

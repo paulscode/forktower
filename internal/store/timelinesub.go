@@ -111,6 +111,12 @@ func Summarize(e bus.Event) string {
 	case bus.AlertRaised:
 		return asSentence("Forktower raised an alert: " + ev.Message)
 
+	case bus.ChannelUpserted:
+		return summarizeChannel(ev)
+
+	case bus.ChannelClosedSF:
+		return summarizeChannelClose(ev)
+
 	default:
 		// An event kind this build does not know still belongs in the record.
 		return "Something happened that this version of Forktower cannot describe."
@@ -132,6 +138,30 @@ func summarizeSplitState(ev bus.SplitStateChanged) string {
 	default:
 		return "The relationship between the two chains changed."
 	}
+}
+
+func summarizeChannel(ev bus.ChannelUpserted) string {
+	if !ev.New {
+		return "Something about one of your channels changed."
+	}
+	if Relevance(ev.Channel.Relevance) == Irrelevant {
+		return "Forktower found one of your channels, and it is not exposed on the other chain."
+	}
+	return "Forktower found one of your channels and started watching it."
+}
+
+// summarizeChannelClose says the thing people do not expect. A channel that has
+// closed feels finished, and on the chain nobody is looking at it is not: the
+// close has not happened there, so the old commitments the counterparty holds
+// can still be spent. The timeline is read afterwards to understand what
+// happened, and this is the entry that has to earn its place.
+func summarizeChannelClose(ev bus.ChannelClosedSF) string {
+	if CloseState(ev.State) == ClosePending {
+		return "One of your channels started closing on your own chain. It still needs " +
+			"watching until that close reaches the other one."
+	}
+	return "One of your channels closed on your own chain. It still needs watching until " +
+		"that close reaches the other one."
 }
 
 // The two view states this summary distinguishes. Kept as literals rather than

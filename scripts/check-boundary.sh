@@ -5,8 +5,13 @@
 # this repository cannot follow a reference into a document they do not have, so
 # a dangling reference is worse than no reference at all.
 #
-# This checks that no tracked file outside the private directory cites one of
-# those documents, their internal identifiers, or the maintainer's test hosts.
+# This checks that no file outside the private directory cites one of those
+# documents, their internal identifiers, or the maintainer's test hosts.
+#
+# Untracked files are checked too. An earlier version listed only tracked files,
+# which meant a brand-new file was invisible to this gate until the moment it was
+# committed — exactly one step too late to be useful. Ignored files are still
+# skipped, since those are build output and scratch space that never ship.
 # When something needs saying publicly, it belongs in docs/ — written for its
 # reader, not as a pointer.
 #
@@ -33,7 +38,7 @@ PATTERN="${priv}|${ids}|${hosts}"
 #     archive would be copied into every image build context;
 #   - the private directory itself, which is not shipped at all.
 mapfile -t candidates < <(
-  git ls-files -z 2>/dev/null | tr '\0' '\n' |
+  git ls-files -z --cached --others --exclude-standard 2>/dev/null | tr '\0' '\n' |
     grep -v '^scripts/check-boundary\.sh$' |
     grep -v '^\.gitignore$' |
     grep -v '^\.dockerignore$' |
@@ -41,7 +46,7 @@ mapfile -t candidates < <(
 )
 
 if [ "${#candidates[@]}" -eq 0 ]; then
-  echo "  boundary: no tracked files yet, nothing to check"
+  echo "  boundary: no files yet, nothing to check"
   exit 0
 fi
 
@@ -66,4 +71,4 @@ if [ "$violations" -gt 0 ]; then
   exit 1
 fi
 
-printf '  %sboundary%s: %d tracked files clean\n' "$G" "$N" "${#candidates[@]}"
+printf '  %sboundary%s: %d files clean\n' "$G" "$N" "${#candidates[@]}"

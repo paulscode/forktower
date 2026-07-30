@@ -7,6 +7,9 @@ const (
 	KindSplitBranchExtended = "split.branch_extended"
 	KindViewHealthChanged   = "view.health_changed"
 	KindAlertRaised         = "alert.raised"
+
+	KindChannelUpserted = "registry.channel_upserted"
+	KindChannelClosedSF = "registry.channel_closed_sf"
 )
 
 // BlockRefJSON identifies a block. Hashes are lowercase hex in the usual display
@@ -91,6 +94,63 @@ type AlertRaised struct {
 // Kind implements Event.
 func (AlertRaised) Kind() string { return KindAlertRaised }
 
+// ChannelJSON is a channel as the timeline and the API see it.
+//
+// A summary rather than the whole row: the fields here are the ones that
+// identify a channel to a person reading their own history afterwards, plus the
+// classification, which is the part that changes and the part that matters.
+// PeerAlias is chosen by the counterparty — who is the adversary in this
+// story — and arrives already clamped by the store.
+type ChannelJSON struct {
+	ID          int64  `json:"id"`
+	FundingTxID string `json:"funding_txid"`
+	FundingVout int32  `json:"funding_vout"`
+	CapacitySat int64  `json:"capacity_sat"`
+	ChanType    string `json:"chan_type"`
+	PeerPubkey  string `json:"peer_pubkey"`
+	PeerAlias   string `json:"peer_alias,omitempty"`
+	OpenHeight  int32  `json:"open_height,omitempty"`
+	SCID        string `json:"scid,omitempty"`
+	CloseState  string `json:"close_state"`
+
+	// Relevance is whether this channel is exposed on the chain the user's node
+	// does not follow, and Reason is the sentence explaining it. The reason is
+	// carried on the event because "why is this one being watched" is the
+	// question a user asks, and answering it from the timeline is cheaper than
+	// re-deriving it later from state that has since moved on.
+	Relevance       string `json:"relevance"`
+	RelevanceReason string `json:"relevance_reason,omitempty"`
+}
+
+// ChannelUpserted reports that a channel was seen for the first time, or that
+// something about it changed. Not published on an unchanged poll: with a poll
+// every minute, announcing every channel every time would bury the one event
+// that meant something.
+type ChannelUpserted struct {
+	Channel ChannelJSON `json:"channel"`
+	// New distinguishes a channel never seen before from one that changed.
+	New bool `json:"new"`
+}
+
+// Kind implements Event.
+func (ChannelUpserted) Kind() string { return KindChannelUpserted }
+
+// ChannelClosedSF reports that a channel closed, or began closing, on the chain
+// the user's own node follows.
+//
+// Worth its own event rather than folding into ChannelUpserted because closing
+// on one chain is precisely when a channel becomes *more* interesting on the
+// other: until that close confirms over there too, the old revoked commitments
+// remain spendable on the chain nobody is looking at.
+type ChannelClosedSF struct {
+	ChannelID int64  `json:"channel_id"`
+	CloseTxid string `json:"close_txid,omitempty"`
+	State     string `json:"state"`
+}
+
+// Kind implements Event.
+func (ChannelClosedSF) Kind() string { return KindChannelClosedSF }
+
 // AllKinds lists every event kind the bus carries, for diagnostics and for tests
 // that check nothing has been added without being registered here.
 func AllKinds() []string {
@@ -99,5 +159,7 @@ func AllKinds() []string {
 		KindSplitBranchExtended,
 		KindViewHealthChanged,
 		KindAlertRaised,
+		KindChannelUpserted,
+		KindChannelClosedSF,
 	}
 }
