@@ -76,6 +76,29 @@ linters:
               desc: decision logic must not touch storage
             - pkg: github.com/paulscode/forktower/internal/bus
               desc: decision logic must not publish events
+
+        # The alerting policy is held to the same "no I/O" bar, but with a
+        # narrower deny list. It maps bus events onto the store's alert
+        # vocabulary, so denying those two packages would force a parallel copy
+        # of every event type and of the tier enum whose only purpose would be to
+        # be converted back — a second place to forget a case, which is the exact
+        # failure this project cannot afford. What matters is that the mapping
+        # performs no I/O, and that is what is denied.
+        pure-policy:
+          files:
+            - "**/internal/alert/policy.go"
+            - "**/internal/alert/scrub.go"
+          deny:
+            - pkg: net
+              desc: the alerting policy must not perform I/O
+            - pkg: net/http
+              desc: the alerting policy must not perform I/O
+            - pkg: net/smtp
+              desc: the alerting policy must not perform I/O
+            - pkg: os
+              desc: the alerting policy must not touch the filesystem
+            - pkg: database/sql
+              desc: the alerting policy must not touch storage
     revive:
       rules:
         - name: exported

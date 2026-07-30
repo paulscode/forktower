@@ -1,0 +1,405 @@
+package alert
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"golang.org/x/sync/errgroup"
+
+	"github.com/paulscode/forktower/internal/bus"
+	"github.com/paulscode/forktower/internal/config"
+	"github.com/paulscode/forktower/internal/store"
+)
+
+// SubscriberName identifies the alerter's bus subscription in drop diagnostics.
+const SubscriberName = "alerter"
+
+// Defaults for anything the caller leaves unset.
+const (
+	// DefaultCriticalRepeat is how long an unacknowledged urgent alert waits
+	// before being sent again.
+	DefaultCriticalRepeat = 30 * time.Minute
+	// DefaultScanInterval is how often unacknowledged alerts are reconsidered.
+	// Well below the repeat interval, so the repeat lands close to when it is due
+	// rather than up to a whole interval late.
+	DefaultScanInterval = time.Minute
+	// sendQueue is how many alerts can be waiting for delivery.
+	//
+	// Delivery is network I/O and the event loop must never wait on it: a bus
+	// subscriber that falls behind loses events, and the events this one is
+	// subscribed to are the ones that matter most.
+	sendQueue = 64
+	// writeTimeout bounds a storage write that outlives its trigger.
+	writeTimeout = 5 * time.Second
+)
+
+// Config configures the alerter.
+type Config struct {
+	// CriticalRepeat is how long an unacknowledged urgent alert waits before
+	// being delivered again. Zero uses DefaultCriticalRepeat.
+	CriticalRepeat time.Duration
+	// ScanInterval is how often the unacknowledged alerts are reconsidered. Zero
+	// uses DefaultScanInterval. Tests set it small.
+	ScanInterval time.Duration
+	// SendTimeout bounds one delivery attempt. Zero uses DefaultSendTimeout.
+	SendTimeout time.Duration
+}
+
+func (c Config) withDefaults() Config {
+	if c.CriticalRepeat <= 0 {
+		c.CriticalRepeat = DefaultCriticalRepeat
+	}
+	if c.ScanInterval <= 0 {
+		c.ScanInterval = DefaultScanInterval
+	}
+	if c.SendTimeout <= 0 {
+		c.SendTimeout = DefaultSendTimeout
+	}
+	return c
+}
+
+// Alerter turns events into notifications the user actually receives.
+type Alerter struct {
+	store  *store.Store
+	bus    *bus.Bus
+	routes []Route
+	cfg    Config
+	now    func() time.Time
+	log    *slog.Logger
+
+	// events is subscribed at construction, not when Run starts.
+	//
+	// A goroutine that subscribes when it happens to be scheduled leaves a window
+	// between wiring the daemon up and listening, and an event published in that
+	// window is gone: unlike the sentinel, this engine has no poll to fall back
+	// on, so a missed "the chains have separated" is never noticed at all.
+	events <-chan bus.Event
+	sends  chan store.Alert
+}
+
+// New builds an alerter. A nil logger discards, and a nil clock reads the real
+// one, so callers that do not care about either can pass nothing.
+func New(
+	st *store.Store,
+	b *bus.Bus,
+	routes []Route,
+	cfg Config,
+	log *slog.Logger,
+	now func() time.Time,
+) (*Alerter, error) {
+	if st == nil {
+		return nil, errors.New("alert: a store is required")
+	}
+	if b == nil {
+		return nil, errors.New("alert: an event bus is required")
+	}
+	for _, r := range routes {
+		if r.Transport == nil {
+			return nil, errors.New("alert: a route has no transport")
+		}
+		if r.Transport.Name() == "" {
+			return nil, errors.New("alert: a transport has no name")
+		}
+	}
+	if log == nil {
+		log = slog.New(discardHandler{})
+	}
+	if now == nil {
+		now = time.Now
+	}
+
+	a := &Alerter{
+		store:  st,
+		bus:    b,
+		routes: routes,
+		cfg:    cfg.withDefaults(),
+		now:    now,
+		log:    log,
+		events: b.Subscribe(SubscriberName, bus.KindSplitStateChanged, bus.KindViewHealthChanged),
+		sends:  make(chan store.Alert, sendQueue),
+	}
+	if len(routes) == 0 {
+		// Not an error: a user may be watching the dashboard and nothing else. But
+		// an alarm nobody can hear is worth saying out loud once, and the readiness
+		// check surfaces it in the UI.
+		a.log.Warn("no notification transports are configured, so alerts will only " +
+			"appear in the dashboard")
+	}
+	return a, nil
+}
+
+// Run consumes events and delivers alerts until the context ends.
+//
+// Two goroutines: one reads the bus and writes to storage, the other delivers.
+// They are separate because delivery is network I/O and the reader must never
+// wait on it — a subscriber that falls behind loses events, and a lost
+// "the chains have separated" is the one failure this software exists to prevent.
+func (a *Alerter) Run(ctx context.Context) error {
+	var g errgroup.Group
+	g.Go(func() error { return a.consume(ctx, a.events) })
+	g.Go(func() error { return a.deliverQueued(ctx) })
+	return g.Wait()
+}
+
+func (a *Alerter) consume(ctx context.Context, events <-chan bus.Event) error {
+	ticker := time.NewTicker(a.cfg.ScanInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+
+		case e, ok := <-events:
+			if !ok {
+				// The bus closed while the context is still alive. Stop listening but
+				// keep escalating: an urgent alert already raised still needs repeating.
+				events = nil
+				continue
+			}
+			a.handle(ctx, e)
+
+		case <-ticker.C:
+			a.escalate(ctx)
+		}
+	}
+}
+
+// handle raises the alert an event warrants, if any.
+func (a *Alerter) handle(ctx context.Context, e bus.Event) {
+	candidate, ok := MapEventToAlert(e)
+	if !ok {
+		return
+	}
+
+	now := a.now().Unix()
+	record := store.Alert{
+		Tier:         candidate.Tier,
+		Kind:         candidate.Kind,
+		DedupKey:     candidate.DedupKey,
+		Subject:      candidate.Subject,
+		Message:      candidate.Message,
+		CreatedAt:    now,
+		LastRaisedAt: now,
+	}
+
+	// Persisted before it is announced, and with a context that outlives a
+	// shutdown arriving mid-write: an alert the user was told about but which is
+	// not in the dashboard afterwards is worse than one that arrives late.
+	wctx, cancel := writeCtx(ctx)
+	defer cancel()
+
+	up, err := a.store.UpsertAlert(wctx, record)
+	if err != nil {
+		a.log.Error("could not record an alert",
+			slog.String("kind", candidate.Kind), slog.String("error", err.Error()))
+		return
+	}
+	if !up.Notify() {
+		// The same condition, still in front of the user. Repeating it is the
+		// escalation policy's job.
+		a.log.Debug("alert re-raised without notifying",
+			slog.String("kind", candidate.Kind), slog.Int64("alert_id", up.ID))
+		return
+	}
+
+	record.ID = up.ID
+	a.bus.Publish(bus.AlertRaised{
+		AlertID:   up.ID,
+		Tier:      string(record.Tier),
+		AlertKind: record.Kind,
+		DedupKey:  record.DedupKey,
+		Message:   record.Message,
+	})
+	a.enqueue(record)
+}
+
+// escalate re-delivers unacknowledged urgent alerts.
+//
+// Read from storage rather than from memory, so a restart does not silence an
+// alert nobody has acknowledged yet.
+func (a *Alerter) escalate(ctx context.Context) {
+	if len(a.routes) == 0 {
+		return
+	}
+
+	alerts, err := a.store.ListAlerts(ctx, store.AlertFilter{UnackedOnly: true})
+	if err != nil {
+		a.log.Warn("could not read unacknowledged alerts",
+			slog.String("error", err.Error()))
+		return
+	}
+
+	now := a.now().Unix()
+	repeatSecs := int64(a.cfg.CriticalRepeat / time.Second)
+
+	for _, al := range alerts {
+		if !Urgent(al.Tier) {
+			continue
+		}
+		last := a.lastAttemptAt(ctx, al.ID)
+		if last == 0 {
+			// Never delivered — most likely every transport was failing. Measure
+			// from when it was raised so it is retried rather than retried forever
+			// on the first scan.
+			last = al.LastRaisedAt
+		}
+		if now-last < repeatSecs {
+			continue
+		}
+		a.log.Info("repeating an unacknowledged urgent alert",
+			slog.Int64("alert_id", al.ID), slog.String("kind", al.Kind))
+		a.enqueue(al)
+	}
+}
+
+func (a *Alerter) lastAttemptAt(ctx context.Context, alertID int64) int64 {
+	deliveries, err := a.store.ListDeliveries(ctx, alertID)
+	if err != nil {
+		a.log.Debug("could not read delivery history",
+			slog.Int64("alert_id", alertID), slog.String("error", err.Error()))
+		return 0
+	}
+	var last int64
+	for _, d := range deliveries {
+		if d.AttemptedAt > last {
+			last = d.AttemptedAt
+		}
+	}
+	return last
+}
+
+// enqueue hands an alert to the sender, or drops it rather than blocking.
+//
+// A full queue means every transport is wedged. The alert is still stored and
+// still on the dashboard; what is lost is the notification, and that is said
+// loudly rather than by stalling the loop that watches for the next split.
+func (a *Alerter) enqueue(al store.Alert) {
+	if len(a.routes) == 0 {
+		return
+	}
+	select {
+	case a.sends <- al:
+	default:
+		a.log.Error("the notification queue is full, so an alert was not delivered",
+			slog.Int64("alert_id", al.ID), slog.String("kind", al.Kind))
+	}
+}
+
+func (a *Alerter) deliverQueued(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case al := <-a.sends:
+			a.Deliver(ctx, al)
+		}
+	}
+}
+
+// Deliver sends one alert through every transport that wants it, recording each
+// attempt. It reports how many succeeded, which is what a self-test needs.
+//
+// Transports run concurrently: one that is slow or unreachable must not delay the
+// others, because the whole point of configuring several is that they do not fail
+// together.
+func (a *Alerter) Deliver(ctx context.Context, al store.Alert) int {
+	var g errgroup.Group
+	results := make([]bool, len(a.routes))
+
+	for i, r := range a.routes {
+		if !Deliverable(al.Tier, r.MinTier) {
+			continue
+		}
+		g.Go(func() error {
+			results[i] = a.send(ctx, r, al)
+			return nil
+		})
+	}
+	_ = g.Wait()
+
+	sent := 0
+	for _, ok := range results {
+		if ok {
+			sent++
+		}
+	}
+	return sent
+}
+
+func (a *Alerter) send(ctx context.Context, r Route, al store.Alert) bool {
+	sendCtx, cancel := context.WithTimeout(ctx, a.cfg.SendTimeout)
+	defer cancel()
+
+	err := r.Transport.Send(sendCtx, PayloadFor(al, r.IncludeDetail))
+
+	// Recorded with a context that survives shutdown, and scrubbed before it is
+	// written: a transport error routinely echoes the request URL, and that URL
+	// may carry a token into a database people are invited to email to a
+	// maintainer.
+	wctx, wcancel := writeCtx(ctx)
+	defer wcancel()
+
+	if _, recErr := a.store.RecordDelivery(wctx, store.Delivery{
+		AlertID:     al.ID,
+		Transport:   r.Transport.Name(),
+		AttemptedAt: a.now().Unix(),
+		OK:          err == nil,
+		Error:       scrubError(err),
+	}); recErr != nil {
+		a.log.Warn("could not record a delivery attempt",
+			slog.String("transport", r.Transport.Name()),
+			slog.String("error", recErr.Error()))
+	}
+
+	if err != nil {
+		a.log.Warn("could not deliver an alert",
+			slog.String("transport", r.Transport.Name()),
+			slog.Int64("alert_id", al.ID),
+			slog.String("error", scrubError(err)))
+		return false
+	}
+	return true
+}
+
+// writeCtx returns a context for storage writes that survives shutdown.
+//
+// Without this, a shutdown arriving between deciding to alert and recording it
+// loses the record — and the record is what the dashboard shows afterwards.
+func writeCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+}
+
+// RoutesFromConfig builds the transports M1 supports.
+//
+// Types this milestone does not implement yet are reported rather than skipped:
+// a user who configured a notification channel and hears nothing must be told
+// why, not left believing they are covered.
+func RoutesFromConfig(cfg []config.TransportConfig, timeout time.Duration) ([]Route, error) {
+	routes := make([]Route, 0, len(cfg))
+	for _, t := range cfg {
+		switch t.Type {
+		case config.TransportWebhook:
+			w, err := NewWebhook(t.Name, t.URL, timeout)
+			if err != nil {
+				return nil, err
+			}
+			routes = append(routes, Route{
+				Transport:     w,
+				MinTier:       t.MinTier,
+				IncludeDetail: t.EffectiveIncludeDetail(),
+			})
+		case config.TransportNtfy, config.TransportSMTP, config.TransportTelegram,
+			config.TransportStartOS, config.TransportUmbrel:
+			return nil, fmt.Errorf(
+				"transport %q is of type %q, which this version cannot deliver to yet",
+				t.Name, t.Type)
+		default:
+			return nil, fmt.Errorf("transport %q has unknown type %q", t.Name, t.Type)
+		}
+	}
+	return routes, nil
+}

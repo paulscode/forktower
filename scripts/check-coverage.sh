@@ -35,6 +35,11 @@ declare -A MIN=(
   # Types, an interface, and small predicates over them. No I/O, nothing to
   # excuse a gap.
   [internal/chainview]=95
+  # Half decision (which alert, what tier, what may be said to whom) and half
+  # delivery. The deciding half is pure and near-total; the floor sits where the
+  # whole package is, because the delivery half is exercised against an httptest
+  # server rather than needing a container.
+  [internal/alert]=90
 
   # I/O shells. The real exercise is in the integration suite, which needs
   # containers and does not run in this gate.

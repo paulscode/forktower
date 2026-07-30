@@ -53,40 +53,63 @@ type Alert struct {
 // Acked reports whether the user has acknowledged this alert.
 func (a Alert) Acked() bool { return a.AckedAt != 0 }
 
+// AlertUpsert is what happened to an alert that was raised.
+//
+// Three outcomes rather than two, because the caller has to tell them apart to
+// decide whether to notify anyone. New and Reopened both mean "tell the user";
+// neither means "tell them again about something they are already looking at".
+type AlertUpsert struct {
+	ID int64
+	// New means no alert with this dedup key existed.
+	New bool
+	// Reopened means one existed and had been acknowledged, so the condition has
+	// come back after the user said they had seen it. That is news again, and the
+	// acknowledgement is cleared — otherwise a condition that recurs after being
+	// dismissed would be silent forever, which is how an alarm becomes decorative.
+	Reopened bool
+}
+
+// Notify reports whether this raise is worth delivering to a transport. A raise
+// that is neither new nor a reopening is the same condition the user has not
+// looked at yet, and repeating it is the escalation policy's job, not this one's.
+func (u AlertUpsert) Notify() bool { return u.New || u.Reopened }
+
 // UpsertAlert records an alert, or bumps the existing one with the same dedup
-// key. It reports the row's id and whether it was newly created — the caller
-// delivers a notification for a new alert, and applies its repeat policy to one
-// that already existed.
+// key.
 //
 // Timestamps are parameters rather than read from the clock here, so that
 // escalation behaviour can be tested without waiting.
-func (s *Store) UpsertAlert(ctx context.Context, a Alert) (id int64, wasNew bool, err error) {
+func (s *Store) UpsertAlert(ctx context.Context, a Alert) (AlertUpsert, error) {
 	if a.DedupKey == "" {
-		return 0, false, errors.New("store: alert needs a dedup key")
+		return AlertUpsert{}, errors.New("store: alert needs a dedup key")
 	}
 	if !a.Tier.Valid() {
-		return 0, false, fmt.Errorf("store: alert tier %q is not a known severity", a.Tier)
+		return AlertUpsert{}, fmt.Errorf("store: alert tier %q is not a known severity", a.Tier)
 	}
 	if a.Kind == "" {
-		return 0, false, errors.New("store: alert needs a kind")
+		return AlertUpsert{}, errors.New("store: alert needs a kind")
 	}
 
-	err = s.withTx(ctx, func(tx *sql.Tx) error {
-		var existing int64
+	var out AlertUpsert
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		var (
+			existing int64
+			acked    sql.NullInt64
+		)
 		scanErr := tx.QueryRowContext(ctx,
-			`SELECT id FROM alerts WHERE dedup_key = ?`, a.DedupKey).Scan(&existing)
+			`SELECT id, acked_at FROM alerts WHERE dedup_key = ?`, a.DedupKey).Scan(&existing, &acked)
 
 		switch {
 		case scanErr == nil:
-			// Only last_raised_at moves. The original message and creation time are
-			// the record of when this first happened, and the audit trail is not
-			// rewritten in place.
+			// last_raised_at moves, and an acknowledgement is cleared. The original
+			// message and creation time stay: they are the record of when this first
+			// happened, and the audit trail is not rewritten in place.
 			if _, e := tx.ExecContext(ctx,
-				`UPDATE alerts SET last_raised_at = ? WHERE id = ?`,
+				`UPDATE alerts SET last_raised_at = ?, acked_at = NULL WHERE id = ?`,
 				a.LastRaisedAt, existing); e != nil {
 				return fmt.Errorf("bumping alert %q: %w", a.DedupKey, e)
 			}
-			id, wasNew = existing, false
+			out = AlertUpsert{ID: existing, Reopened: acked.Valid}
 			return nil
 
 		case errors.Is(scanErr, sql.ErrNoRows):
@@ -103,7 +126,7 @@ func (s *Store) UpsertAlert(ctx context.Context, a Alert) (id int64, wasNew bool
 			if e != nil {
 				return fmt.Errorf("reading new alert id: %w", e)
 			}
-			id, wasNew = newID, true
+			out = AlertUpsert{ID: newID, New: true}
 			return nil
 
 		default:
@@ -111,9 +134,33 @@ func (s *Store) UpsertAlert(ctx context.Context, a Alert) (id int64, wasNew bool
 		}
 	})
 	if err != nil {
-		return 0, false, err
+		return AlertUpsert{}, err
 	}
-	return id, wasNew, nil
+	return out, nil
+}
+
+// GetAlert reads one alert by id, returning ErrNotFound if there is none.
+func (s *Store) GetAlert(ctx context.Context, id int64) (Alert, error) {
+	var (
+		a       Alert
+		subject sql.NullString
+		acked   sql.NullInt64
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tier, kind, dedup_key, subject, message,
+		        created_at, last_raised_at, acked_at
+		 FROM alerts WHERE id = ?`, id).
+		Scan(&a.ID, &a.Tier, &a.Kind, &a.DedupKey, &subject, &a.Message,
+			&a.CreatedAt, &a.LastRaisedAt, &acked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Alert{}, fmt.Errorf("alert %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return Alert{}, fmt.Errorf("reading alert %d: %w", id, err)
+	}
+	a.Subject = subject.String
+	a.AckedAt = acked.Int64
+	return a, nil
 }
 
 // AckAlert marks an alert acknowledged, stopping its repeat delivery. It reports

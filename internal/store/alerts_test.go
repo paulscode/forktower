@@ -28,25 +28,35 @@ func TestUpsertAlertDeduplicatesByKey(t *testing.T) {
 	s := openTemp(t)
 
 	a := sampleAlert()
-	id1, isNew, err := s.UpsertAlert(ctx, a)
+	first, err := s.UpsertAlert(ctx, a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !isNew {
+	if !first.New {
 		t.Error("first raise reported as pre-existing")
+	}
+	if first.Reopened {
+		t.Error("a brand new alert was reported as a reopening")
 	}
 
 	a.LastRaisedAt = 2000
 	a.Message = "this message is ignored on a repeat"
-	id2, isNew, err := s.UpsertAlert(ctx, a)
+	second, err := s.UpsertAlert(ctx, a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if isNew {
+	if second.New {
 		t.Error("second raise of the same key reported as new")
 	}
-	if id2 != id1 {
-		t.Errorf("second raise created a new row: id %d then %d", id1, id2)
+	if second.Reopened {
+		t.Error("a repeat of an unacknowledged alert was reported as a reopening, " +
+			"which would notify the user again about something already in front of them")
+	}
+	if second.Notify() {
+		t.Error("a repeat of an unacknowledged alert asked to be delivered again")
+	}
+	if second.ID != first.ID {
+		t.Errorf("second raise created a new row: id %d then %d", first.ID, second.ID)
 	}
 
 	got, err := s.ListAlerts(ctx, AlertFilter{})
@@ -88,7 +98,7 @@ func TestUpsertAlertRejectsIncompleteAlerts(t *testing.T) {
 			t.Parallel()
 			a := sampleAlert()
 			tc.mutate(&a)
-			_, _, err := s.UpsertAlert(ctx, a)
+			_, err := s.UpsertAlert(ctx, a)
 			if err == nil {
 				t.Fatalf("accepted an alert with %s", tc.name)
 			}
@@ -104,10 +114,11 @@ func TestAckAlert(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t)
 
-	id, _, err := s.UpsertAlert(ctx, sampleAlert())
+	up, err := s.UpsertAlert(ctx, sampleAlert())
 	if err != nil {
 		t.Fatal(err)
 	}
+	id := up.ID
 
 	changed, err := s.AckAlert(ctx, id, 3000)
 	if err != nil {
@@ -162,11 +173,11 @@ func TestListAlertsUnackedFilterAndOrder(t *testing.T) {
 		a.DedupKey = key
 		a.CreatedAt = int64(100 + i)
 		a.LastRaisedAt = a.CreatedAt
-		id, _, err := s.UpsertAlert(ctx, a)
+		up, err := s.UpsertAlert(ctx, a)
 		if err != nil {
 			t.Fatal(err)
 		}
-		ids = append(ids, id)
+		ids = append(ids, up.ID)
 	}
 
 	if _, err := s.AckAlert(ctx, ids[1], 500); err != nil {
@@ -208,7 +219,7 @@ func TestListAlertsClampsLimit(t *testing.T) {
 	for i := range 5 {
 		a := sampleAlert()
 		a.DedupKey = string(rune('a' + i))
-		if _, _, err := s.UpsertAlert(ctx, a); err != nil {
+		if _, err := s.UpsertAlert(ctx, a); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -237,10 +248,11 @@ func TestRecordDeliveryKeepsFailuresToo(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t)
 
-	id, _, err := s.UpsertAlert(ctx, sampleAlert())
+	up, err := s.UpsertAlert(ctx, sampleAlert())
 	if err != nil {
 		t.Fatal(err)
 	}
+	id := up.ID
 
 	// A failure is recorded, not dropped: a transport that has quietly stopped
 	// working is how an alarm becomes decorative, and that is only visible if the
@@ -293,5 +305,79 @@ func TestTierValid(t *testing.T) {
 		if bad.Valid() {
 			t.Errorf("%q should not be valid", bad)
 		}
+	}
+}
+
+// A condition that comes back after the user said they had seen it is news
+// again. Without this, a view that degrades, is acknowledged, recovers and
+// degrades again is silent forever — which is exactly how an alarm becomes
+// decorative while still appearing to work.
+func TestRaisingAnAcknowledgedAlertReopensIt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := openTemp(t)
+
+	a := sampleAlert()
+	first, err := s.UpsertAlert(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AckAlert(ctx, first.ID, 3000); err != nil {
+		t.Fatal(err)
+	}
+
+	a.LastRaisedAt = 4000
+	again, err := s.UpsertAlert(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.New {
+		t.Error("a reopening was reported as a new alert, which would split the history in two")
+	}
+	if !again.Reopened {
+		t.Fatal("the condition returned after acknowledgement and nobody would be told")
+	}
+	if !again.Notify() {
+		t.Error("a reopened alert did not ask to be delivered")
+	}
+
+	// The acknowledgement is cleared, so escalation resumes and the dashboard
+	// shows it as needing attention rather than as already handled.
+	got, err := s.GetAlert(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Acked() {
+		t.Errorf("the alert is still acknowledged at %d after being reopened", got.AckedAt)
+	}
+	if got.LastRaisedAt != 4000 {
+		t.Errorf("last_raised_at = %d, want 4000", got.LastRaisedAt)
+	}
+}
+
+func TestGetAlert(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := openTemp(t)
+
+	want := sampleAlert()
+	up, err := s.UpsertAlert(ctx, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetAlert(ctx, up.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DedupKey != want.DedupKey || got.Tier != want.Tier || got.Message != want.Message {
+		t.Errorf("read back %+v, want the alert that was stored", got)
+	}
+	if got.Acked() {
+		t.Error("a fresh alert reads back as acknowledged")
+	}
+
+	if _, err := s.GetAlert(ctx, 99999); !errors.Is(err, ErrNotFound) {
+		t.Errorf("got %v for a missing alert, want ErrNotFound", err)
 	}
 }
