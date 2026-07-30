@@ -147,7 +147,10 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 		DeploymentName:    cfg.Fork.Name,
 		Network:           network,
 		MaxAncestorWalk:   int(cfg.Sentinel.MaxAncestorWalk),
-		AncestryDepth:     0,
+		// Zero means "use the engine's own default", which is what is wanted here:
+		// there is no configuration knob for it, and spelling a number in this
+		// file would put the real value two places instead of one.
+		AncestryDepth: 0,
 	}, log.With(slog.String("component", "sentinel")), now)
 	if err != nil {
 		a.closeOnFailure()
