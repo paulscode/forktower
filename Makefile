@@ -61,8 +61,12 @@ fmt:
 	$(GOLANGCI) fmt ./...
 
 ## integration: tests that need Docker (build-tagged, opt-in)
+#
+# -p 1 runs one package at a time. Several of these drive the same containers, so
+# the default parallelism would have two suites fighting over one world and
+# failing in ways that look like flakiness rather than the collision they are.
 integration:
-	go test -race -count=1 -tags integration ./...
+	go test -race -count=1 -p 1 -timeout 20m -tags integration ./...
 
 ## vuln: check dependencies against the Go vulnerability database (needs network)
 vuln:

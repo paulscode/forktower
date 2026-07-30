@@ -487,5 +487,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderHeadline, renderReadiness, renderAlerts, renderTimeline, renderAdvanced,
     describeTestResults, formatDuration, formatPercent, setText, KNOWN_STATES,
+    refresh, api,
   };
 }
