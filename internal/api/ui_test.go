@@ -148,3 +148,75 @@ func TestTheDashboardStillNeedsNoSessionButItsDataDoes(t *testing.T) {
 		t.Errorf("status %d, want the data to require signing in", resp.StatusCode)
 	}
 }
+
+// The icons the page names have to be served, or the dashboard shows a broken
+// image and a developer console full of 404s that hide anything real.
+func TestTheDashboardServesItsImages(t *testing.T) {
+	t.Parallel()
+	h := uiHarness(t)
+
+	for _, path := range []string{"/favicon.png", "/logo.png", "/favicon.ico"} {
+		resp := h.do(t, http.MethodGet, path, "")
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s returned %d", path, resp.StatusCode)
+			continue
+		}
+		if got := resp.Header.Get("Content-Type"); got != contentTypePNG {
+			t.Errorf("GET %s served %q, want %q", path, got, contentTypePNG)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A PNG, not an error page rendered with a 200.
+		if len(body) < 8 || string(body[1:4]) != "PNG" {
+			t.Errorf("GET %s did not serve a PNG (%d bytes)", path, len(body))
+		}
+	}
+}
+
+// Everything the page asks a browser to load has to answer. A missing stylesheet
+// or script is invisible from the server's side and obvious from the user's.
+func TestEverythingThePageReferencesIsServed(t *testing.T) {
+	t.Parallel()
+	h := uiHarness(t)
+
+	page := readBody(t, h.do(t, http.MethodGet, "/", ""))
+
+	for _, ref := range referencedPaths(page) {
+		resp := h.do(t, http.MethodGet, ref, "")
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("the page loads %s, which returns %d", ref, resp.StatusCode)
+		}
+	}
+}
+
+// referencedPaths pulls the same-origin href and src values out of the page.
+func referencedPaths(page string) []string {
+	var out []string
+	for _, attr := range []string{`href="/`, `src="/`} {
+		rest := page
+		for {
+			at := strings.Index(rest, attr)
+			if at < 0 {
+				break
+			}
+			rest = rest[at+len(attr)-1:]
+			end := strings.Index(rest, `"`)
+			if end < 0 {
+				break
+			}
+			out = append(out, rest[:end])
+		}
+	}
+	return out
+}
+
+func readBody(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}

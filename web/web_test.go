@@ -92,7 +92,9 @@ func TestNothingIsLoadedFromElsewhere(t *testing.T) {
 func TestEverythingTheDashboardNeedsIsEmbedded(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"index.html", "app.js", "style.css"} {
+	for _, name := range []string{
+		"index.html", "app.js", "style.css", "favicon.png", "logo.png",
+	} {
 		if _, err := fs.ReadFile(web.Files, name); err != nil {
 			t.Errorf("%s is not compiled into the binary: %v", name, err)
 		}
@@ -105,7 +107,7 @@ func TestEverythingTheDashboardNeedsIsEmbedded(t *testing.T) {
 	}
 	for _, entry := range entries {
 		switch entry.Name() {
-		case "index.html", "app.js", "style.css":
+		case "index.html", "app.js", "style.css", "favicon.png", "logo.png":
 		default:
 			t.Errorf("%s is compiled into the binary but is not a dashboard asset", entry.Name())
 		}
@@ -163,6 +165,8 @@ func TestRendering(t *testing.T) {
 	}
 }
 
+// assetNames lists the assets a scan can read. The images are binary and
+// generated, so scanning them for text would produce noise, not findings.
 func assetNames(t *testing.T) []string {
 	t.Helper()
 	return []string{"index.html", "app.js", "style.css"}
@@ -199,4 +203,23 @@ func idsUsedBy(script string) []string {
 		}
 	}
 	return ids
+}
+
+// The page has to reference the images it ships, or they are dead weight in the
+// binary. Checked from the page rather than from the directory: a file that is
+// embedded but never asked for is exactly as useless as one that is missing.
+func TestThePageUsesTheImagesItShips(t *testing.T) {
+	t.Parallel()
+
+	html := readAsset(t, "index.html")
+	for _, ref := range []string{`href="/favicon.png"`, `src="/logo.png"`} {
+		if !strings.Contains(html, ref) {
+			t.Errorf("index.html does not use %s", ref)
+		}
+	}
+	// The logo is decoration beside a heading that already says the name, so it
+	// is hidden from a screen reader rather than read out twice.
+	if !strings.Contains(html, `src="/logo.png" alt=""`) {
+		t.Error("the logo has no empty alt attribute, so it is announced twice")
+	}
 }

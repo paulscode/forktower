@@ -17,16 +17,22 @@ const (
 	contentTypeHTML = "text/html; charset=utf-8"
 	contentTypeJS   = "text/javascript; charset=utf-8"
 	contentTypeCSS  = "text/css; charset=utf-8"
+	contentTypePNG  = "image/png"
 )
 
 var uiFiles = map[string]struct {
 	name        string
 	contentType string
 }{
-	"/":           {"index.html", contentTypeHTML},
-	"/index.html": {"index.html", contentTypeHTML},
-	"/app.js":     {"app.js", contentTypeJS},
-	"/style.css":  {"style.css", contentTypeCSS},
+	"/":            {"index.html", contentTypeHTML},
+	"/index.html":  {"index.html", contentTypeHTML},
+	"/app.js":      {"app.js", contentTypeJS},
+	"/style.css":   {"style.css", contentTypeCSS},
+	"/favicon.png": {"favicon.png", contentTypePNG},
+	"/logo.png":    {"logo.png", contentTypePNG},
+	// Browsers ask for this by convention whether or not the page names it, and a
+	// 404 in a developer console is a distraction from any real problem there.
+	"/favicon.ico": {"favicon.png", contentTypePNG},
 }
 
 // MountUI adds the dashboard to the server's routes.

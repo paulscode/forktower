@@ -23,7 +23,7 @@ LDFLAGS    := -s -w -buildid= -X main.version=$(VERSION)
 GOLANGCI   ?= golangci-lint
 
 .DEFAULT_GOAL := build
-.PHONY: build test lint fmt integration run-dev cover-html \
+.PHONY: build test lint fmt integration run-dev cover-html icons icons-check \
         forkbench-up forkbench-split forkbench-status forkbench-down \
         check check-boundary cover-check cover tidy-check vuln tidy clean help
 
@@ -128,6 +128,18 @@ forkbench-status: build
 ## forkbench-down: tear it down again, including its state
 forkbench-down: build
 	$(BIN_DIR)/forkbench down
+
+## icons: regenerate the shipped icons from the source art
+#
+# Needs ImageMagick and references/icon.png, which is not published — so this is
+# not part of `make check`. The outputs are committed precisely so that a clean
+# checkout never needs either.
+icons:
+	@scripts/make-icons.sh
+
+## icons-check: fail if the committed icons differ from what the art produces
+icons-check:
+	@scripts/make-icons.sh --check
 
 ## tidy: tidy and verify module requirements
 tidy:

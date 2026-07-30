@@ -30,7 +30,15 @@ body {
 
 main { max-width: 46rem; margin: 0 auto; }
 
-.masthead { max-width: 46rem; margin: 0 auto; padding: 1.5rem 0 0.5rem; }
+.masthead {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 1.5rem 0 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.masthead .mark { width: 40px; height: 40px; flex: none; }
 .masthead h1 { margin: 0; font-size: 1.25rem; letter-spacing: 0.02em; }
 .tagline { margin: 0.15rem 0 0; color: var(--quiet); font-size: 0.9rem; }
 
