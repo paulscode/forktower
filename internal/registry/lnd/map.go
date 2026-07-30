@@ -98,10 +98,19 @@ func mapChannel(c channelJSON) (registry.ChannelRecord, error) {
 		CSVDelayLocal:  csvFrom(c.LocalConstraints),
 		CSVDelayRemote: csvFrom(c.RemoteConstraints),
 		PeerPubkey:     c.RemotePubkey,
-		SCID:           c.ChanID,
 		CloseState:     store.CloseOpen,
 	}
-	rec.OpenHeight = heightFromSCID(c.ChanID)
+
+	// LND packs the short channel id into an integer; the stored form is the
+	// readable one both implementations can be compared in. Converting here is
+	// what keeps the same channel from being recorded two different ways
+	// depending on which node reported it.
+	if packed, parseErr := strconv.ParseUint(c.ChanID, 10, 64); parseErr == nil {
+		if scid, ok := registry.ShortChannelIDFromPacked(packed); ok {
+			rec.SCID = scid
+			rec.OpenHeight = registry.BlockFromShortChannelID(scid)
+		}
+	}
 
 	for _, h := range c.PendingHTLCs {
 		snap, htlcErr := mapHTLC(h)
@@ -204,27 +213,6 @@ func splitChannelPoint(cp string) (txid string, vout int32, err error) {
 		return "", 0, fmt.Errorf("%q does not contain an output index", cp)
 	}
 	return txid, int32(n), nil
-}
-
-// heightFromSCID recovers the funding height from a short channel id.
-//
-// The top 24 bits are the block the funding confirmed in. Worth taking because
-// it is free and the alternative — asking the chain for a transaction that may
-// be older than a pruned node keeps — often fails. Zero when there is no usable
-// id, which is the honest answer for a channel that has not confirmed.
-func heightFromSCID(scid string) int32 {
-	if scid == "" {
-		return 0
-	}
-	n, err := strconv.ParseUint(scid, 10, 64)
-	if err != nil || n == 0 {
-		return 0
-	}
-	height := n >> 40
-	if height > 1<<31-1 {
-		return 0
-	}
-	return int32(height)
 }
 
 func parseInt64(s, what string) (int64, error) {

@@ -1,0 +1,39 @@
+{
+  "channels": [
+    {
+      "peer_id": "03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f",
+      "state": "CHANNELD_NORMAL",
+      "funding_txid": "8f2c4a1b9e5d3c7f0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071",
+      "funding_outnum": 0,
+      "total_msat": "150000000msat",
+      "short_channel_id": "850000x1x0",
+      "channel_type": { "names": ["static_remotekey/even", "anchors/even"] },
+      "our_to_self_delay": 144,
+      "their_to_self_delay": 720,
+      "htlcs": [
+        {
+          "direction": "in",
+          "amount_msat": "1500000msat",
+          "expiry": 850200,
+          "payment_hash": "3f786850e387550fdab836ed7e6dc881de23001b"
+        },
+        {
+          "direction": "out",
+          "amount_msat": 2500000,
+          "expiry": 850150,
+          "payment_hash": "89e6c98d92887913d28ff2c0d0b3e0bd8c8e2f1a"
+        }
+      ]
+    },
+    {
+      "peer_id": "02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "state": "AWAITING_UNILATERAL",
+      "funding_txid": "1111111111111111111111111111111111111111111111111111111111111111",
+      "funding_outnum": 1,
+      "total_msat": "50000000msat",
+      "short_channel_id": "849000x2x1",
+      "scratch_txid": "2222222222222222222222222222222222222222222222222222222222222222",
+      "htlcs": []
+    }
+  ]
+}

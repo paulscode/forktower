@@ -68,11 +68,15 @@ declare -A MIN=(
   # interface over stdlib rather than gRPC, so it is testable against an httptest
   # server like everything else and has no excuse for a low floor.
   [internal/registry/lnd]=85
-  # Types only for now: the shared ChannelRecord the adapters converge on, with
-  # no behaviour of its own. The engine that will live here arrives with the
-  # relevance classifier, and the floor goes up with it.
-  [internal/registry]=0
-  [internal/registry/cln]=40
+  # The shared ChannelRecord and the short-channel-id conversion both adapters
+  # go through — the one piece of behaviour here, and the one that caught them
+  # recording the same channel two different ways. The engine arrives with the
+  # relevance classifier and the floor goes up with it.
+  [internal/registry]=85
+  # Same shape and same stakes as the LND adapter: the two delays decide when a
+  # deadline expires, and the credential check decides whether an unrestricted
+  # rune is noticed.
+  [internal/registry/cln]=85
   [internal/companion]=40
 
   # A fake used by other packages' tests. It has no tests of its own, and

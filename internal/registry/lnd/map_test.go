@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/paulscode/forktower/internal/store"
@@ -163,24 +162,31 @@ func TestChannelPoints(t *testing.T) {
 	}
 }
 
-// The funding height comes free from the short channel id. Worth taking: the
-// alternative is asking the chain for a transaction older than a pruned node
-// keeps, which on the hardware this ships to often fails.
-func TestFundingHeightFromTheShortChannelId(t *testing.T) {
+// LND packs the short channel id into an integer; the stored form is the
+// readable one both implementations can be compared in.
+func TestTheShortChannelIdIsConvertedToTheStoredForm(t *testing.T) {
 	t.Parallel()
 
-	// 850000 << 40 | 1 << 16 | 0
-	scid := uint64(850_000)<<40 | uint64(1)<<16
-	if got := heightFromSCID(strconv.FormatUint(scid, 10)); got != 850_000 {
-		t.Errorf("height = %d, want 850000", got)
+	got, err := mapChannel(loadFixture(t).Channels[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SCID != "850000x1x0" {
+		t.Errorf("scid = %q, want the readable form", got.SCID)
+	}
+	if got.OpenHeight != 850_000 {
+		t.Errorf("open height = %d, want 850000", got.OpenHeight)
 	}
 
-	// No usable id is zero, which is the honest answer for a channel that has not
-	// confirmed — not a guess.
-	for _, in := range []string{"", "0", "not a number"} {
-		if got := heightFromSCID(in); got != 0 {
-			t.Errorf("heightFromSCID(%q) = %d, want 0", in, got)
-		}
+	// A channel that has not confirmed has no short id, and inventing one would
+	// read as a channel that confirmed in the genesis block.
+	unconfirmed := loadFixture(t).Channels[1]
+	got, err = mapChannel(unconfirmed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SCID != "" || got.OpenHeight != 0 {
+		t.Errorf("an unconfirmed channel got scid %q height %d", got.SCID, got.OpenHeight)
 	}
 }
 
