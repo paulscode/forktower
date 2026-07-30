@@ -1,0 +1,10 @@
+{
+  "state": "action_needed",
+  "title": "You need to do something now.",
+  "detail": "The chains have separated — and Forktower has no way to reach you, so you would only find out by looking at this page.",
+  "action": {
+    "label": "Set up notifications",
+    "href": "#notifications"
+  },
+  "since": 1790000000
+}

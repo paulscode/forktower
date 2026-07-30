@@ -38,21 +38,39 @@ func TestBranchValidityAndOther(t *testing.T) {
 	}
 }
 
-func TestHealthStateUsableIsOnlyOK(t *testing.T) {
+func TestWhichHealthStatesCanBeComparedAgainst(t *testing.T) {
 	t.Parallel()
 
-	// Anything short of OK means detection cannot be relied on. Scanning while
-	// wrong-branch or eclipsed produces a clean report about a chain nobody else
-	// is on, which is more dangerous than reporting nothing at all.
-	if !HealthOK.Usable() {
-		t.Error("HealthOK should be usable")
+	// A tip is worth comparing when the node's account of its own chain is its
+	// own, even if it is behind.
+	for _, h := range []HealthState{HealthOK, HealthDegraded} {
+		if !h.Usable() {
+			t.Errorf("%q should be usable: the node still knows its own chain", h)
+		}
 	}
+
+	// Degraded specifically. A node with no peers, or one whose notifications
+	// were dropped, is behind on its own chain rather than telling us about
+	// someone else's — and refusing to compare would stop detection at exactly
+	// the moment a view became unhealthy, while the dashboard said only "having
+	// trouble seeing".
+	if !HealthDegraded.Usable() {
+		t.Error("a degraded view is still the node's own account of its own chain")
+	}
+
+	// The rest cannot be relied on, each for its own reason: mid-download a tip
+	// is wherever the node has got to; an eclipsed view may be a fabrication
+	// shown to this node alone; a wrong-branch view produces a clean report about
+	// a chain nobody is on; and a node that is down has no tip at all.
 	for _, h := range []HealthState{
-		HealthSyncing, HealthDegraded, HealthEclipseSuspect, HealthWrongBranch, HealthDown,
+		HealthSyncing, HealthEclipseSuspect, HealthWrongBranch, HealthDown,
 	} {
 		if h.Usable() {
 			t.Errorf("%q should not count as usable for detection", h)
 		}
+	}
+	if HealthState("SOMETHING_NEW").Usable() {
+		t.Error("an unrecognised state should not be trusted for detection")
 	}
 
 	for _, h := range []HealthState{

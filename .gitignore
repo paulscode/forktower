@@ -21,6 +21,9 @@ coverage.*
 
 # ── Local runtime data ──
 /data/
+# Where `make run-dev` keeps its database, so a development run never touches a
+# real deployment's data directory.
+/.dev/
 
 # ── Credentials and secrets (defensive — none of this should ever be committed) ──
 .env

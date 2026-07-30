@@ -1,0 +1,35 @@
+# Forktower against the forkbench world.
+#
+# For development only. The credentials below match the compose file, which is a
+# throwaway regtest world with no money in it — a real deployment reads its
+# node's cookie file instead of carrying a password here.
+
+[sf]
+rpc_url = "http://127.0.0.1:18443"
+rpc_user = "forkbench"
+rpc_pass = "forkbench"
+zmq_rawblock = "tcp://127.0.0.1:28332"
+zmq_rawtx = "tcp://127.0.0.1:28333"
+
+[sq.bitcoind]
+rpc_url = "http://127.0.0.1:18444"
+rpc_user = "forkbench"
+rpc_pass = "forkbench"
+zmq_rawblock = "tcp://127.0.0.1:28342"
+zmq_rawtx = "tcp://127.0.0.1:28343"
+
+[sentinel]
+# Faster than the shipped defaults, because a development loop measured in
+# minutes is a development loop nobody runs.
+poll_interval_secs = 2
+split_confirm_depth = 2
+
+[store]
+path = ".dev/forktower.db"
+
+[ui]
+listen = "127.0.0.1:8330"
+auth = "none"
+
+[log]
+level = "debug"

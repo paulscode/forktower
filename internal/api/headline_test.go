@@ -70,6 +70,12 @@ func TestHeadlineGoldenFiles(t *testing.T) {
 			in:   HeadlineInput{Phase: store.StateArmed, AlertsReachable: false},
 		},
 		{
+			name: "split_with_no_way_to_reach_you",
+			in: HeadlineInput{
+				Phase: store.StateSplit, DetectedAt: 1_790_000_000, AlertsReachable: false,
+			},
+		},
+		{
 			name: "attention_failing_check",
 			in: HeadlineInput{
 				Phase: store.StateArmed, AlertsReachable: true,
@@ -280,5 +286,34 @@ func TestAnUnknownPhaseStillProducesAHeadline(t *testing.T) {
 	})
 	if h.Title == "" || h.Detail == "" {
 		t.Errorf("an unknown phase produced a blank headline: %+v", h)
+	}
+}
+
+// A user reading this during a split needs both facts, and there is only one
+// line to give them: what has happened, and that they will not be told about the
+// next thing.
+func TestAMissingAlarmDoesNotHideASplit(t *testing.T) {
+	t.Parallel()
+
+	got := ComputeHeadline(HeadlineInput{
+		Phase: store.StateSplit, DetectedAt: 1_790_000_000, AlertsReachable: false,
+	})
+
+	if got.State != StateActionNeeded {
+		t.Errorf("state = %q, want action_needed: only the user can fix this", got.State)
+	}
+	if !strings.Contains(got.Detail, "separated") {
+		t.Errorf("the split is invisible: %q", got.Detail)
+	}
+	if !strings.Contains(got.Detail, "reach you") {
+		t.Errorf("the missing alarm is invisible: %q", got.Detail)
+	}
+	if got.Since != 1_790_000_000 {
+		t.Errorf("since = %d, want when the split was detected", got.Since)
+	}
+	// And with no split, it says only the thing that is true.
+	quiet := ComputeHeadline(HeadlineInput{Phase: store.StateArmed, AlertsReachable: false})
+	if strings.Contains(quiet.Detail, "separated") {
+		t.Errorf("a split was reported when there was none: %q", quiet.Detail)
 	}
 }

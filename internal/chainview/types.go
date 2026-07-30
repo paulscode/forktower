@@ -136,7 +136,45 @@ func (h HealthState) Valid() bool {
 // remaining states are worse — scanning while wrong-branch or eclipsed would
 // produce a clean report about a chain nobody else is on, which is more dangerous
 // than reporting nothing.
-func (h HealthState) Usable() bool { return h == HealthOK }
+func (h HealthState) Usable() bool {
+	switch h {
+	case HealthOK:
+		return true
+
+	case HealthDegraded:
+		// Degraded still counts. A node with no peers, or one whose notifications
+		// were dropped, is behind — but it is behind on *its own* chain, and its
+		// account of that chain is still its own. Refusing to compare tips here
+		// would stop the daemon detecting a split at exactly the moment a view
+		// became unhealthy, while the dashboard said only "having trouble seeing",
+		// which understates "not watching at all".
+		//
+		// A stale tip cannot manufacture a split either: it is an ancestor of the
+		// live one, and the ancestry check reads that as agreement.
+		return true
+
+	case HealthSyncing:
+		// Mid-download the tip means nothing: it is wherever the node has got to,
+		// not where the chain is.
+		return false
+
+	case HealthEclipseSuspect:
+		// Independent sources disagree about this chain, so it may be a
+		// fabrication shown to this node alone.
+		return false
+
+	case HealthWrongBranch:
+		// Known to be following the wrong chain. Comparing against it produces a
+		// clean report about a chain nobody is on.
+		return false
+
+	case HealthDown:
+		return false
+
+	default:
+		return false
+	}
+}
 
 // BackendHealth is a backend's own account of itself.
 type BackendHealth struct {

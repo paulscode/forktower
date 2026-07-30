@@ -307,7 +307,16 @@ func TestTheDaemonRefusesTwoDifferentNetworks(t *testing.T) {
 	sf, _ := chainviewtest.NewSharedHistory(10)
 	elsewhere := chainviewtest.New("another-network")
 
-	daemon, err := app.New(ctx, cfg, nil, app.Deps{SF: sf, SQ: elsewhere})
+	// A port of its own. Taking the configured one would make this test pass or
+	// fail depending on what else happens to be running on the machine.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	daemon, err := app.New(ctx, cfg, nil,
+		app.Deps{SF: sf, SQ: elsewhere, Listener: listener})
 	if err != nil {
 		t.Fatalf("building the daemon: %v", err)
 	}
@@ -390,8 +399,14 @@ func TestTheDaemonRefusesAnUnusableConfiguration(t *testing.T) {
 		{Name: "typo", Type: config.TransportWebhook, URL: "not a url"},
 	}
 
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
 	sf, sq := chainviewtest.NewSharedHistory(1)
-	_, err := app.New(ctx, cfg, nil, app.Deps{SF: sf, SQ: sq})
+	_, err = app.New(ctx, cfg, nil, app.Deps{SF: sf, SQ: sq, Listener: listener})
 	if err == nil {
 		t.Fatal("a notification channel that could never deliver was accepted")
 	}

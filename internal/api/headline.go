@@ -147,12 +147,22 @@ func ComputeHeadline(in HeadlineInput) Headline {
 		}
 
 	case !in.AlertsReachable:
+		// Outranks the split below it, because a split is something to watch while
+		// this is something only the user can fix. But it must not *hide* the
+		// split: someone reading this during one needs both facts, and there is
+		// only one line to give them.
+		detail := "Forktower has no way to reach you, so you would only find out " +
+			"something was wrong by looking at this page."
+		if splitting(in.Phase) {
+			detail = "The chains have separated — and Forktower has no way to reach " +
+				"you, so you would only find out by looking at this page."
+		}
 		return Headline{
-			State: StateActionNeeded,
-			Title: "You need to do something now.",
-			Detail: "Forktower has no way to reach you, so you would only find out " +
-				"something was wrong by looking at this page.",
+			State:  StateActionNeeded,
+			Title:  "You need to do something now.",
+			Detail: detail,
 			Action: actionSetUpAlerts(),
+			Since:  in.DetectedAt,
 		}
 
 	case in.Phase == store.StateUnarmed:
@@ -228,6 +238,11 @@ func headlineDetail(item ReadinessItem) string {
 		return item.Why
 	}
 	return item.Label
+}
+
+// splitting reports whether the chains are currently apart.
+func splitting(phase store.SplitState) bool {
+	return phase == store.StateSplit || phase == store.StateResolving
 }
 
 func degraded(h chainview.HealthState) bool {

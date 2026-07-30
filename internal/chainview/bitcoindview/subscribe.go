@@ -13,7 +13,21 @@ import (
 )
 
 // Now that the subscription methods exist, the whole contract can be asserted.
-var _ chainview.ChainView = (*View)(nil)
+// Compile-time proof that this backend satisfies every contract the daemon looks
+// for.
+//
+// The optional ones matter more than they look. They are discovered with a type
+// assertion at runtime, so a backend that stops satisfying one does not fail to
+// build — it quietly loses a capability, and the check that depended on it
+// reports itself as unavailable forever. That is how the distinct-node check —
+// the worst silent failure in this design — came to have never once run against
+// a real node.
+var (
+	_ chainview.ChainView    = (*View)(nil)
+	_ chainview.Identifiable = (*View)(nil)
+	_ chainview.ChainTipper  = (*View)(nil)
+	_ chainview.Deployer     = (*View)(nil)
+)
 
 // Subscription tuning.
 const (

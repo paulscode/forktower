@@ -23,7 +23,8 @@ LDFLAGS    := -s -w -buildid= -X main.version=$(VERSION)
 GOLANGCI   ?= golangci-lint
 
 .DEFAULT_GOAL := build
-.PHONY: build test lint fmt integration run-dev forkbench-up forkbench-down cover-html \
+.PHONY: build test lint fmt integration run-dev cover-html \
+        forkbench-up forkbench-split forkbench-status forkbench-down \
         check check-boundary cover-check cover tidy-check vuln tidy clean help
 
 ## check: everything that must pass before a commit — the only gate there is
@@ -100,15 +101,27 @@ cover-html:
 	go test -coverprofile=coverage.out ./... >/dev/null
 	go tool cover -html=coverage.out
 
-## run-dev: run the daemon against a local development configuration
+## run-dev: run the daemon against the forkbench world
+#
+# Uses its own configuration and its own database under .dev/, so a development
+# run never touches whatever is in a real deployment's data directory.
 run-dev: build
-	$(BIN_DIR)/forktowerd --config deploy/compose/forktower.example.toml
+	@mkdir -p .dev
+	$(BIN_DIR)/forktowerd --config deploy/forkbench/forktower.dev.toml
 
 ## forkbench-up: bring up the local two-chain test world
 forkbench-up: build
 	$(BIN_DIR)/forkbench up
 
-## forkbench-down: tear it down again
+## forkbench-split: make the two chains disagree, permanently
+forkbench-split: build
+	$(BIN_DIR)/forkbench split
+
+## forkbench-status: show both chains, and what Forktower makes of them
+forkbench-status: build
+	$(BIN_DIR)/forkbench status
+
+## forkbench-down: tear it down again, including its state
 forkbench-down: build
 	$(BIN_DIR)/forkbench down
 

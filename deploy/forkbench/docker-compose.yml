@@ -1,0 +1,99 @@
+name: forkbench
+
+# Two Bitcoin nodes that can be made to disagree on demand.
+#
+# `sf-node` stands in for the chain the user's own node follows, and `sq-node`
+# for the chain it does not. Both are ordinary regtest Core: the divergence is
+# produced by `forkbench split`, which makes one node reject a block the other
+# accepted, rather than by running different software. That is deliberate — the
+# point is to exercise Forktower against two chains that genuinely disagree, and
+# using stock Core keeps this world reproducible for anyone.
+#
+# RPC is bound to the loopback address only. This is a test world holding no real
+# money, but a Bitcoin RPC port reachable from the network is a bad habit to
+# demonstrate.
+
+services:
+  sf-node:
+    image: lncm/bitcoind:v28.0
+    restart: unless-stopped
+    command:
+      - -regtest=1
+      - -server=1
+      - -txindex=1
+      - -fallbackfee=0.0002
+      - -rpcuser=forkbench
+      - -rpcpassword=forkbench
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=0.0.0.0/0
+      - -rpcport=18443
+      - -zmqpubrawblock=tcp://0.0.0.0:28332
+      - -zmqpubrawtx=tcp://0.0.0.0:28333
+      - -printtoconsole=1
+      # Deliberately not -connect: that would make the node talk to nothing else,
+      # and forkbench needs to be able to reconnect them.
+      - -listen=1
+      - -bind=0.0.0.0:18445
+    volumes:
+      - sf-data:/data/.bitcoin
+    ports:
+      - "127.0.0.1:18443:18443"
+      - "127.0.0.1:28332:28332"
+      - "127.0.0.1:28333:28333"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bitcoin-cli -regtest -rpcuser=forkbench -rpcpassword=forkbench
+          -rpcconnect=127.0.0.1 -rpcport=18443 getblockchaininfo >/dev/null 2>&1
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks:
+      - forkbench
+
+  sq-node:
+    image: lncm/bitcoind:v28.0
+    restart: unless-stopped
+    command:
+      - -regtest=1
+      - -server=1
+      - -txindex=1
+      - -fallbackfee=0.0002
+      - -rpcuser=forkbench
+      - -rpcpassword=forkbench
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=0.0.0.0/0
+      - -rpcport=18443
+      - -zmqpubrawblock=tcp://0.0.0.0:28332
+      - -zmqpubrawtx=tcp://0.0.0.0:28333
+      - -printtoconsole=1
+      - -listen=1
+      - -bind=0.0.0.0:18445
+    volumes:
+      - sq-data:/data/.bitcoin
+    ports:
+      - "127.0.0.1:18444:18443"
+      - "127.0.0.1:28342:28332"
+      - "127.0.0.1:28343:28333"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bitcoin-cli -regtest -rpcuser=forkbench -rpcpassword=forkbench
+          -rpcconnect=127.0.0.1 -rpcport=18443 getblockchaininfo >/dev/null 2>&1
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks:
+      - forkbench
+
+# Named volumes rather than bind mounts: `forkbench down` removes them, and a
+# world that cannot be wiped cleanly is a world that accumulates the state of
+# every experiment anyone has ever run in it.
+volumes:
+  sf-data:
+  sq-data:
+
+networks:
+  forkbench:
