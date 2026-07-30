@@ -203,13 +203,17 @@ func (s *Server) checkSFEnforcing(id chainview.Identity, v chainview.BackendHeal
 		}
 	}
 
+	// The node's own version string is what this is read from, but it is a raw
+	// string from a Bitcoin node and belongs under Advanced with the rest of
+	// them, not in a sentence on the front page. It travels in the chain-view
+	// details instead.
 	if enforcesNewRules(id.Subversion) {
 		return ReadinessItem{
 			ID: CheckSFEnforcing, OK: true, informational: true,
 			Label: "Your node most likely follows the new rules",
 			Why: "If the network splits, your node would be on the side enforcing " +
 				"them. Forktower watches the other side for you.",
-			Detail: id.Subversion,
+			Detail: "Based on how your node describes itself.",
 		}
 	}
 	return ReadinessItem{
@@ -217,7 +221,7 @@ func (s *Server) checkSFEnforcing(id chainview.Identity, v chainview.BackendHeal
 		Label: "Your node most likely follows the existing rules",
 		Why: "If the network splits, Forktower watches the other side for you " +
 			"either way.",
-		Detail: id.Subversion,
+		Detail: "Based on how your node describes itself.",
 	}
 }
 
@@ -313,6 +317,5 @@ func (s *Server) checkLNConnected() ReadinessItem {
 		Label: "Not connected to your Lightning node yet",
 		Why: "Forktower is watching the chains, which is what matters first. " +
 			"Reading your channels arrives in a later version.",
-		Detail: "not configured (M2)",
 	}
 }

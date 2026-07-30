@@ -20,15 +20,31 @@ func assertItemIsFitToShow(t *testing.T, item ReadinessItem) {
 	if item.Label == "" {
 		t.Errorf("%s: no label, so the user sees a blank row", item.ID)
 	}
-	// The id is machine-readable and stable; it must never leak into what a user
-	// reads, and neither must an internal state name.
-	for _, leak := range []string{
-		item.ID, "sq_", "sf_", "ln_", "OK", "SYNCING", "DEGRADED", "DOWN",
-		"WRONG_BRANCH", "ECLIPSE_SUSPECT", "M2",
-	} {
-		if leak != "" && strings.Contains(item.Label, leak) {
-			t.Errorf("%s: the label contains %q, which means nothing to a user: %q",
-				item.ID, leak, item.Label)
+	// Every one of these is rendered on the page, so every one of them has to be
+	// fit to read. An earlier version of this checked only the label, and two
+	// leaks — a milestone name and a raw node version string — reached a real
+	// screen through `detail` before anyone noticed.
+	visible := map[string]string{
+		"label": item.Label, "why": item.Why, "detail": item.Detail,
+	}
+	if item.Action != nil {
+		visible["action label"] = item.Action.Label
+	}
+
+	// The id is machine-readable and stable; it must never appear in what a user
+	// reads, and neither must an internal state name, a milestone, or a raw
+	// string from a Bitcoin node.
+	leaks := []string{
+		item.ID, "sq_", "sf_", "ln_", "SYNCING", "DEGRADED", "DOWN",
+		"WRONG_BRANCH", "ECLIPSE_SUSPECT", "M1", "M2", "M3", "M4",
+		"/Satoshi", "Satoshi:", "subversion", "RPC", "ZMQ", "outpoint", "reorg",
+	}
+	for field, text := range visible {
+		for _, leak := range leaks {
+			if leak != "" && strings.Contains(text, leak) {
+				t.Errorf("%s: the %s contains %q, which means nothing to a user: %q",
+					item.ID, field, leak, text)
+			}
 		}
 	}
 	if !item.OK && item.Why == "" {

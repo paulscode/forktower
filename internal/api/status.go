@@ -52,6 +52,11 @@ type View struct {
 	PeerCount    int     `json:"peer_count"`
 	SyncProgress float64 `json:"sync_progress"`
 	Detail       string  `json:"detail"`
+	// Software is the node's own version string. Raw, and shown only under
+	// Advanced: it is the evidence behind "your node most likely follows these
+	// rules", and evidence belongs where someone goes looking for it rather than
+	// in a sentence on the front page.
+	Software string `json:"software,omitempty"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +65,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	state := s.sentinel.State()
 	checks := s.sentinel.Checks()
 	sfView, sqView := s.sentinel.Views()
+	sfIdentity, sqIdentity := s.sentinel.Identities()
 	readiness := s.Readiness(ctx)
 
 	writeData(w, Status{
@@ -75,8 +81,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}),
 		Split: splitStatus(state),
 		Views: map[string]View{
-			string(chainview.BranchSF): viewOf(sfView),
-			string(chainview.BranchSQ): viewOf(sqView),
+			string(chainview.BranchSF): viewOf(sfView, sfIdentity),
+			string(chainview.BranchSQ): viewOf(sqView, sqIdentity),
 		},
 		Readiness: readiness,
 	})
@@ -128,11 +134,12 @@ func branchInfo(tip *chainview.BlockMeta, fork *chainview.BlockRef, c sentinel.C
 	return info
 }
 
-func viewOf(h chainview.BackendHealth) View {
+func viewOf(h chainview.BackendHealth, id chainview.Identity) View {
 	return View{
 		State:        string(h.State),
 		PeerCount:    h.PeerCount,
 		SyncProgress: h.SyncProgress,
 		Detail:       h.Detail,
+		Software:     id.Subversion,
 	}
 }

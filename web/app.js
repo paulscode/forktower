@@ -370,6 +370,9 @@ function renderAdvanced(status) {
     const dl = document.createElement('dl');
     addPair(dl, 'Connections to other nodes', String(view.peer_count || 0));
     addPair(dl, 'Caught up', formatPercent(view.sync_progress));
+    if (view.software) {
+      addPair(dl, 'Software', view.software);
+    }
     if (view.detail) {
       addPair(dl, 'Note', view.detail);
     }
