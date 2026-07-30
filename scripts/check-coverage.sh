@@ -25,7 +25,7 @@ DEFAULT_MIN=70
 # Anything listed below DEFAULT_MIN must say why. These are floors, not targets.
 declare -A MIN=(
   # Pure decision logic: no I/O, so there is no excuse for a gap.
-  [internal/sentinel]=90
+  [internal/sentinel]=90  # decision logic: no I/O, so no excuse for a gap
   [internal/deadline]=90
   [internal/watcher]=85
   [internal/config]=75
