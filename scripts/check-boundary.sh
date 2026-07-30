@@ -24,13 +24,19 @@ priv="$(printf 'internal''_docs')"
 hosts="$(printf 'worthy''-maverick|wide''-treason|pauls''-umbrel')"
 PATTERN="${priv}|${ids}|${hosts}"
 
-# Files exempt by nature: this script (it names the patterns), .gitignore (it
-# must name the private directory in order to ignore it), and the private
-# directory itself (which is not shipped).
+# Files exempt by nature. Each has to name the private directory in order to do
+# its job, which is the opposite of leaking it:
+#
+#   - this script, which names the patterns it looks for;
+#   - .gitignore and .dockerignore, which must name the directory to exclude it —
+#     .dockerignore especially, since without that line the whole planning
+#     archive would be copied into every image build context;
+#   - the private directory itself, which is not shipped at all.
 mapfile -t candidates < <(
   git ls-files -z 2>/dev/null | tr '\0' '\n' |
     grep -v '^scripts/check-boundary\.sh$' |
     grep -v '^\.gitignore$' |
+    grep -v '^\.dockerignore$' |
     grep -v '^internal_docs/' || true
 )
 
