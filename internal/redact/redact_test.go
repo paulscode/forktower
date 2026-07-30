@@ -1,4 +1,4 @@
-package alert
+package redact
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ import (
 // The failure this exists for: a delivery error lands in the database, is
 // returned by the API, and is then included in the support bundle users are
 // invited to email to a maintainer. Anything secret in it has been handed over.
-func TestScrubErrorRemovesCredentials(t *testing.T) {
+func TestErrorRemovesCredentials(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -68,7 +68,7 @@ func TestScrubErrorRemovesCredentials(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := scrubError(errors.New(tc.in))
+			got := Error(errors.New(tc.in))
 
 			for _, secret := range tc.secrets {
 				if strings.Contains(got, secret) {
@@ -85,23 +85,23 @@ func TestScrubErrorRemovesCredentials(t *testing.T) {
 	}
 }
 
-func TestScrubErrorOnSuccess(t *testing.T) {
+func TestErrorOnSuccess(t *testing.T) {
 	t.Parallel()
-	if got := scrubError(nil); got != "" {
+	if got := Error(nil); got != "" {
 		t.Errorf("a successful delivery scrubbed to %q, want the empty string", got)
 	}
 }
 
 // A misconfigured endpoint can answer with a whole HTML page. Storing it would
 // bloat a database that is read back by the API and exported in diagnostics.
-func TestScrubErrorTruncates(t *testing.T) {
+func TestErrorTruncates(t *testing.T) {
 	t.Parallel()
 
-	long := strings.Repeat("a", MaxErrorLen*3)
-	got := scrubError(fmt.Errorf("the webhook replied 500: %s", long))
+	long := strings.Repeat("a", MaxLen*3)
+	got := Error(fmt.Errorf("the webhook replied 500: %s", long))
 
-	if len(got) > MaxErrorLen+len("…") {
-		t.Errorf("scrubbed error is %d bytes, want at most %d", len(got), MaxErrorLen)
+	if len(got) > MaxLen+len("…") {
+		t.Errorf("scrubbed error is %d bytes, want at most %d", len(got), MaxLen)
 	}
 	if !strings.HasPrefix(got, "the webhook replied 500") {
 		t.Errorf("truncation dropped the useful part: %q", got)
@@ -110,10 +110,10 @@ func TestScrubErrorTruncates(t *testing.T) {
 
 // Truncating inside a multi-byte character puts a broken string in the database,
 // which is a second problem to debug on top of the one being reported.
-func TestScrubErrorTruncatesOnRuneBoundaries(t *testing.T) {
+func TestErrorTruncatesOnRuneBoundaries(t *testing.T) {
 	t.Parallel()
 
-	got := scrubError(errors.New(strings.Repeat("é", MaxErrorLen)))
+	got := Error(errors.New(strings.Repeat("é", MaxLen)))
 	if !strings.HasSuffix(got, "…") {
 		t.Fatalf("expected a truncated string, got %q", got)
 	}
@@ -126,16 +126,16 @@ func TestScrubErrorTruncatesOnRuneBoundaries(t *testing.T) {
 
 // A plain error with nothing sensitive in it must come through readable, or the
 // scrubber makes every unrelated failure harder to diagnose.
-func TestScrubErrorLeavesOrdinaryMessagesAlone(t *testing.T) {
+func TestErrorLeavesOrdinaryMessagesAlone(t *testing.T) {
 	t.Parallel()
 
 	const in = "connection refused"
-	if got := scrubError(errors.New(in)); got != in {
+	if got := Error(errors.New(in)); got != in {
 		t.Errorf("got %q, want %q unchanged", got, in)
 	}
 }
 
-func TestRedactUrlKeepsWhatIsUseful(t *testing.T) {
+func TestRedactURLKeepsWhatIsUseful(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]string{
@@ -151,8 +151,60 @@ func TestRedactUrlKeepsWhatIsUseful(t *testing.T) {
 	}
 
 	for in, want := range cases {
-		if got := scrubString(in); got != want {
-			t.Errorf("scrubString(%q) = %q, want %q", in, got, want)
+		if got := String(in); got != want {
+			t.Errorf("String(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The empty string, and text with no URL in it at all, are the ordinary cases;
+// both must come through without a wrapper deciding they need one.
+func TestRedactingLeavesNothingBehindForNothing(t *testing.T) {
+	t.Parallel()
+
+	if got := String(""); got != "" {
+		t.Errorf("got %q, want the empty string", got)
+	}
+	if got := String("   "); got != "" {
+		t.Errorf("got %q, want whitespace trimmed away", got)
+	}
+	// A scheme-like string that is not a URL must not be mangled into one.
+	for _, in := range []string{"a:b", "ratio 3://4", "://"} {
+		if got := String(in); got == "" {
+			t.Errorf("String(%q) removed everything", in)
+		}
+	}
+}
+
+// A malformed URL is still treated as one: it is the shape a client produced,
+// and refusing to touch it because it does not parse is how a credential gets
+// through.
+func TestRedactingAMalformedUrl(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"https://user:pass@":     "https://",
+		"https://@host/path":     "https://host/" + Redacted,
+		"https://host:99999/x":   "https://host:99999/" + Redacted,
+		"weird+scheme-1://a/b?c": "weird+scheme-1://a/" + Redacted,
+	}
+	for in, want := range cases {
+		if got := String(in); got != want {
+			t.Errorf("String(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// redactURL is reached through a pattern that guarantees a scheme separator, so
+// its guard is unreachable from String. Exercised directly rather than left as a
+// branch nobody has ever run: a defensive path that has never executed is a
+// defence nobody has checked.
+func TestRedactUrlOnSomethingThatIsNotAUrl(t *testing.T) {
+	t.Parallel()
+
+	for _, in := range []string{"not a url", "", "host/path"} {
+		if got := redactURL(in); got != in {
+			t.Errorf("redactURL(%q) = %q, want it returned untouched", in, got)
 		}
 	}
 }

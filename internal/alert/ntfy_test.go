@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulscode/forktower/internal/redact"
 	"github.com/paulscode/forktower/internal/store"
 )
 
@@ -164,8 +165,8 @@ func TestNtfyReportsWhatTheServerSaid(t *testing.T) {
 	}
 	// Whatever the error says, nothing that reaches the database may carry the
 	// topic — it is a bearer secret.
-	if strings.Contains(scrubError(err), "/topic") {
-		t.Errorf("the topic survived scrubbing: %v", scrubError(err))
+	if strings.Contains(redact.Error(err), "/topic") {
+		t.Errorf("the topic survived scrubbing: %v", redact.Error(err))
 	}
 }
 

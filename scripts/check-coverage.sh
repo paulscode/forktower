@@ -44,6 +44,9 @@ declare -A MIN=(
   # read, and which requests are refused. The handlers are exercised end to end
   # over httptest, so there is no container excuse for a gap here either.
   [internal/api]=90
+  # Pure string handling on a security boundary: nothing to excuse a gap, and a
+  # miss here puts a working credential in a file people email to strangers.
+  [internal/redact]=95
 
   # I/O shells. The real exercise is in the integration suite, which needs
   # containers and does not run in this gate.
@@ -72,9 +75,12 @@ declare -A MIN=(
   # by the integration suite running the same scenarios against a real node.
   [internal/chainview/chainviewtest]=0
 
-  # Composition roots: wiring, almost no logic of their own.
-  [internal/app]=0
-  [cmd/forktowerd]=0
+  # Composition roots: wiring, almost no logic of their own. Held above zero
+  # anyway, because the *order* they wire things in is load-bearing — an engine
+  # that subscribes after another has already published loses events — and that
+  # ordering is only observable from a test that starts the whole daemon.
+  [internal/app]=70
+  [cmd/forktowerd]=60
   [cmd/forkbench]=0
 )
 

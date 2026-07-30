@@ -11,6 +11,7 @@ import (
 
 	"github.com/paulscode/forktower/internal/bus"
 	"github.com/paulscode/forktower/internal/config"
+	"github.com/paulscode/forktower/internal/redact"
 	"github.com/paulscode/forktower/internal/store"
 )
 
@@ -370,7 +371,7 @@ func (a *Alerter) sendPayload(ctx context.Context, r Route, al store.Alert, p Pa
 		Transport:   r.Transport.Name(),
 		AttemptedAt: a.now().Unix(),
 		OK:          err == nil,
-		Error:       scrubError(err),
+		Error:       redact.Error(err),
 	}); recErr != nil {
 		a.log.Warn("could not record a delivery attempt",
 			slog.String("transport", r.Transport.Name()),
@@ -381,7 +382,7 @@ func (a *Alerter) sendPayload(ctx context.Context, r Route, al store.Alert, p Pa
 		a.log.Warn("could not deliver an alert",
 			slog.String("transport", r.Transport.Name()),
 			slog.Int64("alert_id", al.ID),
-			slog.String("error", scrubError(err)))
+			slog.String("error", redact.Error(err)))
 	}
 	return err
 }

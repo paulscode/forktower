@@ -1,4 +1,12 @@
-package alert
+// Package redact removes credentials from text that is about to be stored,
+// logged, or shown to someone.
+//
+// One implementation, because the places this matters do not look alike: an
+// alert-delivery failure written to the database, a startup error printed to the
+// terminal, a log line that reaches the dashboard. Each of them routinely carries
+// a URL that an HTTP or SMTP client helpfully included, and those URLs carry
+// tokens.
+package redact
 
 import (
 	"fmt"
@@ -6,12 +14,12 @@ import (
 	"strings"
 )
 
-// MaxErrorLen bounds what is kept of a transport error.
+// MaxLen bounds what is kept.
 //
 // The column is read back by the API and travels in the support bundle users are
 // invited to send to a maintainer, so a multi-kilobyte HTML error page from a
 // misconfigured endpoint has no business being stored in full.
-const MaxErrorLen = 300
+const MaxLen = 300
 
 // Redacted is what replaces anything removed, so a reader can tell the difference
 // between a value that was withheld and one that was never there.
@@ -34,32 +42,30 @@ var (
 	bearerRe = regexp.MustCompile(`(?i)\bbearer\s+\S+`)
 )
 
-// scrubError renders an error safe to persist and to return over the API.
+// Error renders an error safe to persist, to log, and to show someone.
 //
-// Every transport error passes through here before it reaches
-// `alert_deliveries.error`. HTTP and SMTP clients routinely echo the request URL,
-// and a webhook or ntfy URL may carry a token in its userinfo, its query, or its
-// path — an ntfy topic name *is* a bearer secret. A nil error scrubs to the empty
-// string, so a successful delivery needs no special case at the call site.
-func scrubError(err error) string {
+// HTTP and SMTP clients routinely echo the request URL, and a webhook, ntfy or
+// node URL may carry a credential in its userinfo, its query, or its path — an
+// ntfy topic name *is* a bearer secret. A nil error redacts to the empty string,
+// so a success needs no special case at the call site.
+func Error(err error) string {
 	if err == nil {
 		return ""
 	}
-	return scrubString(err.Error())
+	return String(err.Error())
 }
 
-// scrubString is the same treatment for a message that is not an error, such as a
-// status line a transport wants to record.
-func scrubString(s string) string {
+// String is the same treatment for text that is not an error.
+func String(s string) string {
 	s = urlRe.ReplaceAllStringFunc(s, redactURL)
 	s = credRe.ReplaceAllString(s, "$1="+Redacted)
 	s = bearerRe.ReplaceAllString(s, "bearer "+Redacted)
 
 	s = strings.TrimSpace(s)
-	if len(s) > MaxErrorLen {
+	if len(s) > MaxLen {
 		// Cut on a rune boundary; a half-written rune in the database is a second
 		// problem to debug on top of the one being reported.
-		cut := MaxErrorLen
+		cut := MaxLen
 		for cut > 0 && !isRuneStart(s[cut]) {
 			cut--
 		}

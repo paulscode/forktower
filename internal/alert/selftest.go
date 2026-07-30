@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/paulscode/forktower/internal/redact"
 	"github.com/paulscode/forktower/internal/store"
 )
 
@@ -128,7 +129,7 @@ func (a *Alerter) TestTransports(ctx context.Context, names ...string) ([]SelfTe
 			results[i] = SelfTestResult{
 				Transport: r.Transport.Name(),
 				OK:        sendErr == nil,
-				Error:     scrubError(sendErr),
+				Error:     redact.Error(sendErr),
 			}
 		}()
 	}
