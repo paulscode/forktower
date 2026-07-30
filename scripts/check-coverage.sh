@@ -32,7 +32,11 @@ declare -A MIN=(
 
   # I/O shells. The real exercise is in the integration suite, which needs
   # containers and does not run in this gate.
-  [internal/store]=60
+  #
+  # store started at a floor of 60 on that reasoning and reached 79.9% with an
+  # in-process SQLite database, which needs no container — so the floor moved up
+  # to keep the achievement. Floors ratchet.
+  [internal/store]=75
   [internal/chainview/bitcoindview]=40
   [internal/registry/lnd]=40
   [internal/registry/cln]=40
