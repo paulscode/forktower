@@ -46,6 +46,9 @@ type Config struct {
 	ScanInterval time.Duration
 	// SendTimeout bounds one delivery attempt. Zero uses DefaultSendTimeout.
 	SendTimeout time.Duration
+	// SelfTestInterval is how often a synthetic alert is pushed through every
+	// transport. Zero uses DefaultSelfTestInterval.
+	SelfTestInterval time.Duration
 }
 
 func (c Config) withDefaults() Config {
@@ -57,6 +60,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.SendTimeout <= 0 {
 		c.SendTimeout = DefaultSendTimeout
+	}
+	if c.SelfTestInterval <= 0 {
+		c.SelfTestInterval = DefaultSelfTestInterval
 	}
 	return c
 }
@@ -133,14 +139,16 @@ func New(
 
 // Run consumes events and delivers alerts until the context ends.
 //
-// Two goroutines: one reads the bus and writes to storage, the other delivers.
-// They are separate because delivery is network I/O and the reader must never
-// wait on it — a subscriber that falls behind loses events, and a lost
-// "the chains have separated" is the one failure this software exists to prevent.
+// Three goroutines: one reads the bus and writes to storage, one delivers, and
+// one runs the notification self-test on its schedule. The first two are separate
+// because delivery is network I/O and the reader must never wait on it — a
+// subscriber that falls behind loses events, and a lost "the chains have
+// separated" is the one failure this software exists to prevent.
 func (a *Alerter) Run(ctx context.Context) error {
 	var g errgroup.Group
 	g.Go(func() error { return a.consume(ctx, a.events) })
 	g.Go(func() error { return a.deliverQueued(ctx) })
+	g.Go(func() error { return a.selfTestLoop(ctx) })
 	return g.Wait()
 }
 
@@ -174,7 +182,11 @@ func (a *Alerter) handle(ctx context.Context, e bus.Event) {
 	if !ok {
 		return
 	}
+	a.raise(ctx, candidate)
+}
 
+// raise records an alert and, if it is news, announces and delivers it.
+func (a *Alerter) raise(ctx context.Context, candidate Candidate) {
 	now := a.now().Unix()
 	record := store.Alert{
 		Tier:         candidate.Tier,
@@ -315,7 +327,7 @@ func (a *Alerter) Deliver(ctx context.Context, al store.Alert) int {
 			continue
 		}
 		g.Go(func() error {
-			results[i] = a.send(ctx, r, al)
+			results[i] = a.send(ctx, r, al) == nil
 			return nil
 		})
 	}
@@ -330,11 +342,21 @@ func (a *Alerter) Deliver(ctx context.Context, al store.Alert) int {
 	return sent
 }
 
-func (a *Alerter) send(ctx context.Context, r Route, al store.Alert) bool {
+func (a *Alerter) send(ctx context.Context, r Route, al store.Alert) error {
+	return a.sendPayload(ctx, r, al, PayloadFor(al, r.IncludeDetail))
+}
+
+// sendPayload delivers a payload the caller has already decided on.
+//
+// Separate from send because the self-test is the one alert whose text is the
+// same for everyone: it says only that notifications are working, which reveals
+// nothing about the user's situation to anyone, and replacing it with "open your
+// dashboard to see what happened" would alarm the user with their own alarm.
+func (a *Alerter) sendPayload(ctx context.Context, r Route, al store.Alert, p Payload) error {
 	sendCtx, cancel := context.WithTimeout(ctx, a.cfg.SendTimeout)
 	defer cancel()
 
-	err := r.Transport.Send(sendCtx, PayloadFor(al, r.IncludeDetail))
+	err := r.Transport.Send(sendCtx, p)
 
 	// Recorded with a context that survives shutdown, and scrubbed before it is
 	// written: a transport error routinely echoes the request URL, and that URL
@@ -360,9 +382,8 @@ func (a *Alerter) send(ctx context.Context, r Route, al store.Alert) bool {
 			slog.String("transport", r.Transport.Name()),
 			slog.Int64("alert_id", al.ID),
 			slog.String("error", scrubError(err)))
-		return false
 	}
-	return true
+	return err
 }
 
 // writeCtx returns a context for storage writes that survives shutdown.
@@ -392,8 +413,33 @@ func RoutesFromConfig(cfg []config.TransportConfig, timeout time.Duration) ([]Ro
 				MinTier:       t.MinTier,
 				IncludeDetail: t.EffectiveIncludeDetail(),
 			})
-		case config.TransportNtfy, config.TransportSMTP, config.TransportTelegram,
-			config.TransportStartOS, config.TransportUmbrel:
+		case config.TransportNtfy:
+			n, err := NewNtfy(t.Name, t.URL, t.Token, timeout)
+			if err != nil {
+				return nil, err
+			}
+			routes = append(routes, Route{
+				Transport:     n,
+				MinTier:       t.MinTier,
+				IncludeDetail: t.EffectiveIncludeDetail(),
+			})
+
+		case config.TransportSMTP:
+			m, err := NewSMTP(SMTPOptions{
+				Name: t.Name, Host: t.Host, Port: t.Port,
+				User: t.User, Pass: t.Pass, From: t.From, To: t.To,
+				StartTLS: t.StartTLS, Timeout: timeout,
+			})
+			if err != nil {
+				return nil, err
+			}
+			routes = append(routes, Route{
+				Transport:     m,
+				MinTier:       t.MinTier,
+				IncludeDetail: t.EffectiveIncludeDetail(),
+			})
+
+		case config.TransportTelegram, config.TransportStartOS, config.TransportUmbrel:
 			return nil, fmt.Errorf(
 				"transport %q is of type %q, which this version cannot deliver to yet",
 				t.Name, t.Type)

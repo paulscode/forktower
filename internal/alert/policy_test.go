@@ -356,17 +356,6 @@ func TestRoutesFromConfig(t *testing.T) {
 		t.Error("a webhook defaulted to sending detail to a third party")
 	}
 
-	notYet := []config.TransportType{
-		config.TransportNtfy, config.TransportSMTP, config.TransportTelegram,
-		config.TransportStartOS, config.TransportUmbrel,
-	}
-	for _, typ := range notYet {
-		_, err := RoutesFromConfig([]config.TransportConfig{{Name: "n", Type: typ}}, 0)
-		if err == nil {
-			t.Errorf("type %q was accepted but nothing would ever be delivered through it", typ)
-		}
-	}
-
 	if _, err := RoutesFromConfig([]config.TransportConfig{
 		{Name: "n", Type: config.TransportType("carrier-pigeon")},
 	}, 0); err == nil {
@@ -465,5 +454,63 @@ func TestViewLabelForAnUnknownBranch(t *testing.T) {
 	}
 	if strings.Contains(c.Message, "  ") || strings.HasSuffix(c.Message, " .") {
 		t.Errorf("the message reads badly with an unknown view: %q", c.Message)
+	}
+}
+
+// Every transport type M1 claims to support must actually build, and the rest
+// must be refused rather than silently skipped.
+func TestRoutesFromConfigForEveryM1Transport(t *testing.T) {
+	t.Parallel()
+
+	routes, err := RoutesFromConfig([]config.TransportConfig{
+		{
+			Name: "hook", Type: config.TransportWebhook,
+			URL: "https://example.com/hook", MinTier: config.MinTierInfo,
+		},
+		{
+			Name: "my-ntfy", Type: config.TransportNtfy,
+			URL: "https://ntfy.example.com/forktower", Token: "tk", MinTier: config.MinTierWarning,
+		},
+		{
+			Name: "email", Type: config.TransportSMTP,
+			Host: "mail.example.com", Port: 587, From: "a@example.com", To: "b@example.com",
+			MinTier: config.MinTierCritical,
+		},
+	}, 0)
+	if err != nil {
+		t.Fatalf("a valid configuration was refused: %v", err)
+	}
+	if len(routes) != 3 {
+		t.Fatalf("got %d routes, want 3", len(routes))
+	}
+	for i, want := range []string{"hook", "my-ntfy", "email"} {
+		if routes[i].Transport.Name() != want {
+			t.Errorf("route %d is %q, want %q", i, routes[i].Transport.Name(), want)
+		}
+		// All three are third-party, so none may default to sending detail.
+		if routes[i].IncludeDetail {
+			t.Errorf("transport %q defaulted to sending detail to a third party", want)
+		}
+	}
+
+	notYet := []config.TransportType{
+		config.TransportTelegram, config.TransportStartOS, config.TransportUmbrel,
+	}
+	for _, typ := range notYet {
+		if _, err := RoutesFromConfig([]config.TransportConfig{{Name: "n", Type: typ}}, 0); err == nil {
+			t.Errorf("type %q was accepted but nothing would ever be delivered through it", typ)
+		}
+	}
+
+	// A misconfigured transport of a supported type is refused too, at startup
+	// rather than during a split.
+	bad := []config.TransportConfig{
+		{Name: "n", Type: config.TransportNtfy, URL: "https://ntfy.sh"},
+		{Name: "n", Type: config.TransportSMTP, Host: "", Port: 587},
+	}
+	for _, tc := range bad {
+		if _, err := RoutesFromConfig([]config.TransportConfig{tc}, 0); err == nil {
+			t.Errorf("accepted a %q transport that could never deliver", tc.Type)
+		}
 	}
 }

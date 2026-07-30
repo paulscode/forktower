@@ -94,6 +94,14 @@ func newHarness(t *testing.T, routes []Route, mutate func(*Config)) *harness {
 	clock := &atomic.Int64{}
 	clock.Store(1_790_000_000)
 
+	// The self-test fires on its own at first run, which is the behaviour a user
+	// wants and a nuisance in a test asserting on exact alert counts. Recording a
+	// run just now switches it off; the tests that are about the self-test clear
+	// this again.
+	if err := st.SetMetaInt64(context.Background(), store.MetaLastSelfTestAt, clock.Load()); err != nil {
+		t.Fatal(err)
+	}
+
 	cfg := Config{ScanInterval: 5 * time.Millisecond, SendTimeout: time.Second}
 	if mutate != nil {
 		mutate(&cfg)

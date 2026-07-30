@@ -82,6 +82,30 @@ func Deliverable(t store.Tier, threshold config.MinTier) bool {
 // acknowledges it.
 func Urgent(t store.Tier) bool { return tierRank(t) >= minTierRank(config.MinTierCritical) }
 
+// The short phrase a transport puts before the message: an ntfy title, an email
+// subject. Defined once, here with the rest of the user-facing vocabulary, so
+// that two transports cannot drift into describing the same urgency differently.
+//
+// Never a bare severity word. "warning" tells a user nothing they can act on, and
+// this is the line they read on a lock screen before deciding whether to look.
+const (
+	headlineUrgent    = "Forktower: urgent"
+	headlineAttention = "Forktower: attention needed"
+	headlineRoutine   = "Forktower: an update"
+)
+
+// Headline is the phrase that introduces an alert of this tier.
+func Headline(t store.Tier) string {
+	switch tierRank(t) {
+	case 3:
+		return headlineUrgent
+	case 2:
+		return headlineAttention
+	default:
+		return headlineRoutine
+	}
+}
+
 // ContentFreeMessage is what a third-party transport is told when detail is off.
 //
 // It carries an instruction rather than a bare tier name: "warning" tells a user

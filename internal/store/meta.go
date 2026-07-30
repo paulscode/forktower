@@ -20,6 +20,11 @@ const (
 	// MetaTrustAnchorHeight is how far the user's own node is treated as already
 	// verified history.
 	MetaTrustAnchorHeight = "trust_anchor_height"
+	// MetaLastSelfTestAt records when a synthetic alert was last pushed through
+	// every configured transport. Absent means it has never run, which is what
+	// makes the first one fire on its own: an alarm nobody has proven works is
+	// not an alarm.
+	MetaLastSelfTestAt = "last_self_test_at"
 )
 
 // SetMeta stores a single key/value pair, replacing any previous value.
