@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forktower</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!--
+  One question, answered above the fold: am I OK?
+
+  Everything below the headline is progressive disclosure. Anything that needs a
+  hash, a height, or a word from this project's own vocabulary lives in Advanced,
+  which is collapsed until someone asks for it.
+-->
+
+<header class="masthead">
+  <h1>Forktower</h1>
+  <p class="tagline">Watching both chains on your behalf.</p>
+</header>
+
+<main>
+  <!-- Shown only when the daemon asks for a password. -->
+  <section id="signin" class="card hidden" aria-labelledby="signin-title">
+    <h2 id="signin-title">Sign in</h2>
+    <form id="signin-form">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password">
+      <button type="submit">Sign in</button>
+    </form>
+    <p id="signin-error" class="problem" role="alert"></p>
+  </section>
+
+  <section id="headline" class="card headline" aria-live="polite">
+    <p class="state-label" id="headline-state-label"></p>
+    <h2 id="headline-title">Connecting to Forktower…</h2>
+    <p id="headline-detail" class="detail"></p>
+    <button id="headline-action" class="action hidden" type="button"></button>
+    <p id="headline-since" class="since"></p>
+  </section>
+
+  <section class="card" aria-labelledby="readiness-title">
+    <h2 id="readiness-title">What is in place</h2>
+    <ul id="readiness" class="checklist"></ul>
+  </section>
+
+  <section class="card" aria-labelledby="alerts-title">
+    <h2 id="alerts-title">Things worth knowing</h2>
+    <p id="alerts-empty" class="quiet">Nothing to report.</p>
+    <ul id="alerts" class="alerts"></ul>
+    <button id="test-alerts" class="secondary" type="button">Send a test alert</button>
+    <p id="test-result" class="quiet" role="status"></p>
+  </section>
+
+  <section class="card" aria-labelledby="timeline-title">
+    <h2 id="timeline-title">What has happened</h2>
+    <p id="timeline-empty" class="quiet">Nothing yet.</p>
+    <ol id="timeline" class="timeline"></ol>
+  </section>
+
+  <details class="card" id="advanced">
+    <summary>Advanced</summary>
+    <p class="quiet">
+      Technical detail. You do not need any of this to know whether you are OK —
+      the answer to that is at the top of the page.
+    </p>
+    <div id="branches" class="branches"></div>
+    <h3>Chain views</h3>
+    <div id="views" class="branches"></div>
+  </details>
+</main>
+
+<footer>
+  <p id="connection" class="quiet"></p>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

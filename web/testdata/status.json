@@ -1,0 +1,95 @@
+{
+  "headline": {
+    "state": "attention",
+    "title": "Something needs a look — not urgent.",
+    "detail": "The chains have separated: your node and the rest of the network no longer agree. Forktower is watching both.",
+    "action": null,
+    "since": 1790000000
+  },
+  "split": {
+    "state": "SPLIT",
+    "fork": {
+      "hash": "00000000000000000000000000000000746e696f702d6e6f6974617261706573",
+      "height": 961632,
+      "detected_at": 1790000000
+    },
+    "branches": {
+      "sf": {
+        "tip_hash": "00000000000000000000000000000000000000000000000000007069742d6673",
+        "tip_height": 961771,
+        "since_fork_depth": 139,
+        "avg_interval_secs": 600
+      },
+      "sq": {
+        "tip_hash": "00000000000000000000000000000000000000000000000000007069742d7173",
+        "tip_height": 961753,
+        "since_fork_depth": 121,
+        "avg_interval_secs": 600
+      }
+    }
+  },
+  "views": {
+    "sf": {
+      "state": "OK",
+      "peer_count": 10,
+      "sync_progress": 1,
+      "detail": ""
+    },
+    "sq": {
+      "state": "OK",
+      "peer_count": 4,
+      "sync_progress": 1,
+      "detail": ""
+    }
+  },
+  "readiness": [
+    {
+      "id": "sq_backend_distinct",
+      "ok": true,
+      "label": "Watching two independent views of the chain",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "sq_synced",
+      "ok": true,
+      "label": "Watching the other chain",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "sq_on_branch",
+      "ok": true,
+      "label": "The other chain is the one it should be",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "sf_enforcing",
+      "ok": true,
+      "label": "Your node most likely follows the new rules",
+      "why": "If the network splits, your node would be on the side enforcing them. Forktower watches the other side for you.",
+      "detail": "/Satoshi:29.3.0/Knots:20260508/",
+      "action": null
+    },
+    {
+      "id": "alert_transports",
+      "ok": true,
+      "label": "Alerts can reach you",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "ln_connected",
+      "ok": false,
+      "label": "Not connected to your Lightning node yet",
+      "why": "Forktower is watching the chains, which is what matters first. Reading your channels arrives in a later version.",
+      "detail": "not configured (M2)",
+      "action": null
+    }
+  ]
+}

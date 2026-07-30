@@ -1,0 +1,133 @@
+/*
+  No inline styles anywhere, and no inline scripts: the policy this page is
+  served with allows neither. Everything visual is driven by a class, which also
+  means one place decides what each of the five states looks like.
+*/
+
+:root {
+  --bg: #14161a;
+  --card: #1c1f26;
+  --edge: #2a2f38;
+  --text: #e8eaed;
+  --quiet: #9aa3ae;
+
+  --calm: #3fa66b;
+  --note: #d4a13c;
+  --urgent: #d9722f;
+  --alarm: #cf4646;
+  --waiting: #5b7fa6;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 1rem 3rem;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main { max-width: 46rem; margin: 0 auto; }
+
+.masthead { max-width: 46rem; margin: 0 auto; padding: 1.5rem 0 0.5rem; }
+.masthead h1 { margin: 0; font-size: 1.25rem; letter-spacing: 0.02em; }
+.tagline { margin: 0.15rem 0 0; color: var(--quiet); font-size: 0.9rem; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  padding: 1.1rem 1.25rem;
+  margin: 1rem 0;
+}
+
+h2 { margin: 0 0 0.35rem; font-size: 1.05rem; }
+h3 { margin: 1.2rem 0 0.4rem; font-size: 0.95rem; color: var(--quiet); }
+
+.quiet { color: var(--quiet); font-size: 0.9rem; }
+.hidden { display: none; }
+
+/* The headline. Colour, weight and the label all follow from one field, so a
+   state the page does not recognise still renders rather than going blank. */
+.headline { border-left: 5px solid var(--waiting); }
+.headline h2 { font-size: 1.5rem; line-height: 1.25; margin-bottom: 0.4rem; }
+.headline .detail { margin: 0 0 0.5rem; }
+.headline .since { margin: 0.5rem 0 0; color: var(--quiet); font-size: 0.85rem; }
+
+.state-label {
+  margin: 0 0 0.3rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--quiet);
+}
+
+.headline.state-protected { border-left-color: var(--calm); }
+.headline.state-protected .state-label { color: var(--calm); }
+.headline.state-getting_ready { border-left-color: var(--waiting); }
+.headline.state-getting_ready .state-label { color: var(--waiting); }
+.headline.state-attention { border-left-color: var(--note); }
+.headline.state-attention .state-label { color: var(--note); }
+.headline.state-action_needed { border-left-color: var(--urgent); }
+.headline.state-action_needed .state-label { color: var(--urgent); }
+.headline.state-at_risk { border-left-color: var(--alarm); }
+.headline.state-at_risk .state-label { color: var(--alarm); }
+
+button {
+  font: inherit;
+  border: 0;
+  border-radius: 7px;
+  padding: 0.5rem 0.95rem;
+  background: var(--waiting);
+  color: #fff;
+  cursor: pointer;
+}
+button.secondary { background: transparent; border: 1px solid var(--edge); color: var(--text); }
+button:disabled { opacity: 0.55; cursor: default; }
+
+.checklist, .alerts, .timeline { list-style: none; margin: 0; padding: 0; }
+
+.checklist li {
+  display: grid;
+  grid-template-columns: 1.4rem 1fr;
+  gap: 0.15rem 0.5rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--edge);
+}
+.checklist li:first-child { border-top: 0; }
+.checklist .mark { font-weight: 700; }
+.checklist .ok .mark { color: var(--calm); }
+.checklist .problem-item .mark { color: var(--urgent); }
+.checklist .noting .mark { color: var(--quiet); }
+.checklist .label { font-weight: 600; }
+.checklist .why, .checklist .detail { grid-column: 2; color: var(--quiet); font-size: 0.9rem; }
+.checklist button { grid-column: 2; justify-self: start; margin-top: 0.4rem; }
+
+.alerts li { padding: 0.6rem 0; border-top: 1px solid var(--edge); }
+.alerts li:first-child { border-top: 0; }
+.alerts .tier { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.alerts .tier-critical, .alerts .tier-loss { color: var(--alarm); }
+.alerts .tier-warning { color: var(--note); }
+.alerts .tier-info, .alerts .tier-resolved { color: var(--quiet); }
+.alerts .acked { color: var(--quiet); }
+.alerts button { margin-top: 0.4rem; }
+
+.timeline li { padding: 0.4rem 0; border-top: 1px solid var(--edge); font-size: 0.92rem; }
+.timeline li:first-child { border-top: 0; }
+.timeline .when { color: var(--quiet); font-size: 0.85rem; }
+
+.branches { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.75rem; }
+.tile { border: 1px solid var(--edge); border-radius: 8px; padding: 0.7rem 0.85rem; }
+.tile h4 { margin: 0 0 0.35rem; font-size: 0.9rem; }
+.tile dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.6rem; font-size: 0.85rem; }
+.tile dt { color: var(--quiet); }
+.tile dd { margin: 0; overflow-wrap: anywhere; }
+
+.problem { color: var(--alarm); }
+
+form { display: grid; gap: 0.5rem; max-width: 22rem; }
+input { font: inherit; padding: 0.5rem; border-radius: 7px; border: 1px solid var(--edge);
+        background: var(--bg); color: var(--text); }
+
+footer { max-width: 46rem; margin: 0 auto; }
