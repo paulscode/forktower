@@ -111,6 +111,11 @@ cover-html:
 # run never touches whatever is in a real deployment's data directory.
 run-dev: build
 	@mkdir -p .dev
+	@# Git records only the executable bit, so a checked-out config arrives
+	@# world-readable and the daemon rightly complains that a file holding
+	@# credentials is readable by others. Tightening it here keeps that warning
+	@# meaningful: one that fires every single time is one people stop reading.
+	@chmod 600 deploy/forkbench/forktower.dev.toml
 	$(BIN_DIR)/forktowerd --config deploy/forkbench/forktower.dev.toml
 
 ## forkbench-up: bring up the local two-chain test world
