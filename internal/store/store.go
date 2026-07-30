@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite" // pure-Go driver; no cgo, so cross-compilation stays free
 )
@@ -35,6 +36,9 @@ const (
 type Store struct {
 	db   *sql.DB
 	path string
+
+	// closed makes Close idempotent without a mutex on every query.
+	closed atomic.Bool
 
 	// Warnings holds non-fatal problems noticed while opening: a permissive file
 	// mode, for instance. Reported rather than logged here so that the caller
@@ -171,13 +175,19 @@ func fileExists(path string) bool {
 }
 
 // Close releases the database. Safe to call more than once.
+// Closing twice is harmless, and a query that arrives after the close returns an
+// error rather than panicking.
+//
+// The handle is deliberately not discarded. Nilling it made every later call
+// dereference nothing and take the whole process down — and shutdown is not
+// perfectly ordered, so a request already in flight when the daemon stops is the
+// ordinary case, not a misuse. database/sql answers a closed handle with an
+// error, which is what every caller here is already written to expect.
 func (s *Store) Close() error {
-	if s.db == nil {
+	if s.db == nil || s.closed.Swap(true) {
 		return nil
 	}
-	err := s.db.Close()
-	s.db = nil
-	if err != nil {
+	if err := s.db.Close(); err != nil {
 		return fmt.Errorf("closing database %s: %w", s.path, err)
 	}
 	return nil

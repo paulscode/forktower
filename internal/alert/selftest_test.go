@@ -2,6 +2,8 @@ package alert
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -309,5 +311,112 @@ func TestTheSelfTestIsStampedWhenItBeganNotWhenItFinished(t *testing.T) {
 	if at != started {
 		t.Errorf("recorded %d, want %d — the schedule drifts by however long delivery took",
 			at, started)
+	}
+}
+
+// Testing one transport is a different act from the scheduled test of all of
+// them, and must not disturb the schedule: someone checking one webhook should
+// not push the weekly test of the others a week further out.
+func TestTestingOneTransportLeavesTheScheduleAlone(t *testing.T) {
+	t.Parallel()
+
+	phone := newRecorder("my-phone")
+	email := newRecorder("my-email")
+	h := newHarness(t, []Route{
+		{Transport: phone, MinTier: config.MinTierInfo},
+		{Transport: email, MinTier: config.MinTierInfo},
+	}, nil)
+	ctx := context.Background()
+
+	before, err := h.store.GetMetaInt64(ctx, store.MetaLastSelfTestAt, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.clock.Add(3600)
+
+	results, err := h.al.TestTransports(ctx, "my-phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Transport != "my-phone" {
+		t.Fatalf("got %+v, want only the named transport", results)
+	}
+	if email.count() != 0 {
+		t.Error("a transport nobody asked about was tested")
+	}
+
+	after, err := h.store.GetMetaInt64(ctx, store.MetaLastSelfTestAt, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("the scheduled test moved from %d to %d", before, after)
+	}
+}
+
+// A name nothing answers to is refused. A cheerful empty result would let
+// someone conclude their notifications were fine when they had typed a name that
+// reaches nothing.
+func TestTestingATransportThatDoesNotExist(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, []Route{{Transport: newRecorder("my-phone"), MinTier: config.MinTierInfo}}, nil)
+
+	results, err := h.al.TestTransports(context.Background(), "typo")
+	if !errors.Is(err, ErrNoSuchTransport) {
+		t.Errorf("got %v, want ErrNoSuchTransport", err)
+	}
+	if results != nil {
+		t.Errorf("got %+v, want no results at all", results)
+	}
+	if !strings.Contains(fmt.Sprint(err), "typo") {
+		t.Errorf("the error does not say which name was wrong: %v", err)
+	}
+}
+
+func TestTransportNames(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, []Route{
+		{Transport: newRecorder("first"), MinTier: config.MinTierInfo},
+		{Transport: newRecorder("second"), MinTier: config.MinTierInfo},
+	}, nil)
+
+	got := h.al.TransportNames()
+	if len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Errorf("got %v, want them in configuration order", got)
+	}
+
+	// Mutating the result must not reorder the alerter's own routes.
+	got[0] = "tampered"
+	if h.al.TransportNames()[0] != "first" {
+		t.Error("the returned slice aliases internal state")
+	}
+}
+
+// Exported so that anything with something to say goes through the same
+// deduplication, escalation and payload rules as everything else, rather than
+// each caller inventing its own.
+func TestRaiseGoesThroughTheSameRules(t *testing.T) {
+	t.Parallel()
+
+	rec := newRecorder("phone")
+	h := newHarness(t, []Route{{Transport: rec, MinTier: config.MinTierInfo}}, nil)
+	h.start(t)
+	ctx := context.Background()
+
+	candidate := Candidate{
+		Tier: store.TierWarning, Kind: "login_failures", DedupKey: "login_failures",
+		Message: "Someone has tried and failed to sign in several times.",
+	}
+	h.al.Raise(ctx, candidate)
+	waitFor(t, "the raised alert to be delivered", func() bool { return rec.count() == 1 })
+
+	// And it deduplicates like anything else: raising it again while it is still
+	// in front of the user is not news.
+	h.al.Raise(ctx, candidate)
+	h.barrier(t, rec)
+	if n := rec.countKind("login_failures"); n != 1 {
+		t.Errorf("the same condition was delivered %d times", n)
 	}
 }

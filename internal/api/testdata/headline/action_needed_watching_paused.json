@@ -1,0 +1,10 @@
+{
+  "state": "action_needed",
+  "title": "You need to do something now.",
+  "detail": "Forktower stopped watching because it is not looking at the chain it should be.",
+  "action": {
+    "label": "Fix the setup",
+    "href": "#setup"
+  },
+  "since": 1790000500
+}

@@ -1,0 +1,10 @@
+{
+  "state": "at_risk",
+  "title": "Money is at risk right now.",
+  "detail": "A channel is being closed unfairly and there is a limited time to respond.",
+  "action": {
+    "label": "See what is happening",
+    "href": "#exposure"
+  },
+  "since": 1790001000
+}

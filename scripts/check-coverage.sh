@@ -40,6 +40,10 @@ declare -A MIN=(
   # whole package is, because the delivery half is exercised against an httptest
   # server rather than needing a container.
   [internal/alert]=90
+  # Mostly decision: which of five states the user is shown, which words they
+  # read, and which requests are refused. The handlers are exercised end to end
+  # over httptest, so there is no container excuse for a gap here either.
+  [internal/api]=90
 
   # I/O shells. The real exercise is in the integration suite, which needs
   # containers and does not run in this gate.

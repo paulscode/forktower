@@ -1,0 +1,10 @@
+{
+  "state": "attention",
+  "title": "Something needs a look — not urgent.",
+  "detail": "Forktower would not see a channel being closed on that chain.",
+  "action": {
+    "label": "Fix the setup",
+    "href": "#setup"
+  },
+  "since": 0
+}

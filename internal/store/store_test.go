@@ -283,3 +283,41 @@ func TestMetaInt64RejectsNonNumeric(t *testing.T) {
 		t.Errorf("error names neither the key nor the value: %v", err)
 	}
 }
+
+// Shutdown is not perfectly ordered: a request already in flight when the daemon
+// stops is the ordinary case, not a misuse. An earlier version discarded the
+// database handle on Close, so every later call dereferenced nothing and took the
+// whole process down with it.
+func TestUsingTheStoreAfterCloseFailsRatherThanCrashing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := openTemp(t)
+
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Closing twice is harmless: two shutdown paths racing must not produce an
+	// error the operator has to interpret.
+	if err := s.Close(); err != nil {
+		t.Errorf("closing twice returned %v", err)
+	}
+
+	if _, err := s.ListAlerts(ctx, AlertFilter{}); err == nil {
+		t.Error("a read after close succeeded")
+	}
+	if _, err := s.UpsertAlert(ctx, sampleAlert()); err == nil {
+		t.Error("a write after close succeeded")
+	}
+	if _, err := s.AckAlert(ctx, 1, 1); err == nil {
+		t.Error("an acknowledgement after close succeeded")
+	}
+	if _, err := s.GetSplitState(ctx); err == nil {
+		t.Error("reading the split state after close succeeded")
+	}
+	if err := s.SetMetaInt64(ctx, MetaTrustAnchorHeight, 1); err == nil {
+		t.Error("a meta write after close succeeded")
+	}
+	if _, err := s.ListTimeline(ctx, 0, 10); err == nil {
+		t.Error("reading the timeline after close succeeded")
+	}
+}

@@ -104,6 +104,13 @@ type Sentinel struct {
 	// blocksSinceVerify counts new blocks on the watched chain since the last
 	// branch-identity check.
 	blocksSinceVerify int
+	// sfBackend and sqBackend are the last full health reports, kept for the
+	// dashboard. The decision logic uses only the state; peer counts and sync
+	// progress are context for a human.
+	sfBackend, sqBackend chainview.BackendHealth
+	// sfIdentity and sqIdentity are what each node said about itself at startup.
+	sfIdentity, sqIdentity chainview.Identity
+
 	// paused is set when watching must stop because the view cannot be trusted.
 	// Scanning the wrong chain produces false comfort, which is worse than
 	// producing nothing.
@@ -167,6 +174,28 @@ func (s *Sentinel) State() State {
 	return s.state
 }
 
+// Views returns what each backend last reported about itself.
+//
+// Cached from the reads the sentinel already performs rather than fetched again:
+// a second path to the same nodes would double the load, and worse, could show
+// the dashboard a different answer from the one decisions were made on.
+func (s *Sentinel) Views() (sf, sq chainview.BackendHealth) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sfBackend, s.sqBackend
+}
+
+// Identities returns what each node says about itself, as read at startup.
+//
+// Zero-valued until Preflight has run. Used to report, best-effort, which set of
+// rules the user's own node appears to follow — for many operators that is the
+// first thing that tells them where they stand.
+func (s *Sentinel) Identities() (sf, sq chainview.Identity) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sfIdentity, s.sqIdentity
+}
+
 // Checks returns what the verifications concluded.
 func (s *Sentinel) Checks() Checks {
 	s.mu.RLock()
@@ -207,6 +236,8 @@ func (s *Sentinel) Preflight(ctx context.Context) error {
 	s.checks.SameNetwork = true
 	s.mu.Unlock()
 
+	s.rememberIdentities(ctx)
+
 	err := chainview.VerifyDistinct(ctx, s.sf, s.sq)
 	switch {
 	case errors.Is(err, chainview.ErrSameNode):
@@ -230,6 +261,28 @@ func (s *Sentinel) Preflight(ctx context.Context) error {
 		s.mu.Unlock()
 	}
 	return nil
+}
+
+// rememberIdentities caches what each node says about itself. Failure is not an
+// error: the identity is context for the dashboard, and the check that actually
+// depends on it reports honestly when it is missing.
+func (s *Sentinel) rememberIdentities(ctx context.Context) {
+	read := func(v chainview.ChainView) chainview.Identity {
+		ident, ok := v.(chainview.Identifiable)
+		if !ok {
+			return chainview.Identity{}
+		}
+		id, err := ident.Identity(ctx)
+		if err != nil {
+			return chainview.Identity{}
+		}
+		return id
+	}
+
+	sf, sq := read(s.sf), read(s.sq)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sfIdentity, s.sqIdentity = sf, sq
 }
 
 // Load restores the persisted state, so a restart resumes rather than restarts.
@@ -454,8 +507,10 @@ func (s *Sentinel) readView(
 	if err != nil {
 		s.log.Warn("could not read a chain view's health",
 			slog.String("branch", string(branch)), slog.String("error", err.Error()))
+		s.rememberBackend(branch, chainview.BackendHealth{State: chainview.HealthDown})
 		return chainview.HealthDown, nil
 	}
+	s.rememberBackend(branch, health)
 	if !health.State.Usable() {
 		// Unusable views still report their state; their tip is not trusted for
 		// comparison, because comparing against a syncing or suspect view produces
@@ -469,6 +524,17 @@ func (s *Sentinel) readView(
 		return chainview.HealthDown, nil
 	}
 	return health.State, &tip
+}
+
+func (s *Sentinel) rememberBackend(branch chainview.Branch, h chainview.BackendHealth) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch branch {
+	case chainview.BranchSF:
+		s.sfBackend = h
+	case chainview.BranchSQ:
+		s.sqBackend = h
+	}
 }
 
 func (s *Sentinel) recentHashes(ctx context.Context, branch store.Branch) []chainhash.Hash {

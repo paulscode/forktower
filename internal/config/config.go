@@ -294,6 +294,24 @@ type UIConfig struct {
 	// decision someone wrote down.
 	Auth         AuthMode `toml:"auth"`
 	PasswordHash string   `toml:"password_hash"`
+
+	// AllowedOrigins lists extra origins accepted on requests that change
+	// something, as `scheme://host[:port]`.
+	//
+	// Normally empty. The check compares the browser's Origin against the host
+	// the request arrived on, which is correct without configuration for a
+	// dashboard reached directly or through a proxy that preserves the Host
+	// header — including when embedded in a platform's own page, because the
+	// framed document's origin is this dashboard. It needs setting only for a
+	// proxy that rewrites Host.
+	AllowedOrigins []string `toml:"allowed_origins"`
+
+	// FrameAncestors lists origins permitted to embed the dashboard in a frame.
+	//
+	// Empty means 'self'. Both platforms embed their apps, so this cannot simply
+	// be denied; naming who may do it is the difference between that and letting
+	// any page frame the dashboard to trick someone into clicking through it.
+	FrameAncestors []string `toml:"frame_ancestors"`
 }
 
 // AuthMode is how the dashboard authenticates callers.

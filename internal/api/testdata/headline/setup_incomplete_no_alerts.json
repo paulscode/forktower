@@ -1,0 +1,10 @@
+{
+  "state": "action_needed",
+  "title": "You need to do something now.",
+  "detail": "Forktower has no way to reach you, so you would only find out something was wrong by looking at this page.",
+  "action": {
+    "label": "Set up notifications",
+    "href": "#notifications"
+  },
+  "since": 0
+}
