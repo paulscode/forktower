@@ -178,19 +178,19 @@ func TestEffectiveIncludeDetailDefaults(t *testing.T) {
 
 	yes, no := true, false
 	cases := []struct {
-		typ  string
+		typ  TransportType
 		set  *bool
 		want bool
 		why  string
 	}{
-		{typ: "ntfy", want: false, why: "third-party server sees attack timing"},
-		{typ: "webhook", want: false, why: "third-party endpoint sees attack timing"},
-		{typ: "smtp", want: false, why: "mail host sees attack timing"},
-		{typ: "telegram", want: false, why: "third-party service sees attack timing"},
-		{typ: "startos", want: true, why: "delivered by the user's own device"},
-		{typ: "umbrel", want: true, why: "delivered by the user's own device"},
-		{typ: "ntfy", set: &yes, want: true, why: "explicit opt-in overrides the default"},
-		{typ: "startos", set: &no, want: false, why: "explicit opt-out overrides the default"},
+		{typ: TransportNtfy, want: false, why: "third-party server sees attack timing"},
+		{typ: TransportWebhook, want: false, why: "third-party endpoint sees attack timing"},
+		{typ: TransportSMTP, want: false, why: "mail host sees attack timing"},
+		{typ: TransportTelegram, want: false, why: "third-party service sees attack timing"},
+		{typ: TransportStartOS, want: true, why: "delivered by the user's own device"},
+		{typ: TransportUmbrel, want: true, why: "delivered by the user's own device"},
+		{typ: TransportNtfy, set: &yes, want: true, why: "explicit opt-in overrides the default"},
+		{typ: TransportStartOS, set: &no, want: false, why: "explicit opt-out overrides the default"},
 	}
 
 	for _, tc := range cases {

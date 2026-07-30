@@ -50,13 +50,27 @@ func envBindings() []envBinding {
 			return nil
 		}}
 	}
-	num := func(key string, set func(*Config, int64)) envBinding {
+	// num32 and numInt both parse with a 32-bit bound, so the narrowing
+	// conversion cannot overflow — ParseInt has already rejected anything out of
+	// range. Keeping the conversion here rather than at each call site means the
+	// argument for its safety lives in one place.
+	num32 := func(key string, set func(*Config, int32)) envBinding {
 		return envBinding{key: EnvPrefix + key, apply: func(c *Config, v string) error {
 			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 32)
 			if err != nil {
 				return fmt.Errorf("expected a whole number, got %q", v)
 			}
-			set(c, n)
+			set(c, int32(n))
+			return nil
+		}}
+	}
+	numInt := func(key string, set func(*Config, int)) envBinding {
+		return envBinding{key: EnvPrefix + key, apply: func(c *Config, v string) error {
+			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 32)
+			if err != nil {
+				return fmt.Errorf("expected a whole number, got %q", v)
+			}
+			set(c, int(n))
 			return nil
 		}}
 	}
@@ -78,7 +92,7 @@ func envBindings() []envBinding {
 		str("SF_RPC_PASS", func(c *Config, v string) { c.SF.RPCPass = v }),
 		str("SF_ZMQ_RAWBLOCK", func(c *Config, v string) { c.SF.ZMQRawBlock = v }),
 
-		str("SQ_TIER", func(c *Config, v string) { c.SQ.Tier = v }),
+		str("SQ_TIER", func(c *Config, v string) { c.SQ.Tier = BackendTier(v) }),
 		str("SQ_BITCOIND_RPC_URL", func(c *Config, v string) { c.SQ.Bitcoind.RPCURL = v }),
 		str("SQ_BITCOIND_RPC_COOKIE_PATH", func(c *Config, v string) { c.SQ.Bitcoind.RPCCookiePath = v }),
 		str("SQ_BITCOIND_RPC_USER", func(c *Config, v string) { c.SQ.Bitcoind.RPCUser = v }),
@@ -87,28 +101,28 @@ func envBindings() []envBinding {
 		str("SQ_BITCOIND_ZMQ_RAWTX", func(c *Config, v string) { c.SQ.Bitcoind.ZMQRawTx = v }),
 
 		str("FORK_NAME", func(c *Config, v string) { c.Fork.Name = v }),
-		num("FORK_SIGNAL_BIT", func(c *Config, n int64) { c.Fork.SignalBit = int32(n) }),
-		num("FORK_DIVERGENCE_HEIGHT", func(c *Config, n int64) { c.Fork.DivergenceHeight = int32(n) }),
-		num("FORK_RULE_ACTIVATION_HEIGHT", func(c *Config, n int64) { c.Fork.RuleActivationHeight = int32(n) }),
-		num("FORK_EXPIRY_HEIGHT", func(c *Config, n int64) { c.Fork.ExpiryHeight = int32(n) }),
+		num32("FORK_SIGNAL_BIT", func(c *Config, n int32) { c.Fork.SignalBit = n }),
+		num32("FORK_DIVERGENCE_HEIGHT", func(c *Config, n int32) { c.Fork.DivergenceHeight = n }),
+		num32("FORK_RULE_ACTIVATION_HEIGHT", func(c *Config, n int32) { c.Fork.RuleActivationHeight = n }),
+		num32("FORK_EXPIRY_HEIGHT", func(c *Config, n int32) { c.Fork.ExpiryHeight = n }),
 
-		num("SENTINEL_POLL_INTERVAL_SECS", func(c *Config, n int64) { c.Sentinel.PollIntervalSecs = int(n) }),
-		num("SENTINEL_SPLIT_CONFIRM_DEPTH", func(c *Config, n int64) { c.Sentinel.SplitConfirmDepth = int32(n) }),
-		num("SENTINEL_MAX_ANCESTOR_WALK", func(c *Config, n int64) { c.Sentinel.MaxAncestorWalk = int32(n) }),
+		numInt("SENTINEL_POLL_INTERVAL_SECS", func(c *Config, n int) { c.Sentinel.PollIntervalSecs = n }),
+		num32("SENTINEL_SPLIT_CONFIRM_DEPTH", func(c *Config, n int32) { c.Sentinel.SplitConfirmDepth = n }),
+		num32("SENTINEL_MAX_ANCESTOR_WALK", func(c *Config, n int32) { c.Sentinel.MaxAncestorWalk = n }),
 		flt("SENTINEL_SQ_STALL_FACTOR", func(c *Config, f float64) { c.Sentinel.SQStallFactor = f }),
-		num("SENTINEL_REORG_MARGIN", func(c *Config, n int64) { c.Sentinel.ReorgMargin = int32(n) }),
+		num32("SENTINEL_REORG_MARGIN", func(c *Config, n int32) { c.Sentinel.ReorgMargin = n }),
 
-		num("ALERTS_SELF_TEST_INTERVAL_HOURS", func(c *Config, n int64) { c.Alerts.SelfTestIntervalHours = int(n) }),
-		num("ALERTS_CRITICAL_REPEAT_MINS", func(c *Config, n int64) { c.Alerts.CriticalRepeatMins = int(n) }),
+		numInt("ALERTS_SELF_TEST_INTERVAL_HOURS", func(c *Config, n int) { c.Alerts.SelfTestIntervalHours = n }),
+		numInt("ALERTS_CRITICAL_REPEAT_MINS", func(c *Config, n int) { c.Alerts.CriticalRepeatMins = n }),
 
 		str("UI_LISTEN", func(c *Config, v string) { c.UI.Listen = v }),
-		str("UI_AUTH", func(c *Config, v string) { c.UI.Auth = v }),
+		str("UI_AUTH", func(c *Config, v string) { c.UI.Auth = AuthMode(v) }),
 		str("UI_PASSWORD_HASH", func(c *Config, v string) { c.UI.PasswordHash = v }),
 
 		str("STORE_PATH", func(c *Config, v string) { c.Store.Path = v }),
-		num("STORE_TIMELINE_MAX_MB", func(c *Config, n int64) { c.Store.TimelineMaxMB = int(n) }),
+		numInt("STORE_TIMELINE_MAX_MB", func(c *Config, n int) { c.Store.TimelineMaxMB = n }),
 
-		str("LOG_LEVEL", func(c *Config, v string) { c.Log.Level = v }),
+		str("LOG_LEVEL", func(c *Config, v string) { c.Log.Level = LogLevel(v) }),
 	}
 }
 

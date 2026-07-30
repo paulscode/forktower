@@ -27,7 +27,6 @@ const (
 	DefaultSelfTestIntervalHr = 168
 	DefaultCriticalRepeatMins = 30
 	DefaultTimelineMaxMB      = 256
-	DefaultLogLevel           = "info"
 	DefaultStorePath          = "/data/forktower.db"
 
 	// ReorgMarginKnown applies when the divergence height is known; the wider
@@ -80,10 +79,23 @@ func (e RPCEndpoint) HasCookieAuth() bool { return e.RPCCookiePath != "" }
 // HasUserPassAuth reports whether a user and password were configured.
 func (e RPCEndpoint) HasUserPassAuth() bool { return e.RPCUser != "" || e.RPCPass != "" }
 
+// BackendTier selects how the daemon obtains its view of the other chain.
+type BackendTier string
+
+// Backend tiers.
+const (
+	// TierBitcoind uses a second full node. The only tier implemented so far.
+	TierBitcoind BackendTier = "bitcoind"
+	// TierNeutrino uses a light client. Not yet implemented.
+	TierNeutrino BackendTier = "neutrino"
+	// TierElectrum uses a remote server. Not yet implemented.
+	TierElectrum BackendTier = "electrum"
+)
+
 // SQConfig selects and configures the backend for the chain the user's own node
 // is not following.
 type SQConfig struct {
-	Tier      string          `toml:"tier"`
+	Tier      BackendTier     `toml:"tier"`
 	Bitcoind  RPCEndpoint     `toml:"bitcoind"`
 	Witnesses WitnessesConfig `toml:"witnesses"`
 	Neutrino  NeutrinoConfig  `toml:"neutrino"`
@@ -188,13 +200,38 @@ type AlertsConfig struct {
 	Transport             []TransportConfig `toml:"transport"`
 }
 
+// TransportType is a notification delivery mechanism.
+type TransportType string
+
+// Notification transports. The platform-local ones are delivered by the user's
+// own device, so unlike the rest they have no third-party operator who would
+// learn from an alert that this user is under attack.
+const (
+	TransportNtfy     TransportType = "ntfy"
+	TransportWebhook  TransportType = "webhook"
+	TransportSMTP     TransportType = "smtp"
+	TransportTelegram TransportType = "telegram"
+	TransportStartOS  TransportType = "startos"
+	TransportUmbrel   TransportType = "umbrel"
+)
+
+// MinTier is the lowest alert severity a transport will deliver.
+type MinTier string
+
+// Minimum severities a transport can be set to.
+const (
+	MinTierInfo     MinTier = "info"
+	MinTierWarning  MinTier = "warning"
+	MinTierCritical MinTier = "critical"
+)
+
 // TransportConfig is one notification channel.
 type TransportConfig struct {
-	Name    string `toml:"name"`
-	Type    string `toml:"type"`
-	MinTier string `toml:"min_tier"`
-	URL     string `toml:"url"`
-	Token   string `toml:"token"`
+	Name    string        `toml:"name"`
+	Type    TransportType `toml:"type"`
+	MinTier MinTier       `toml:"min_tier"`
+	URL     string        `toml:"url"`
+	Token   string        `toml:"token"`
 
 	// IncludeDetail controls whether the payload names the channel, the amount
 	// and the time remaining. It defaults to false for third-party transports
@@ -216,16 +253,25 @@ type TransportConfig struct {
 	StartTLS bool   `toml:"starttls"`
 }
 
-// PlatformLocalTransports are delivered by the user's own device, so there is no
-// third party to leak alert timing to.
-var PlatformLocalTransports = map[string]bool{"startos": true, "umbrel": true}
+// IsPlatformLocal reports whether this transport is delivered by the user's own
+// device rather than by a third-party server.
+func (t TransportType) IsPlatformLocal() bool {
+	switch t {
+	case TransportStartOS, TransportUmbrel:
+		return true
+	case TransportNtfy, TransportWebhook, TransportSMTP, TransportTelegram:
+		return false
+	default:
+		return false
+	}
+}
 
 // EffectiveIncludeDetail resolves IncludeDetail against the per-type default.
 func (t TransportConfig) EffectiveIncludeDetail() bool {
 	if t.IncludeDetail != nil {
 		return *t.IncludeDetail
 	}
-	return PlatformLocalTransports[t.Type]
+	return t.Type.IsPlatformLocal()
 }
 
 // TowerConfig configures companion watchtowers. Parsed but not yet used.
@@ -246,20 +292,23 @@ type UIConfig struct {
 	// Auth is one of AuthNone, AuthPlatform or AuthPassword. It is never
 	// inferred from the environment: delegating authentication has to be a
 	// decision someone wrote down.
-	Auth         string `toml:"auth"`
-	PasswordHash string `toml:"password_hash"`
+	Auth         AuthMode `toml:"auth"`
+	PasswordHash string   `toml:"password_hash"`
 }
+
+// AuthMode is how the dashboard authenticates callers.
+type AuthMode string
 
 // UI authentication modes.
 const (
 	// AuthNone serves without authentication and is confined to loopback.
-	AuthNone = "none"
+	AuthNone AuthMode = "none"
 	// AuthPlatform permits a non-loopback bind, delegating authentication to the
 	// app proxy that fronts it. Required because a container must bind a
 	// routable address for its platform to reach it.
-	AuthPlatform = "platform"
+	AuthPlatform AuthMode = "platform"
 	// AuthPassword checks a bcrypt hash and issues a session cookie.
-	AuthPassword = "password"
+	AuthPassword AuthMode = "password"
 )
 
 // StoreConfig configures on-disk state.
@@ -271,9 +320,20 @@ type StoreConfig struct {
 	TimelineMaxMB int `toml:"timeline_max_mb"`
 }
 
+// LogLevel is logging verbosity.
+type LogLevel string
+
+// Logging verbosities.
+const (
+	LogDebug LogLevel = "debug"
+	LogInfo  LogLevel = "info"
+	LogWarn  LogLevel = "warn"
+	LogError LogLevel = "error"
+)
+
 // LogConfig configures logging.
 type LogConfig struct {
-	Level string `toml:"level"`
+	Level LogLevel `toml:"level"`
 }
 
 // Default returns the configuration with defaults applied and nothing else.
@@ -293,19 +353,9 @@ func Default() Config {
 		},
 		UI:    UIConfig{Listen: DefaultUIListen, Auth: AuthNone},
 		Store: StoreConfig{Path: DefaultStorePath, TimelineMaxMB: DefaultTimelineMaxMB},
-		Log:   LogConfig{Level: DefaultLogLevel},
+		Log:   LogConfig{Level: LogInfo},
 	}
 }
-
-// Backend tiers.
-const (
-	// TierBitcoind uses a second full node. The only tier accepted so far.
-	TierBitcoind = "bitcoind"
-	// TierNeutrino uses a light client. Not yet implemented.
-	TierNeutrino = "neutrino"
-	// TierElectrum uses a remote server. Not yet implemented.
-	TierElectrum = "electrum"
-)
 
 // Load reads the file at path, applies environment overrides, and validates the
 // result. A non-empty path that does not exist is an error; an empty path yields

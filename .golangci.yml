@@ -6,20 +6,55 @@ run:
 linters:
   default: standard
   enable:
+    - asciicheck
+    - bidichk
     - bodyclose
+    - contextcheck
     - copyloopvar
     - depguard
+    - durationcheck
+    - errname
     - errorlint
+    - exhaustive
+    - forbidigo
     - gocritic
+    - goconst
+    - gosec
+    - makezero
     - misspell
+    - musttag
     - nilerr
+    - nilnil
     - noctx
+    - predeclared
+    - recvcheck
     - revive
+    - rowserrcheck
     - sqlclosecheck
+    - thelper
+    - tparallel
     - unconvert
+    - unparam
     - usetesting
 
   settings:
+    # A switch over one of our state or enum types that forgets a case is exactly
+    # the kind of silent gap this project cannot afford, so a missing member is an
+    # error even when a default branch exists.
+    exhaustive:
+      default-signifies-exhaustive: false
+
+    forbidigo:
+      forbid:
+        # Waiting on wall-clock time makes a test slow and flaky, and the engine
+        # specs require an injected clock precisely so that time can be controlled.
+        - pattern: ^time\.Sleep$
+          msg: use an injected clock or synchronise on a channel instead of sleeping
+        # Diagnostics go through the structured logger so that they carry engine
+        # context and can be redacted; a bare print bypasses both.
+        - pattern: ^fmt\.Print(f|ln)?$
+          msg: use log/slog instead of printing to stdout
+
     depguard:
       rules:
         # Decision logic must stay pure: no storage, no event bus, no network.
@@ -60,6 +95,13 @@ linters:
         linters:
           - bodyclose
           - noctx
+          # Test tables repeat the exact strings a user is promised in the
+          # documentation. Hoisting those into constants would hide the thing the
+          # test exists to pin down.
+          - goconst
+          # Tests deliberately create over-permissive files to prove the warning
+          # about them fires.
+          - gosec
 
 formatters:
   enable:

@@ -177,8 +177,8 @@ func TestValidationRules(t *testing.T) {
 			name: "duplicate transport name",
 			mutate: func(c *Config) {
 				c.Alerts.Transport = []TransportConfig{
-					{Name: "same", Type: "webhook", MinTier: "info"},
-					{Name: "same", Type: "ntfy", MinTier: "info"},
+					{Name: "same", Type: TransportWebhook, MinTier: MinTierInfo},
+					{Name: "same", Type: TransportNtfy, MinTier: MinTierInfo},
 				}
 			},
 			wantSub: "transport name",
@@ -193,7 +193,7 @@ func TestValidationRules(t *testing.T) {
 		{
 			name: "invalid transport tier",
 			mutate: func(c *Config) {
-				c.Alerts.Transport = []TransportConfig{{Name: "t", Type: "ntfy", MinTier: "shouty"}}
+				c.Alerts.Transport = []TransportConfig{{Name: "t", Type: TransportNtfy, MinTier: "shouty"}}
 			},
 			wantSub: "transport name",
 		},

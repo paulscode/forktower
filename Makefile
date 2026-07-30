@@ -23,8 +23,8 @@ LDFLAGS    := -s -w -buildid= -X main.version=$(VERSION)
 GOLANGCI   ?= golangci-lint
 
 .DEFAULT_GOAL := build
-.PHONY: build test lint fmt integration run-dev forkbench-up forkbench-down \
-        check check-boundary tidy-check vuln tidy clean help
+.PHONY: build test lint fmt integration run-dev forkbench-up forkbench-down cover-html \
+        check check-boundary cover-check cover tidy-check vuln tidy clean help
 
 ## check: everything that must pass before a commit — the only gate there is
 #
@@ -32,7 +32,7 @@ GOLANGCI   ?= golangci-lint
 # workflow in .github/ has never run. Until it does, this target is the whole
 # safety net, which is why it includes the two checks that would otherwise only
 # happen on a build server — module tidiness and the vulnerability database.
-check: build lint test tidy-check vuln
+check: build lint test cover-check tidy-check vuln
 	@printf '\n  all checks passed\n'
 
 ## build: compile all binaries into bin/
@@ -86,6 +86,19 @@ tidy-check:
 ## check-boundary: no shipped file may reference the private planning documents
 check-boundary:
 	@./scripts/check-boundary.sh
+
+## cover-check: enforce the per-package coverage floors
+cover-check:
+	@./scripts/check-coverage.sh
+
+## cover: per-package coverage, including packages that meet their floor
+cover:
+	@./scripts/check-coverage.sh -v
+
+## cover-html: open a line-by-line coverage report
+cover-html:
+	go test -coverprofile=coverage.out ./... >/dev/null
+	go tool cover -html=coverage.out
 
 ## run-dev: run the daemon against a local development configuration
 run-dev: build

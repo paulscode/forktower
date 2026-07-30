@@ -31,7 +31,7 @@ func (e *ValidationError) Error() string {
 }
 
 // Validate checks the whole configuration, accumulating problems.
-func (c *Config) Validate() error {
+func (c Config) Validate() error {
 	var p []string
 
 	p = append(p, c.validateSF()...)
@@ -48,7 +48,7 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c *Config) validateSF() []string {
+func (c Config) validateSF() []string {
 	var p []string
 	if c.SF.RPCURL == "" {
 		p = append(p, "sf.rpc_url is required (the Bitcoin node Forktower reads from)")
@@ -59,7 +59,7 @@ func (c *Config) validateSF() []string {
 	return p
 }
 
-func (c *Config) validateSQ() []string {
+func (c Config) validateSQ() []string {
 	var p []string
 	switch c.SQ.Tier {
 	case TierBitcoind:
@@ -114,7 +114,7 @@ func validateRPCURL(raw string) error {
 	return nil
 }
 
-func (c *Config) validateSentinel() []string {
+func (c Config) validateSentinel() []string {
 	var p []string
 	s := c.Sentinel
 	if s.SplitConfirmDepth < 1 || s.SplitConfirmDepth > 100 {
@@ -142,20 +142,36 @@ func (c *Config) validateSentinel() []string {
 	return p
 }
 
-// KnownTransportTypes are the delivery channels the daemon understands. The
-// platform-local ones are wired up with platform packaging.
-var KnownTransportTypes = map[string]bool{
-	"ntfy": true, "webhook": true, "smtp": true, "telegram": true,
-	"startos": true, "umbrel": true,
+// Valid reports whether t is a transport the daemon understands.
+//
+// Written as an exhaustive switch rather than a lookup table so that adding a
+// transport without deciding whether it is valid here becomes a lint failure
+// instead of a silent rejection at runtime.
+func (t TransportType) Valid() bool {
+	switch t {
+	case TransportNtfy, TransportWebhook, TransportSMTP, TransportTelegram,
+		TransportStartOS, TransportUmbrel:
+		return true
+	default:
+		return false
+	}
 }
 
-// KnownMinTiers are the values min_tier accepts. The alert tiers themselves are
-// a longer list; resolved and loss are ranked against these rather than being
-// selectable, so that a user who asks for critical-only still hears about a loss
-// and is not paged about a resolution.
-var KnownMinTiers = map[string]bool{"info": true, "warning": true, "critical": true}
+// Valid reports whether m is an accepted minimum severity.
+//
+// The alert tiers themselves are a longer list: "resolved" and "loss" are ranked
+// against these rather than being selectable, so a user who asks for
+// critical-only still hears about a loss and is not paged about a resolution.
+func (m MinTier) Valid() bool {
+	switch m {
+	case MinTierInfo, MinTierWarning, MinTierCritical:
+		return true
+	default:
+		return false
+	}
+}
 
-func (c *Config) validateAlerts() []string {
+func (c Config) validateAlerts() []string {
 	var p []string
 	if c.Alerts.SelfTestIntervalHours < 1 {
 		p = append(p, fmt.Sprintf(
@@ -179,11 +195,11 @@ func (c *Config) validateAlerts() []string {
 		default:
 			seen[t.Name] = true
 		}
-		if !KnownTransportTypes[t.Type] {
+		if !t.Type.Valid() {
 			p = append(p, fmt.Sprintf(
 				"%s (transport name %q): unknown type %q", where, t.Name, t.Type))
 		}
-		if t.MinTier != "" && !KnownMinTiers[t.MinTier] {
+		if t.MinTier != "" && !t.MinTier.Valid() {
 			p = append(p, fmt.Sprintf(
 				"%s (transport name %q): min_tier %q must be info, warning or critical",
 				where, t.Name, t.MinTier))
@@ -192,7 +208,7 @@ func (c *Config) validateAlerts() []string {
 	return p
 }
 
-func (c *Config) validateUI() []string {
+func (c Config) validateUI() []string {
 	var p []string
 
 	host, _, err := net.SplitHostPort(c.UI.Listen)
@@ -250,7 +266,7 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
-func (c *Config) validateStore() []string {
+func (c Config) validateStore() []string {
 	var p []string
 	if c.Store.Path == "" {
 		p = append(p, "store.path is required")
@@ -262,11 +278,18 @@ func (c *Config) validateStore() []string {
 	return p
 }
 
-// KnownLogLevels are the accepted verbosity settings.
-var KnownLogLevels = map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
+// Valid reports whether l is an accepted verbosity.
+func (l LogLevel) Valid() bool {
+	switch l {
+	case LogDebug, LogInfo, LogWarn, LogError:
+		return true
+	default:
+		return false
+	}
+}
 
-func (c *Config) validateLog() []string {
-	if !KnownLogLevels[c.Log.Level] {
+func (c Config) validateLog() []string {
+	if !c.Log.Level.Valid() {
 		return []string{fmt.Sprintf(
 			"log.level %q is unknown; one of debug, info, warn or error", c.Log.Level)}
 	}
