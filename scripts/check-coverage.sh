@@ -29,6 +29,9 @@ declare -A MIN=(
   [internal/deadline]=90
   [internal/watcher]=85
   [internal/config]=75
+  # No I/O at all: a channel fan-out with a deliberate drop policy. Held high
+  # because every branch is reachable from a test.
+  [internal/bus]=95
 
   # I/O shells. The real exercise is in the integration suite, which needs
   # containers and does not run in this gate.
