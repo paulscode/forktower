@@ -49,17 +49,27 @@ rule_activation_height = 0            # 0 = read it from the node
 expiry_height = 0                     # 0 = permanent, or read it from the node
 
 # ── Your Lightning nodes ──────────────────────────────────────────────────────
-# Zero or more of each. Not used yet.
+# Zero or more of each. None at all is fine: Forktower still watches the chains,
+# it just cannot tell you which of your channels would be exposed.
+#
+# Read-only, always. Forktower never sends your node an instruction, and the
+# credential it needs cannot authorise one. Give it a read-only macaroon or a
+# restricted rune; it will work with a wider credential and say so rather than
+# refuse, because being told about a problem beats not being watched at all.
+#
+# Both are read over REST. Credentials are given as *paths*, never as the
+# credential itself — a secret written into a configuration file is a secret that
+# ends up pasted into a support thread.
 #
 # [[ln.lnd]]
-# grpc_addr = "10.0.0.3:10009"
+# rest_addr = "https://10.0.0.3:8080"
 # tls_cert_path = "/creds/lnd/tls.cert"
-# macaroon_path = "/creds/lnd/forktower.macaroon"
+# macaroon_path = "/creds/lnd/readonly.macaroon"
 #
 # [[ln.cln]]
 # rest_addr = "https://10.0.0.4:3010"
-# rune = ""
-# ca_cert_path = ""
+# rune_path = "/creds/cln/forktower.rune"
+# tls_cert_path = ""                    # optional; clnrest is often plain http
 
 # ── Split detection ───────────────────────────────────────────────────────────
 [sentinel]

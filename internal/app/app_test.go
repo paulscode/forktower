@@ -38,6 +38,17 @@ type harness struct {
 // test that needs those is a test nobody runs.
 func newHarness(t *testing.T, mutate func(*config.Config, *chainviewtest.View, *chainviewtest.View)) *harness {
 	t.Helper()
+	return newHarnessWith(t, mutate, nil)
+}
+
+// newHarnessWith also lets a test substitute the daemon's dependencies, which is
+// how a Lightning node is stood in for without one existing.
+func newHarnessWith(
+	t *testing.T,
+	mutate func(*config.Config, *chainviewtest.View, *chainviewtest.View),
+	adjust func(*app.Deps),
+) *harness {
+	t.Helper()
 	ctx := context.Background()
 
 	sf, sq := chainviewtest.NewSharedHistory(sharedHistory)
@@ -76,7 +87,12 @@ func newHarness(t *testing.T, mutate func(*config.Config, *chainviewtest.View, *
 		t.Fatal(err)
 	}
 
-	daemon, err := app.New(ctx, cfg, nil, app.Deps{SF: sf, SQ: sq, Listener: listener})
+	deps := app.Deps{SF: sf, SQ: sq, Listener: listener}
+	if adjust != nil {
+		adjust(&deps)
+	}
+
+	daemon, err := app.New(ctx, cfg, nil, deps)
 	if err != nil {
 		_ = listener.Close()
 		t.Fatalf("building the daemon: %v", err)

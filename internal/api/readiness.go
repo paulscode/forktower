@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/paulscode/forktower/internal/alert"
 	"github.com/paulscode/forktower/internal/chainview"
@@ -319,17 +320,59 @@ func humanList(items []string) string {
 	}
 }
 
-// checkLNConnected is a placeholder for the Lightning connection, which arrives
-// with channel watching.
+// LNStaleAfter is how long a Lightning node may go unread before the dashboard
+// says so. Several times the poll interval, so a single slow read is not news.
+const LNStaleAfter = 5 * time.Minute
+
+// checkLNConnected reports whether the user's Lightning nodes are being read.
 //
-// Listed now, and marked informational, so the dashboard shows the whole shape of
-// what protection will involve without turning "not built yet" into a red mark
-// that teaches people red means nothing.
+// No node configured is informational rather than a fault: watching the chains
+// is useful on its own, and a user who has not connected one yet has not done
+// anything wrong. A node that *is* configured and cannot be read is a real
+// failure, because it is the difference between protection the user believes
+// they have and protection they have.
 func (s *Server) checkLNConnected() ReadinessItem {
+	if s.ln == nil {
+		return s.noLightningConfigured()
+	}
+	health := s.ln.Health()
+	if len(health) == 0 {
+		return s.noLightningConfigured()
+	}
+
+	now := s.now().Unix()
+	var stale []string
+	for _, h := range health {
+		if h.Stale(now, LNStaleAfter) {
+			stale = append(stale, h.Name)
+		}
+	}
+	if len(stale) == 0 {
+		return ReadinessItem{
+			ID: CheckLNConnected, OK: true,
+			Label: "Reading your channels",
+			Why: "Forktower can see your Lightning node, so it knows which of your " +
+				"channels would be exposed on the other chain.",
+		}
+	}
+	return ReadinessItem{
+		ID: CheckLNConnected, OK: false,
+		Label: "Cannot read your Lightning node",
+		Why: "Forktower is still watching the chains, and it is still watching the " +
+			"channels it already knew about — but it cannot see " + humanList(stale) +
+			", so a channel opened or closed since then may be missing.",
+	}
+}
+
+// noLightningConfigured is the "nothing to do here" answer, marked informational
+// so that a feature the user has not set up does not turn the dashboard red. A
+// user who learns that red means nothing will not look when red means something.
+func (s *Server) noLightningConfigured() ReadinessItem {
 	return ReadinessItem{
 		ID: CheckLNConnected, OK: false, informational: true,
-		Label: "Not connected to your Lightning node yet",
+		Label: "No Lightning node connected",
 		Why: "Forktower is watching the chains, which is what matters first. " +
-			"Reading your channels arrives in a later version.",
+			"Connect your Lightning node and it will also track which of your " +
+			"channels are exposed.",
 	}
 }

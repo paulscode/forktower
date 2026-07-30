@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulscode/forktower/internal/alert"
 	"github.com/paulscode/forktower/internal/chainview"
+	"github.com/paulscode/forktower/internal/registry"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
 )
@@ -337,4 +339,82 @@ func TestPlatformNotificationsDoNotHideABrokenTransport(t *testing.T) {
 	if item.OK {
 		t.Error("a broken transport was hidden by the platform flag")
 	}
+}
+
+// The Lightning check went from a placeholder to a real reading of the
+// registry's health, and each of its three answers means something different to
+// a user.
+func TestTheLightningCheckReportsWhatIsActuallyHappening(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no node configured is not a fault", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, nil)
+		h.ln.set(nil)
+
+		items := h.srv.Readiness(context.Background())
+		ln := itemByID(t, items, CheckLNConnected)
+		if ln.OK {
+			t.Error("a connection that does not exist was reported as working")
+		}
+		if len(blockingFailures(items)) != 0 {
+			t.Errorf("not having connected a node is dragging the headline down: %+v",
+				blockingFailures(items))
+		}
+		if strings.Contains(strings.ToLower(ln.Label+ln.Why), "later version") {
+			t.Error("the dashboard still says channel reading is not built yet")
+		}
+	})
+
+	t.Run("a node being read is reported as working", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, nil)
+		h.ln.set([]registry.SourceHealth{{Name: "lnd-1", LastSuccessAt: h.clock.Load()}})
+
+		ln := itemByID(t, h.srv.Readiness(context.Background()), CheckLNConnected)
+		if !ln.OK {
+			t.Errorf("a node that was just read is reported as %q", ln.Label)
+		}
+	})
+
+	t.Run("a node that cannot be read is a real failure", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, nil)
+		h.ln.set([]registry.SourceHealth{{
+			Name:          "lnd-1",
+			LastSuccessAt: h.clock.Load() - int64(2*LNStaleAfter/time.Second),
+			LastError:     "connection refused",
+		}})
+
+		items := h.srv.Readiness(context.Background())
+		ln := itemByID(t, items, CheckLNConnected)
+		if ln.OK {
+			t.Error("a node nobody has read for ten minutes was reported as working")
+		}
+		// Configured-but-unreachable is a genuine gap in protection, not an
+		// unbuilt feature, so it does count against the headline.
+		if len(blockingFailures(items)) == 0 {
+			t.Error("an unreachable Lightning node was hidden from the headline")
+		}
+		if !strings.Contains(ln.Why, "lnd-1") {
+			t.Errorf("the user is not told which node is unreachable: %q", ln.Why)
+		}
+	})
+
+	t.Run("one healthy node does not excuse a broken one", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, nil)
+		h.ln.set([]registry.SourceHealth{
+			{Name: "lnd-1", LastSuccessAt: h.clock.Load()},
+			{Name: "cln-1"}, // never read at all
+		})
+
+		ln := itemByID(t, h.srv.Readiness(context.Background()), CheckLNConnected)
+		if ln.OK {
+			t.Error("a node that has never answered was covered up by one that did")
+		}
+		if !strings.Contains(ln.Why, "cln-1") || strings.Contains(ln.Why, "lnd-1") {
+			t.Errorf("the wrong node is named: %q", ln.Why)
+		}
+	})
 }

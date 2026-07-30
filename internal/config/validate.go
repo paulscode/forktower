@@ -36,6 +36,7 @@ func (c Config) Validate() error {
 
 	p = append(p, c.validateSF()...)
 	p = append(p, c.validateSQ()...)
+	p = append(p, c.validateLN()...)
 	p = append(p, c.validateSentinel()...)
 	p = append(p, c.validateAlerts()...)
 	p = append(p, c.validateUI()...)
@@ -112,6 +113,38 @@ func validateRPCURL(raw string) error {
 		return errors.New("no host")
 	}
 	return nil
+}
+
+// validateLN checks each configured Lightning node.
+//
+// None at all is not a problem: split detection works without one, and a user
+// may not have connected theirs yet. A *half*-configured one is, because it
+// looks connected in the file and reads nothing at run time.
+func (c Config) validateLN() []string {
+	var p []string
+	for i, n := range c.LN.LND {
+		where := fmt.Sprintf("ln.lnd[%d]", i)
+		if n.RESTAddr == "" {
+			p = append(p, where+".rest_addr is required (your node's REST address)")
+		} else if err := validateRPCURL(n.RESTAddr); err != nil {
+			p = append(p, fmt.Sprintf("%s.rest_addr is not a usable URL: %v", where, err))
+		}
+		if n.MacaroonPath == "" {
+			p = append(p, where+".macaroon_path is required (a read-only macaroon)")
+		}
+	}
+	for i, n := range c.LN.CLN {
+		where := fmt.Sprintf("ln.cln[%d]", i)
+		if n.RESTAddr == "" {
+			p = append(p, where+".rest_addr is required (your node's clnrest address)")
+		} else if err := validateRPCURL(n.RESTAddr); err != nil {
+			p = append(p, fmt.Sprintf("%s.rest_addr is not a usable URL: %v", where, err))
+		}
+		if n.RunePath == "" {
+			p = append(p, where+".rune_path is required (a file holding a read-only rune)")
+		}
+	}
+	return p
 }
 
 func (c Config) validateSentinel() []string {

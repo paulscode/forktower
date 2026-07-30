@@ -16,6 +16,7 @@ import (
 	"github.com/paulscode/forktower/internal/alert"
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/config"
+	"github.com/paulscode/forktower/internal/registry"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
 )
@@ -54,6 +55,13 @@ type Alerter interface {
 	Raise(ctx context.Context, c alert.Candidate)
 }
 
+// Lightning is what the API needs from the channel registry: how the user's
+// Lightning nodes are doing. Nil when none is configured, which is a supported
+// arrangement rather than a fault.
+type Lightning interface {
+	Health() []registry.SourceHealth
+}
+
 // Config configures the server.
 type Config struct {
 	Auth           config.AuthMode
@@ -73,6 +81,7 @@ type Server struct {
 	store    *store.Store
 	sentinel Sentinel
 	alerter  Alerter
+	ln       Lightning
 	cfg      Config
 	now      func() time.Time
 	log      *slog.Logger
@@ -86,6 +95,7 @@ func New(
 	st *store.Store,
 	sen Sentinel,
 	al Alerter,
+	ln Lightning,
 	cfg Config,
 	log *slog.Logger,
 	now func() time.Time,
@@ -113,7 +123,7 @@ func New(
 	}
 
 	s := &Server{
-		store: st, sentinel: sen, alerter: al, cfg: cfg, now: now, log: log,
+		store: st, sentinel: sen, alerter: al, ln: ln, cfg: cfg, now: now, log: log,
 		mux: http.NewServeMux(),
 	}
 	s.auth = newAuthenticator(cfg, now, log, al)

@@ -208,3 +208,36 @@ func TestRedactUrlOnSomethingThatIsNotAUrl(t *testing.T) {
 		}
 	}
 }
+
+// A Lightning node's credential is called a macaroon or a rune, and lnd sends
+// its in a header named after it. Either one in a log line is a working
+// credential in a log line.
+func TestALightningCredentialIsRedacted(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in       string
+		mustHide string
+	}{
+		{"Grpc-Metadata-macaroon: AgEDbG5kAvgBAwoQ3s", "AgEDbG5k"},
+		{`sending request: header "Rune: y1I3zHZ1ZVYc"`, "y1I3zHZ1ZVYc"},
+		{"rune=abcdef0123", "abcdef0123"},
+	}
+	for _, tc := range cases {
+		got := String(tc.in)
+		if strings.Contains(got, tc.mustHide) {
+			t.Errorf("String(%q) = %q, which still carries the credential", tc.in, got)
+		}
+	}
+
+	// The *paths* stay readable. They are not secrets, and a diagnostic that
+	// cannot say which file it failed to read is a diagnostic that helps nobody.
+	for _, in := range []string{
+		"opening macaroon_path=/creds/lnd/readonly.macaroon: no such file",
+		"opening rune_path=/creds/cln/forktower.rune: permission denied",
+	} {
+		if got := String(in); got != in {
+			t.Errorf("String(%q) = %q, but a credential path is not a credential", in, got)
+		}
+	}
+}

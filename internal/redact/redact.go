@@ -36,7 +36,15 @@ var (
 	// whitespace-delimited word ("Bearer abc.def ghi"), and over-redacting an
 	// error message costs a little context, while under-redacting one puts a
 	// working credential in a file people email to strangers.
-	credRe = regexp.MustCompile(`(?i)\b(authorization|proxy-authorization|x-api-key|api[-_]?key|apikey|token|password|passwd|secret)\b\s*[:=][^\r\n]*`)
+	//
+	// `macaroon` and `rune` are here because those are what a Lightning node
+	// calls its credential, and lnd sends its in a header named after it. Those
+	// two words are also how the credential *files* are named, which is why the
+	// label may not be preceded by a "." or a "/": `readonly.macaroon: no such
+	// file` is a diagnostic worth reading, while `macaroon: AgEDbG5k...` is a
+	// working credential. A leading "-" is still allowed, because lnd's header is
+	// literally `Grpc-Metadata-macaroon`.
+	credRe = regexp.MustCompile(`(?i)(^|[^\w./])(authorization|proxy-authorization|x-api-key|api[-_]?key|apikey|token|password|passwd|secret|macaroon|rune)\s*[:=][^\r\n]*`)
 
 	// bearerRe catches an unlabelled bearer token.
 	bearerRe = regexp.MustCompile(`(?i)\bbearer\s+\S+`)
@@ -58,7 +66,7 @@ func Error(err error) string {
 // String is the same treatment for text that is not an error.
 func String(s string) string {
 	s = urlRe.ReplaceAllStringFunc(s, redactURL)
-	s = credRe.ReplaceAllString(s, "$1="+Redacted)
+	s = credRe.ReplaceAllString(s, "${1}${2}="+Redacted)
 	s = bearerRe.ReplaceAllString(s, "bearer "+Redacted)
 
 	s = strings.TrimSpace(s)

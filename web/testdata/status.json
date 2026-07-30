@@ -88,8 +88,8 @@
     {
       "id": "ln_connected",
       "ok": false,
-      "label": "Not connected to your Lightning node yet",
-      "why": "Forktower is watching the chains, which is what matters first. Reading your channels arrives in a later version.",
+      "label": "No Lightning node connected",
+      "why": "Forktower is watching the chains, which is what matters first. Connect your Lightning node and it will also track which of your channels are exposed.",
       "detail": "",
       "action": null
     }

@@ -146,8 +146,13 @@ type ForkDescriptor struct {
 // DivergenceHeightKnown reports whether a divergence height was configured.
 func (f ForkDescriptor) DivergenceHeightKnown() bool { return f.DivergenceHeight > 0 }
 
-// LNConfig holds zero or more Lightning nodes of each implementation. Parsed but
-// not yet used.
+// LNConfig holds zero or more Lightning nodes of each implementation.
+//
+// Both are read over their REST interface rather than gRPC. That is not a
+// preference: pinning lnd's gRPC bindings pulls in most of lnd for five
+// read-only calls, and then does not build without lnd's own fork of the
+// protobuf runtime. REST is what both platforms already expose, and it is
+// reachable with the standard library alone.
 type LNConfig struct {
 	LND []LNDConfig `toml:"lnd"`
 	CLN []CLNConfig `toml:"cln"`
@@ -155,17 +160,35 @@ type LNConfig struct {
 
 // LNDConfig describes how to reach an LND node read-only.
 type LNDConfig struct {
-	GRPCAddr     string `toml:"grpc_addr"`
-	TLSCertPath  string `toml:"tls_cert_path"`
+	// RESTAddr is the node's REST address, e.g. "https://127.0.0.1:8080".
+	RESTAddr string `toml:"rest_addr"`
+	// TLSCertPath is lnd's self-signed certificate, which is pinned rather than
+	// trusted through the system roots: the certificate is the node's identity
+	// here, and accepting any certificate for this address would mean no way to
+	// notice being pointed somewhere else.
+	TLSCertPath string `toml:"tls_cert_path"`
+	// MacaroonPath is the credential file. A path, never the credential itself:
+	// a secret written into a configuration file is a secret that ends up pasted
+	// into support threads.
 	MacaroonPath string `toml:"macaroon_path"`
 }
 
 // CLNConfig describes how to reach a Core Lightning node read-only.
 type CLNConfig struct {
-	RESTAddr   string `toml:"rest_addr"`
-	Rune       string `toml:"rune"`
-	CACertPath string `toml:"ca_cert_path"`
+	// RESTAddr is the clnrest address, e.g. "https://127.0.0.1:3010".
+	RESTAddr string `toml:"rest_addr"`
+	// RunePath is the credential file, for the same reason LND's is a path.
+	RunePath string `toml:"rune_path"`
+	// TLSCertPath pins the node's certificate when it serves https. Optional:
+	// clnrest is often plain http on the loopback address, where there is
+	// nothing to pin and nothing in between.
+	TLSCertPath string `toml:"tls_cert_path"`
 }
+
+// Configured reports whether any Lightning node is set up. None is a supported
+// arrangement — split detection is useful on its own, and a user may not have
+// connected a node yet — so this is a question, not a check.
+func (l LNConfig) Configured() bool { return len(l.LND)+len(l.CLN) > 0 }
 
 // SentinelConfig tunes split detection.
 type SentinelConfig struct {

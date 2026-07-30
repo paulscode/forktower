@@ -20,6 +20,9 @@ import (
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/chainview/bitcoindview"
 	"github.com/paulscode/forktower/internal/config"
+	"github.com/paulscode/forktower/internal/registry"
+	"github.com/paulscode/forktower/internal/registry/cln"
+	"github.com/paulscode/forktower/internal/registry/lnd"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
 )
@@ -47,6 +50,7 @@ type App struct {
 	bus      *bus.Bus
 	sf, sq   chainview.ChainView
 	sentinel *sentinel.Sentinel
+	registry *registry.Registry
 	alerter  *alert.Alerter
 	timeline *store.TimelineSubscriber
 	api      *api.Server
@@ -65,6 +69,10 @@ type Deps struct {
 	Now func() time.Time
 	// Listener overrides where the API listens, so a test can take a free port.
 	Listener net.Listener
+	// LNSources replaces the Lightning nodes built from configuration, so a test
+	// can prove the daemon reads channels without needing a real one. A non-nil
+	// empty slice means "no Lightning nodes", which is different from nil.
+	LNSources []registry.Source
 }
 
 // New builds the daemon.
@@ -157,7 +165,23 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 		return nil, fmt.Errorf("setting up the detection engine: %w", err)
 	}
 
-	a.api, err = api.New(st, a.sentinel, a.alerter, api.Config{
+	sources, err := a.buildLNSources(deps.LNSources, cfg.LN, log)
+	if err != nil {
+		a.closeOnFailure()
+		return nil, err
+	}
+	// The user's own node first and the other chain's backend second. Before the
+	// fork the two hold the same block, so the second is a real fallback for a
+	// funding transaction the first has pruned away.
+	a.registry, err = registry.New(st, a.bus, sources,
+		[]registry.BlockSource{a.sf, a.sq}, registry.Config{},
+		log.With(slog.String("component", "registry")), now)
+	if err != nil {
+		a.closeOnFailure()
+		return nil, fmt.Errorf("setting up channel watching: %w", err)
+	}
+
+	a.api, err = api.New(st, a.sentinel, a.alerter, a.registry, api.Config{
 		Auth:                  cfg.UI.Auth,
 		PasswordHash:          cfg.UI.PasswordHash,
 		AllowedOrigins:        cfg.UI.AllowedOrigins,
@@ -226,6 +250,51 @@ func (a *App) buildView(
 	return view, nil
 }
 
+// buildLNSources turns the configured Lightning nodes into registry sources.
+//
+// Named by implementation and position rather than by address, because two nodes
+// of the same implementation are a supported arrangement and an address in a log
+// can carry a credential.
+func (a *App) buildLNSources(
+	supplied []registry.Source, cfg config.LNConfig, log *slog.Logger,
+) ([]registry.Source, error) {
+	if supplied != nil {
+		return supplied, nil
+	}
+
+	var out []registry.Source
+	for i, n := range cfg.LND {
+		name := fmt.Sprintf("lnd-%d", i+1)
+		client, err := lnd.New(lnd.Options{
+			BaseURL:      n.RESTAddr,
+			TLSCertPath:  n.TLSCertPath,
+			MacaroonPath: n.MacaroonPath,
+			Logger:       log.With(slog.String("component", name)),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("connecting to your LND node: %w", err)
+		}
+		out = append(out, registry.Source{Name: name, Client: client})
+	}
+	for i, n := range cfg.CLN {
+		name := fmt.Sprintf("cln-%d", i+1)
+		client, err := cln.New(cln.Options{
+			BaseURL:     n.RESTAddr,
+			RunePath:    n.RunePath,
+			TLSCertPath: n.TLSCertPath,
+			Logger:      log.With(slog.String("component", name)),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("connecting to your Core Lightning node: %w", err)
+		}
+		out = append(out, registry.Source{Name: name, Client: client})
+	}
+	if len(out) > 0 {
+		log.Info("channel watching ready", slog.Int("lightning_nodes", len(out)))
+	}
+	return out, nil
+}
+
 // deriveNetwork reads which chain the user's own node is on.
 //
 // Taken from their node rather than from configuration because it is the one
@@ -274,6 +343,7 @@ func (a *App) Run(ctx context.Context) error {
 	group.Go(func() error { return a.timeline.Run(groupCtx) })
 	group.Go(func() error { return a.alerter.Run(groupCtx) })
 	group.Go(func() error { return a.sentinel.Run(groupCtx) })
+	group.Go(func() error { return a.registry.Run(groupCtx) })
 
 	group.Go(func() error {
 		a.log.Info("Forktower is running")

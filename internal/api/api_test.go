@@ -15,6 +15,7 @@ import (
 	"github.com/paulscode/forktower/internal/alert"
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/config"
+	"github.com/paulscode/forktower/internal/registry"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
 )
@@ -149,8 +150,29 @@ type harness struct {
 	store   *store.Store
 	sen     *fakeSentinel
 	alerter *fakeAlerter
+	ln      *fakeLightning
 	clock   *atomic.Int64
 	ts      *httptest.Server
+}
+
+// fakeLightning stands in for the channel registry. Nil health means no
+// Lightning node is configured, which is a different thing from one that cannot
+// be read.
+type fakeLightning struct {
+	mu     sync.Mutex
+	health []registry.SourceHealth
+}
+
+func (f *fakeLightning) Health() []registry.SourceHealth {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.health
+}
+
+func (f *fakeLightning) set(h []registry.SourceHealth) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.health = h
 }
 
 func newHarness(t *testing.T, mutate func(*Config)) *harness {
@@ -168,6 +190,7 @@ func newHarness(t *testing.T, mutate func(*Config)) *harness {
 
 	sen := newFakeSentinel()
 	al := newFakeAlerter("my-phone")
+	ln := &fakeLightning{}
 
 	// A self-test on record by default, so the transport check reports a real
 	// outcome rather than "not tested yet" in every unrelated test.
@@ -180,7 +203,7 @@ func newHarness(t *testing.T, mutate func(*Config)) *harness {
 		mutate(&cfg)
 	}
 
-	srv, err := New(st, sen, al, cfg, nil, func() time.Time {
+	srv, err := New(st, sen, al, ln, cfg, nil, func() time.Time {
 		return time.Unix(clock.Load(), 0)
 	})
 	if err != nil {
@@ -190,7 +213,7 @@ func newHarness(t *testing.T, mutate func(*Config)) *harness {
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
-	return &harness{srv: srv, store: st, sen: sen, alerter: al, clock: clock, ts: ts}
+	return &harness{srv: srv, store: st, sen: sen, alerter: al, ln: ln, clock: clock, ts: ts}
 }
 
 // do sends a request with an Origin matching the server, which is what a browser

@@ -72,6 +72,38 @@ version of that which helps you.
 A notification server you run yourself is the private option. A public one with a
 topic name someone could guess is, in effect, a public channel.
 
+### Connecting your Lightning node
+
+Optional, and Forktower is useful without it: watching the two chains is what it
+does first, and it will do that with no Lightning node configured at all.
+
+Connecting one lets it tell you *which of your channels* would be exposed if the
+chains separated, which is the difference between knowing a split happened and
+knowing what it means for you.
+
+Uncomment the `[[ln.lnd]]` or `[[ln.cln]]` block in `forktower.toml` and give it
+your node's REST address, its certificate, and a credential. Both kinds of node
+are supported, and you can list more than one of each.
+
+Forktower only ever reads. It never sends your node an instruction, and there is
+no code in it that could. Give it the narrowest credential you can:
+
+```
+lncli bakemacaroon info:read offchain:read onchain:read peers:read
+```
+
+or, for Core Lightning, a rune restricted to `getinfo` and `listpeerchannels`.
+
+If you give it a wider credential it will work anyway and say so on the
+dashboard, rather than refusing — being watched with more authority than
+necessary beats not being watched. Credentials are given as *file paths*, never
+pasted into the configuration file itself: a secret in a config file is a secret
+that ends up in a support thread.
+
+If your node stops answering, Forktower keeps watching the channels it already
+knew about and tells you it has lost contact. It does not forget them, and the
+protection does not stop because a Lightning node restarted.
+
 ## StartOS and Umbrel
 
 Install from the app store. The platform passes Forktower its own settings and
