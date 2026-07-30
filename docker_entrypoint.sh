@@ -239,10 +239,20 @@ write_forktower_conf() {
     printf '\n[log]\n'
     printf 'level = "%s"\n' "${FORKTOWER_LOG_LEVEL:-info}"
 
-    # Notification channels, if any were configured. The platform's own
-    # notifications are the intended default and are not yet implemented, so a
-    # deployment with nothing configured here will say plainly that it has no way
-    # to reach its user — which is true, and better than silence.
+    # On StartOS and Umbrel the platform raises the alerts itself, by reading
+    # this daemon's API: neither exposes its notification system to an app
+    # container, so the daemon cannot push to it. Saying so here is what stops
+    # the dashboard telling a platform user it has no way to reach them.
+    case "${FORKTOWER_PLATFORM:-}" in
+      startos|umbrel)
+        printf '\n[alerts]\n'
+        printf 'platform_notifications = true\n'
+        ;;
+    esac
+
+    # Notification channels, if any were configured. Anywhere else, a deployment
+    # with none will say plainly that it has no way to reach its user — which is
+    # true, and better than silence.
     if [ -n "${FORKTOWER_WEBHOOK_URL:-}" ]; then
       printf '\n[[alerts.transport]]\n'
       printf 'name = "webhook"\ntype = "webhook"\nmin_tier = "%s"\n' \

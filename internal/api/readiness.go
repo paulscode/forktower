@@ -241,7 +241,21 @@ func enforcesNewRules(subversion string) bool {
 }
 
 func (s *Server) checkAlertTransports(ctx context.Context) ReadinessItem {
-	if s.alerter == nil || len(s.alerter.TransportNames()) == 0 {
+	noTransports := s.alerter == nil || len(s.alerter.TransportNames()) == 0
+
+	// On StartOS and Umbrel the platform raises the alerts, by reading this
+	// daemon's API — neither platform's notification system can be reached from
+	// inside an app container. So "no transports configured" is the normal,
+	// correct state there, and reporting it as a problem would send people
+	// hunting for a setting that should stay empty.
+	if noTransports && s.cfg.PlatformNotifications {
+		return ReadinessItem{
+			ID: CheckAlertTransports, OK: true,
+			Label: "Alerts reach you through this device's own notifications",
+		}
+	}
+
+	if noTransports {
 		return ReadinessItem{
 			ID: CheckAlertTransports, OK: false,
 			Label:  "No way to reach you",

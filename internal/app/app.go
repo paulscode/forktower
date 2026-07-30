@@ -158,10 +158,11 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 	}
 
 	a.api, err = api.New(st, a.sentinel, a.alerter, api.Config{
-		Auth:           cfg.UI.Auth,
-		PasswordHash:   cfg.UI.PasswordHash,
-		AllowedOrigins: cfg.UI.AllowedOrigins,
-		FrameAncestors: cfg.UI.FrameAncestors,
+		Auth:                  cfg.UI.Auth,
+		PasswordHash:          cfg.UI.PasswordHash,
+		AllowedOrigins:        cfg.UI.AllowedOrigins,
+		FrameAncestors:        cfg.UI.FrameAncestors,
+		PlatformNotifications: cfg.Alerts.PlatformNotifications,
 	}, log.With(slog.String("component", "api")), now)
 	if err != nil {
 		a.closeOnFailure()

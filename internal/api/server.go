@@ -60,6 +60,9 @@ type Config struct {
 	PasswordHash   string
 	AllowedOrigins []string
 	FrameAncestors []string
+	// PlatformNotifications says the surrounding platform raises alerts by
+	// reading this API, which is how StartOS and Umbrel do it.
+	PlatformNotifications bool
 	// SessionTTL is how long a session survives without use. Zero uses
 	// DefaultSessionTTL.
 	SessionTTL time.Duration

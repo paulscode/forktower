@@ -198,6 +198,16 @@ type AlertsConfig struct {
 	SelfTestIntervalHours int               `toml:"self_test_interval_hours"`
 	CriticalRepeatMins    int               `toml:"critical_repeat_mins"`
 	Transport             []TransportConfig `toml:"transport"`
+
+	// PlatformNotifications says the surrounding platform raises alerts on
+	// Forktower's behalf, by reading its API.
+	//
+	// Set by StartOS and Umbrel packaging, never by hand. It exists because
+	// neither platform's notification system is reachable from inside an app
+	// container — verified on both, 2026-07-30 — so the platform pulls rather
+	// than the daemon pushing. Without this the dashboard would tell a platform
+	// user it had no way to reach them, which on those platforms is untrue.
+	PlatformNotifications bool `toml:"platform_notifications"`
 }
 
 // TransportType is a notification delivery mechanism.

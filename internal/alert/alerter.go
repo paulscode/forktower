@@ -440,7 +440,19 @@ func RoutesFromConfig(cfg []config.TransportConfig, timeout time.Duration) ([]Ro
 				IncludeDetail: t.EffectiveIncludeDetail(),
 			})
 
-		case config.TransportTelegram, config.TransportStartOS, config.TransportUmbrel:
+		case config.TransportStartOS, config.TransportUmbrel:
+			// Not a transport this daemon can ever implement. Neither platform's
+			// notification system is reachable from inside an app container —
+			// verified on both — so there the platform reads this daemon's API and
+			// raises the notification itself. Set alerts.platform_notifications
+			// instead, which the packaging does.
+			return nil, fmt.Errorf(
+				"transport %q is of type %q, which Forktower cannot deliver to from "+
+					"inside its own container; on that platform the notifications come "+
+					"from the platform itself, so set alerts.platform_notifications "+
+					"rather than listing a transport", t.Name, t.Type)
+
+		case config.TransportTelegram:
 			return nil, fmt.Errorf(
 				"transport %q is of type %q, which this version cannot deliver to yet",
 				t.Name, t.Type)

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/paulscode/forktower/internal/alert"
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
@@ -272,4 +273,68 @@ func readinessFor(t *testing.T, checks sentinel.Checks) []ReadinessItem {
 	h := newHarness(t, nil)
 	h.sen.set(func(f *fakeSentinel) { f.checks = checks })
 	return h.srv.Readiness(context.Background())
+}
+
+// Neither StartOS nor Umbrel exposes its notification system to an app
+// container — verified on both. So on those platforms the wrapper reads this
+// API and raises the notification itself, and a daemon with no transports
+// configured is in its normal, correct state. Reporting that as a problem would
+// send people hunting for a setting that is supposed to stay empty.
+func TestPlatformNotificationsAreNotAMissingAlarm(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	h := newHarness(t, func(c *Config) { c.PlatformNotifications = true })
+	h.alerter.mu.Lock()
+	h.alerter.names = nil
+	h.alerter.mu.Unlock()
+
+	item := itemByID(t, h.srv.Readiness(ctx), CheckAlertTransports)
+	if !item.OK {
+		t.Errorf("a platform install with no transports was reported as unreachable: %+v", item)
+	}
+	if item.Action != nil {
+		t.Errorf("the user was asked to fix something that is already right: %+v", item.Action)
+	}
+	assertItemIsFitToShow(t, item)
+
+	// And the headline follows it, rather than telling them to set up something
+	// the platform already does.
+	got := decode[Status](t, h.do(t, http.MethodGet, "/api/v1/status", ""))
+	if got.Headline.State == StateActionNeeded {
+		t.Errorf("headline = %q, want it not to demand notifications setup", got.Headline.State)
+	}
+
+	// Without the platform flag, the same daemon says it cannot reach anyone.
+	plain := newHarness(t, nil)
+	plain.alerter.mu.Lock()
+	plain.alerter.names = nil
+	plain.alerter.mu.Unlock()
+	if itemByID(t, plain.srv.Readiness(ctx), CheckAlertTransports).OK {
+		t.Error("a daemon with no way to reach anyone reported that it could")
+	}
+}
+
+// A platform install that also configures its own transport still hears about
+// one that is broken: the flag says the platform helps, not that nothing can
+// fail.
+func TestPlatformNotificationsDoNotHideABrokenTransport(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	h := newHarness(t, func(c *Config) { c.PlatformNotifications = true })
+	if _, err := h.store.UpsertAlert(ctx, store.Alert{
+		Tier:     store.TierWarning,
+		Kind:     alert.KindTransportFailing,
+		DedupKey: alert.KindTransportFailing + ":my-phone",
+		Subject:  "my-phone",
+		Message:  "could not deliver",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	item := itemByID(t, h.srv.Readiness(ctx), CheckAlertTransports)
+	if item.OK {
+		t.Error("a broken transport was hidden by the platform flag")
+	}
 }
