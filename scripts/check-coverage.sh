@@ -43,7 +43,9 @@ declare -A MIN=(
   # in-process SQLite database, which needs no container — so the floor moved up
   # to keep the achievement. Floors ratchet.
   [internal/store]=75
-  [internal/chainview/bitcoindview]=40
+  # Reached 89.5% against a fake node over httptest — no container needed for
+  # the request/response half, so the floor moved up from 40.
+  [internal/chainview/bitcoindview]=85
   [internal/registry/lnd]=40
   [internal/registry/cln]=40
   [internal/companion]=40
