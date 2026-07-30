@@ -1,0 +1,41 @@
+{
+  "channels": [
+    {
+      "active": true,
+      "remote_pubkey": "03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f",
+      "channel_point": "8f2c4a1b9e5d3c7f0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071:0",
+      "chan_id": "934368482509750272",
+      "capacity": "150000",
+      "commitment_type": "ANCHORS",
+      "initiator": true,
+      "local_constraints": { "csv_delay": 144 },
+      "remote_constraints": { "csv_delay": 720 },
+      "pending_htlcs": [
+        {
+          "incoming": true,
+          "amount": "1500",
+          "amount_msat": "1500000",
+          "expiration_height": 850200,
+          "hash_lock": "3f786850e387550fdab836ed7e6dc881de23001b"
+        },
+        {
+          "incoming": false,
+          "amount": "2500",
+          "amount_msat": "2500000",
+          "expiration_height": 850150,
+          "hash_lock": "89e6c98d92887913d28ff2c0d0b3e0bd8c8e2f1a"
+        }
+      ]
+    },
+    {
+      "active": true,
+      "remote_pubkey": "02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "channel_point": "1111111111111111111111111111111111111111111111111111111111111111:1",
+      "chan_id": "0",
+      "capacity": "9007199254740993",
+      "commitment_type": "SOMETHING_NEW",
+      "initiator": false,
+      "pending_htlcs": []
+    }
+  ]
+}

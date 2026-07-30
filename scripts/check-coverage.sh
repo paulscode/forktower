@@ -62,7 +62,16 @@ declare -A MIN=(
   # integration suite instead, which does use a real node. This is a floor moving
   # *down* with a reason, which the policy allows and which is worth noticing.
   [internal/chainview/bitcoindview]=72
-  [internal/registry/lnd]=40
+  # Mapping and credential inspection, both pure and both consequential: the two
+  # CSV delays decide when a deadline expires, and the credential check decides
+  # whether an over-privileged macaroon is noticed. It speaks the node's REST
+  # interface over stdlib rather than gRPC, so it is testable against an httptest
+  # server like everything else and has no excuse for a low floor.
+  [internal/registry/lnd]=85
+  # Types only for now: the shared ChannelRecord the adapters converge on, with
+  # no behaviour of its own. The engine that will live here arrives with the
+  # relevance classifier, and the floor goes up with it.
+  [internal/registry]=0
   [internal/registry/cln]=40
   [internal/companion]=40
 
