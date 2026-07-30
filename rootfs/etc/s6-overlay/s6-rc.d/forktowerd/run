@@ -1,0 +1,5 @@
+#!/command/with-contenv sh
+# The daemon. Supervised, so a crash is restarted rather than silently ending the
+# watch — which is the failure this whole program exists to avoid.
+exec s6-setuidgid forktower \
+  /usr/local/bin/forktowerd --config "${FORKTOWER_DATA_DIR}/forktower.toml"

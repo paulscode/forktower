@@ -1,0 +1,7 @@
+#!/command/with-contenv sh
+# The second Bitcoin node: the one following the chain the user's own node does
+# not. Its configuration is written by the entrypoint, because most of it is
+# decided by the deployment rather than by us.
+exec s6-setuidgid forktower \
+  /usr/local/bin/bitcoind -conf="${FORKTOWER_DATA_DIR}/sq/bitcoin.conf" \
+    -datadir="${FORKTOWER_DATA_DIR}/sq"

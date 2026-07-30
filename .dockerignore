@@ -1,0 +1,25 @@
+# Everything the image does not need. A smaller context is a faster build, and
+# — more to the point — it is the difference between shipping the source art and
+# the planning documents or not.
+
+.git
+.github
+.dev
+bin
+builds
+internal_docs
+references
+test
+docs
+*.md
+!README.md
+
+# Test and development material.
+**/*_test.go
+**/testdata
+web/app_test.js
+web/domshim.js
+web/testdata
+deploy/forkbench
+Dockerfile
+.dockerignore

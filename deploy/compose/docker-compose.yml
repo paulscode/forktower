@@ -1,0 +1,109 @@
+name: forktower
+
+# Forktower, the way a self-hoster runs it.
+#
+# Two services, because that is the shape people expect and the shape that lets
+# you watch each one separately: the daemon, and the second Bitcoin node it
+# compares against. The published image can also run both together in one
+# container — that is what the packaged StartOS and Umbrel apps use, since those
+# platforms want one image — but here they are apart.
+#
+# Copy .env.example to .env and fill in your node's address first.
+
+services:
+  forktower:
+    image: ${FORKTOWER_IMAGE:-paulscode/forktower:latest}
+    restart: unless-stopped
+    depends_on:
+      sq-bitcoind:
+        condition: service_healthy
+    environment:
+      # The second node is its own service here, so nothing is supervised inside
+      # this container and the daemon is PID 1.
+      FORKTOWER_SQ_MODE: external
+      FORKTOWER_PLATFORM: compose
+
+      FORKTOWER_SF_RPC_URL: ${FORKTOWER_SF_RPC_URL}
+      FORKTOWER_SF_RPC_COOKIE_PATH: ${FORKTOWER_SF_RPC_COOKIE_PATH:-}
+      FORKTOWER_SF_RPC_USER: ${FORKTOWER_SF_RPC_USER:-}
+      FORKTOWER_SF_RPC_PASSWORD: ${FORKTOWER_SF_RPC_PASSWORD:-}
+      FORKTOWER_SF_ZMQ_RAWBLOCK: ${FORKTOWER_SF_ZMQ_RAWBLOCK:-}
+      FORKTOWER_SF_ZMQ_RAWTX: ${FORKTOWER_SF_ZMQ_RAWTX:-}
+
+      FORKTOWER_SQ_RPC_URL: http://sq-bitcoind:8432
+      FORKTOWER_SQ_RPC_USER: forktower
+      FORKTOWER_SQ_RPC_PASSWORD: ${FORKTOWER_SQ_RPC_PASSWORD:-forktower-local}
+      FORKTOWER_SQ_ZMQ_RAWBLOCK: tcp://sq-bitcoind:28432
+      FORKTOWER_SQ_ZMQ_RAWTX: tcp://sq-bitcoind:28433
+
+      FORKTOWER_UI_LISTEN: 0.0.0.0:8330
+      FORKTOWER_UI_AUTH: ${FORKTOWER_UI_AUTH:-none}
+      FORKTOWER_UI_PASSWORD_HASH: ${FORKTOWER_UI_PASSWORD_HASH:-}
+
+      FORKTOWER_NTFY_URL: ${FORKTOWER_NTFY_URL:-}
+      FORKTOWER_NTFY_TOKEN: ${FORKTOWER_NTFY_TOKEN:-}
+      FORKTOWER_WEBHOOK_URL: ${FORKTOWER_WEBHOOK_URL:-}
+
+      FORKTOWER_LOG_LEVEL: ${FORKTOWER_LOG_LEVEL:-info}
+    ports:
+      # This machine only, by default. Reaching the dashboard from elsewhere
+      # without a password is refused rather than allowed quietly.
+      - "${FORKTOWER_UI_BIND:-127.0.0.1}:${FORKTOWER_UI_PORT:-8330}:8330"
+    volumes:
+      - forktower-data:/data
+      # If your node uses a cookie file, mount it read-only and point
+      # FORKTOWER_SF_RPC_COOKIE_PATH at it. Forktower never writes to your node.
+      #- /path/to/.bitcoin:/mnt/bitcoin:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/forktowerd", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  sq-bitcoind:
+    image: ${FORKTOWER_IMAGE:-paulscode/forktower:latest}
+    restart: unless-stopped
+    # The same image, running only the Bitcoin node inside it. One image means
+    # one thing to verify, and the node here is the same binary the all-in-one
+    # deployment runs.
+    entrypoint: ["/usr/local/bin/bitcoind"]
+    command:
+      - -datadir=/data
+      - -server=1
+      - -listen=1
+      - -printtoconsole=1
+      - -disablewallet=1
+      - -prune=${FORKTOWER_SQ_PRUNE_MB:-10000}
+      - -port=8433
+      - -rpcport=8432
+      - -rpcbind=0.0.0.0
+      # Reachable only from the other service on this private network. It holds
+      # no wallet and no money, but a Bitcoin RPC port open to the world is a bad
+      # habit to demonstrate.
+      - -rpcallowip=172.16.0.0/12
+      - -rpcuser=forktower
+      - -rpcpassword=${FORKTOWER_SQ_RPC_PASSWORD:-forktower-local}
+      - -zmqpubrawblock=tcp://0.0.0.0:28432
+      - -zmqpubrawtx=tcp://0.0.0.0:28433
+      # How this node describes itself. Forktower uses it, among other things, to
+      # confirm that the two nodes it is comparing really are two nodes.
+      - -uacomment=forktower-sq
+    volumes:
+      - sq-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bitcoin-cli -rpcconnect=127.0.0.1 -rpcport=8432
+          -rpcuser=forktower -rpcpassword=${FORKTOWER_SQ_RPC_PASSWORD:-forktower-local}
+          getblockchaininfo >/dev/null 2>&1
+      interval: 10s
+      timeout: 10s
+      # Generous: a node that is still starting up is not a node that has failed,
+      # and restarting one mid-sync is how a sync never finishes.
+      retries: 60
+      start_period: 120s
+
+volumes:
+  forktower-data:
+  sq-data:

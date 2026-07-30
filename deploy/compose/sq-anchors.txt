@@ -1,0 +1,26 @@
+# Anchor peers for the second Bitcoin node.
+#
+# These give it somewhere to start looking for peers that serve the chain the
+# user's own node does not. They are a starting point, never the whole picture:
+# the generated configuration uses `addnode`, so ordinary peer discovery keeps
+# running alongside them. Using `connect` instead would switch discovery off and
+# make these the node's entire view of the chain — turning the measure meant to
+# prevent an eclipse into a single point of one.
+#
+# One address per line. Onion addresses are preferred: a node following only the
+# status-quo chain from the user's own network address links the two and marks
+# its operator as someone with Lightning channels to defend, which is useful to
+# exactly the wrong person.
+#
+# This list is empty on purpose.
+#
+# Populating it means naming real, running nodes, and a list of addresses that
+# have gone dark is worse than none — it looks like a measure that is working.
+# Two things have to land before it can be filled honestly: nodes that are known
+# to be serving the status-quo chain after the fork actually happens, and the
+# signature check that lets the list be updated without shipping a new release.
+# Until then the node relies on ordinary peer discovery, and the daemon reports
+# what it can see rather than assuming.
+#
+# Add your own with FORKTOWER_SQ_EXTRA_PEERS (comma-separated), or by editing
+# this file and rebuilding.

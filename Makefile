@@ -141,6 +141,10 @@ icons:
 icons-check:
 	@scripts/make-icons.sh --check
 
+# Packaging lives in its own file, and its targets are namespaced so that
+# `make` on its own still means "build the binaries".
+include s9pk.mk
+
 ## tidy: tidy and verify module requirements
 tidy:
 	go mod tidy

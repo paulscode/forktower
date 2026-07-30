@@ -306,6 +306,19 @@ type UIConfig struct {
 	// proxy that rewrites Host.
 	AllowedOrigins []string `toml:"allowed_origins"`
 
+	// AccessRestrictedExternally says that something outside Forktower controls
+	// who can reach ui.listen.
+	//
+	// Needed because a container has to bind every address to be reachable at
+	// all, and what actually decides its exposure is the port publishing — which
+	// this process cannot see. From in here, "reachable from the whole network"
+	// and "published to one machine's loopback" look identical.
+	//
+	// So it is the operator's statement, not an inference, and it is the only way
+	// to serve an unauthenticated dashboard on a non-loopback address. Forktower
+	// says at startup exactly what it is taking on trust.
+	AccessRestrictedExternally bool `toml:"access_restricted_externally"`
+
 	// FrameAncestors lists origins permitted to embed the dashboard in a frame.
 	//
 	// Empty means 'self'. Both platforms embed their apps, so this cannot simply

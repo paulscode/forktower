@@ -221,11 +221,13 @@ func (c Config) validateUI() []string {
 
 	switch c.UI.Auth {
 	case AuthNone:
-		if !loopback {
+		if !loopback && !c.UI.AccessRestrictedExternally {
 			p = append(p, fmt.Sprintf(
 				"ui.auth is %q but ui.listen %q is not loopback — that would serve the dashboard "+
 					"unauthenticated on the network. Use %q when a platform proxy fronts this port, "+
-					"or %q to require a password.",
+					"or %q to require a password. In a container, where binding every address is "+
+					"the only way to be reachable at all, set ui.access_restricted_externally "+
+					"instead — but only if you know what restricts it.",
 				AuthNone, c.UI.Listen, AuthPlatform, AuthPassword))
 		}
 	case AuthPlatform:

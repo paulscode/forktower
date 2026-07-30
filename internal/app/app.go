@@ -182,6 +182,15 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 	log.Info("dashboard ready",
 		slog.String("address", a.listener.Addr().String()),
 		slog.String("authentication", string(cfg.UI.Auth)))
+	if cfg.UI.Auth == config.AuthNone && cfg.UI.AccessRestrictedExternally {
+		// Said out loud every time, because it is the one place Forktower is
+		// trusting a claim it cannot check. If whatever was supposed to restrict
+		// this port ever stops doing so, the dashboard is open and nothing here
+		// would notice.
+		log.Warn("serving the dashboard without a password, because the configuration " +
+			"says access to it is restricted elsewhere — check that whatever does " +
+			"that is still doing it")
+	}
 
 	return a, nil
 }
