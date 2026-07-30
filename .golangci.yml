@@ -77,6 +77,29 @@ linters:
             - pkg: github.com/paulscode/forktower/internal/bus
               desc: decision logic must not publish events
 
+        # The block scanner is held to the same bar as the decision logic, and for
+        # a sharper reason: it is the thing that decides whether a spend of a
+        # user's channel was noticed. A scanner that could read the database
+        # would be a scanner whose answer depends on when it ran, and the crafted
+        # blocks it is tested against would stop proving anything about the real
+        # one. The watchset is built elsewhere and handed in.
+        pure-scan:
+          files:
+            - "**/internal/watcher/scan.go"
+          deny:
+            - pkg: net
+              desc: the block scanner must not perform I/O
+            - pkg: net/http
+              desc: the block scanner must not perform I/O
+            - pkg: os
+              desc: the block scanner must not touch the filesystem
+            - pkg: database/sql
+              desc: the block scanner must not touch storage
+            - pkg: github.com/paulscode/forktower/internal/store
+              desc: the block scanner is given its watchset, it does not read one
+            - pkg: github.com/paulscode/forktower/internal/bus
+              desc: the block scanner returns what it found, it does not publish it
+
         # The alerting policy is held to the same "no I/O" bar, but with a
         # narrower deny list. It maps bus events onto the store's alert
         # vocabulary, so denying those two packages would force a parallel copy

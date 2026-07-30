@@ -27,7 +27,13 @@ declare -A MIN=(
   # Pure decision logic: no I/O, so there is no excuse for a gap.
   [internal/sentinel]=90  # decision logic: no I/O, so no excuse for a gap
   [internal/deadline]=90
-  [internal/watcher]=85
+  # The block scanner is pure and is held near-total; the watchset reader is a
+  # translation from stored rows to matchable outpoints, exercised against a real
+  # in-process database. Raised from 85 when both landed. The live loop arrives
+  # next and is I/O against fake chain views, which should still be testable
+  # without a container — if it turns out not to be, lowering this needs a reason
+  # written here.
+  [internal/watcher]=90
   [internal/config]=75
   # No I/O at all: a channel fan-out with a deliberate drop policy. Held high
   # because every branch is reachable from a test.
