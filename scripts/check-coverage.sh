@@ -32,6 +32,9 @@ declare -A MIN=(
   # No I/O at all: a channel fan-out with a deliberate drop policy. Held high
   # because every branch is reachable from a test.
   [internal/bus]=95
+  # Types, an interface, and small predicates over them. No I/O, nothing to
+  # excuse a gap.
+  [internal/chainview]=95
 
   # I/O shells. The real exercise is in the integration suite, which needs
   # containers and does not run in this gate.
