@@ -239,3 +239,9 @@ func asRPCError(err error) (*rpcError, bool) {
 	}
 	return nil, false
 }
+
+// asType is errors.As with a target that is an interface pointer, kept here so
+// the timeout check reads clearly at its call site.
+func asType[T any](err error, target *T) bool {
+	return errors.As(err, target)
+}

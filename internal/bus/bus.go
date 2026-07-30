@@ -7,6 +7,7 @@ package bus
 import (
 	"log/slog"
 	"sync"
+	"sync/atomic"
 )
 
 // Event is anything publishable. Implementations are immutable value types, so
@@ -48,7 +49,13 @@ type subscription struct {
 	// dropped counts events discarded because this subscriber was not keeping up.
 	// Reported when the bus closes, so a slow consumer leaves a trace even if
 	// nobody was reading the logs at the time.
-	dropped int
+	//
+	// Atomic because delivery happens under a *read* lock — several publishers can
+	// be inside Publish at once by design, and a plain counter would be a data
+	// race between them and with Dropped. Found by the race detector after a first
+	// version shipped with a plain int; ten clean runs had not been enough to show
+	// it.
+	dropped atomic.Int64
 }
 
 func (s *subscription) wants(kind string) bool {
@@ -152,11 +159,11 @@ func (b *Bus) deliver(s *subscription, e Event, kind string) {
 
 	select {
 	case s.ch <- e:
-		s.dropped++
+		total := s.dropped.Add(1)
 		attrs := []any{
 			slog.String("subscriber", s.name),
 			slog.String("kind", kind),
-			slog.Int("dropped_total", s.dropped),
+			slog.Int64("dropped_total", total),
 		}
 		if displaced != nil {
 			attrs = append(attrs, slog.String("displaced_kind", displaced.Kind()))
@@ -166,11 +173,10 @@ func (b *Bus) deliver(s *subscription, e Event, kind string) {
 		// The consumer refilled the buffer between the two operations above. Drop
 		// the new event rather than looping, since looping could spin indefinitely
 		// against a fast publisher.
-		s.dropped++
 		b.log.Error("subscriber is not keeping up; discarded this event",
 			slog.String("subscriber", s.name),
 			slog.String("kind", kind),
-			slog.Int("dropped_total", s.dropped))
+			slog.Int64("dropped_total", s.dropped.Add(1)))
 	}
 }
 
@@ -186,10 +192,10 @@ func (b *Bus) Close() {
 	b.closed = true
 
 	for _, s := range b.subs {
-		if s.dropped > 0 {
+		if total := s.dropped.Load(); total > 0 {
 			b.log.Warn("subscriber lost events over its lifetime",
 				slog.String("subscriber", s.name),
-				slog.Int("dropped_total", s.dropped))
+				slog.Int64("dropped_total", total))
 		}
 		close(s.ch)
 	}
@@ -204,7 +210,7 @@ func (b *Bus) Dropped(name string) int {
 
 	for _, s := range b.subs {
 		if s.name == name {
-			return s.dropped
+			return int(s.dropped.Load())
 		}
 	}
 	return 0

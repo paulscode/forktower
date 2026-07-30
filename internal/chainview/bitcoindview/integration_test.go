@@ -6,9 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/ory/dockertest/v3"
 	"github.com/ory/dockertest/v3/docker"
@@ -30,17 +33,43 @@ const (
 	throwawayLabel = "forktower-integration"
 )
 
-// startNode brings up a regtest node and returns a View onto it.
+// startNode brings up a regtest node and returns a View onto it, without
+// notifications configured so the polling path is what gets exercised.
 func startNode(t *testing.T) *View {
+	t.Helper()
+	return startNodeWith(t, false)
+}
+
+// startNodeZMQ returns a View that uses the node's notification sockets.
+func startNodeZMQ(t *testing.T) *View {
+	t.Helper()
+	return startNodeWith(t, true)
+}
+
+func startNodeWith(t *testing.T, useZMQ bool) *View {
 	t.Helper()
 
 	pool, err := dockertest.NewPool("")
 	if err != nil {
 		t.Fatalf("connecting to docker: %v", err)
 	}
+	v, _ := startNodeResource(t, pool, useZMQ)
+	return v
+}
+
+// startNodeResource brings up a node and returns both the view and the container,
+// so a test can restart it.
+func startNodeResource(t *testing.T, pool *dockertest.Pool, useZMQ bool) (*View, *dockertest.Resource) {
+	t.Helper()
+
 	if err := pool.Client.Ping(); err != nil {
 		t.Skipf("docker is not usable, skipping: %v", err)
 	}
+
+	// Fixed host ports rather than whatever Docker picks, so that restarting the
+	// container keeps the same mapping. With ephemeral ports a restart silently
+	// moves the node and the test would be measuring the wrong thing.
+	hostPorts := freePorts(t, 3)
 
 	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
 		Repository: nodeImage,
@@ -54,12 +83,21 @@ func startNode(t *testing.T) *View {
 			"-rpcpassword=" + rpcPass,
 			"-fallbackfee=0.0002",
 			"-txindex=1",
+			"-zmqpubrawblock=tcp://0.0.0.0:28332",
+			"-zmqpubrawtx=tcp://0.0.0.0:28333",
 		},
-		ExposedPorts: []string{"18443/tcp"},
+		ExposedPorts: []string{"18443/tcp", "28332/tcp", "28333/tcp"},
 		Labels:       map[string]string{"created-by": throwawayLabel},
+		PortBindings: map[docker.Port][]docker.PortBinding{
+			"18443/tcp": {{HostIP: "127.0.0.1", HostPort: strconv.Itoa(hostPorts[0])}},
+			"28332/tcp": {{HostIP: "127.0.0.1", HostPort: strconv.Itoa(hostPorts[1])}},
+			"28333/tcp": {{HostIP: "127.0.0.1", HostPort: strconv.Itoa(hostPorts[2])}},
+		},
 	}, func(hc *docker.HostConfig) {
-		// The container is disposable and must not outlive a crashed test run.
-		hc.AutoRemove = true
+		// Not auto-removed, because one test restarts the container. Purged in
+		// cleanup instead, and labelled so a crashed run leaves something findable
+		// rather than something anonymous.
+		hc.AutoRemove = false
 		hc.RestartPolicy = docker.RestartPolicy{Name: "no"}
 	})
 	if err != nil {
@@ -71,12 +109,17 @@ func startNode(t *testing.T) *View {
 		}
 	})
 
-	v, err := New(Options{
-		RPCURL:  fmt.Sprintf("http://127.0.0.1:%s", resource.GetPort("18443/tcp")),
+	opts := Options{
+		RPCURL:  fmt.Sprintf("http://127.0.0.1:%d", hostPorts[0]),
 		User:    rpcUser,
 		Pass:    rpcPass,
 		Timeout: 20 * time.Second,
-	})
+	}
+	if useZMQ {
+		opts.ZMQRawBlock = fmt.Sprintf("tcp://127.0.0.1:%d", hostPorts[1])
+		opts.ZMQRawTx = fmt.Sprintf("tcp://127.0.0.1:%d", hostPorts[2])
+	}
+	v, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -97,7 +140,7 @@ func startNode(t *testing.T) *View {
 	}); err != nil {
 		t.Fatalf("node never became ready: %v", err)
 	}
-	return v
+	return v, resource
 }
 
 // ensureWallet creates a wallet if the node has none.
@@ -311,4 +354,194 @@ func TestDeploymentAbsentOnRegtest(t *testing.T) {
 	if !errors.Is(err, chainview.ErrNotFound) && !errors.Is(err, chainview.ErrUnsupported) {
 		t.Errorf("got %v, want ErrNotFound or ErrUnsupported", err)
 	}
+}
+
+// Notifications are the fast path and cannot be faked honestly: the wire protocol
+// and the topics are the node's to define, so this is the only place the claim
+// gets tested.
+func TestSubscribeTipOverNotifications(t *testing.T) {
+	v := startNodeZMQ(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := v.SubscribeTip(ctx)
+	if err != nil {
+		t.Fatalf("SubscribeTip: %v", err)
+	}
+
+	// The current tip arrives without waiting for a block.
+	initial := awaitTip(t, ch, 20*time.Second, "the tip on subscribing")
+
+	generate(t, v, 1)
+
+	// Well inside the polling interval, which is the point of using notifications.
+	got := awaitTip(t, ch, 2*time.Second, "a tip after mining")
+	if got.Height != initial.Height+1 {
+		t.Errorf("height went %d -> %d, want one more", initial.Height, got.Height)
+	}
+	if got.PrevHash != initial.Hash {
+		t.Errorf("new tip does not build on the old one: prev %s, was %s", got.PrevHash, initial.Hash)
+	}
+}
+
+// The fallback, against the same real node with notifications switched off. Slower
+// by design, and it has to work: the user's own node may not publish at all.
+func TestSubscribeTipByPolling(t *testing.T) {
+	v := startNode(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := v.SubscribeTip(ctx)
+	if err != nil {
+		t.Fatalf("SubscribeTip: %v", err)
+	}
+	initial := awaitTip(t, ch, 20*time.Second, "the tip on subscribing")
+
+	generate(t, v, 1)
+
+	got := awaitTip(t, ch, DefaultPollInterval+2*time.Second, "a tip after mining")
+	if got.Height != initial.Height+1 {
+		t.Errorf("height went %d -> %d, want one more", initial.Height, got.Height)
+	}
+}
+
+func TestSubscribeMempoolTxOverNotifications(t *testing.T) {
+	v := startNodeZMQ(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Mine for maturity *before* subscribing. The raw-transaction topic publishes
+	// the transactions of connected blocks as well as memory-pool arrivals, so
+	// mining a hundred blocks after subscribing floods the buffer with coinbase
+	// transactions and the one under test is correctly dropped — which is the
+	// documented behaviour working, not a fault, but it makes for a useless test.
+	generate(t, v, 101)
+
+	ch, err := v.SubscribeMempoolTx(ctx)
+	if err != nil {
+		t.Fatalf("SubscribeMempoolTx: %v", err)
+	}
+
+	sent := sendSomeCoin(t, v)
+
+	deadline := time.After(20 * time.Second)
+	for {
+		select {
+		case tx, ok := <-ch:
+			if !ok {
+				t.Fatal("the mempool subscription closed")
+			}
+			if tx.TxHash() == sent {
+				return
+			}
+			// Other transactions may appear; keep looking for ours.
+		case <-deadline:
+			t.Fatal("the broadcast transaction never arrived over the notification socket")
+		}
+	}
+}
+
+// A node restart is routine. The subscription must recover from it, and must not
+// close — closing is how a consumer learns to stop, so it would look like a
+// shutdown.
+func TestSubscriptionSurvivesANodeRestart(t *testing.T) {
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		t.Fatalf("connecting to docker: %v", err)
+	}
+
+	v, resource := startNodeResource(t, pool, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := v.SubscribeTip(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := awaitTip(t, ch, 20*time.Second, "the tip on subscribing")
+
+	if err := pool.Client.RestartContainer(resource.Container.ID, 30); err != nil {
+		t.Fatalf("restarting the node: %v", err)
+	}
+
+	// Wait for it to answer again, then mine. The subscription must still deliver.
+	pool.MaxWait = readyTimeout
+	if err := pool.Retry(func() error {
+		rctx, rcancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer rcancel()
+		h, hErr := v.Health(rctx)
+		if hErr != nil {
+			return hErr
+		}
+		if h.State == chainview.HealthDown {
+			return errors.New("not answering yet")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("node never came back: %v", err)
+	}
+
+	generate(t, v, 1)
+
+	// A restarted node leaves a publish socket that reads as merely idle rather
+	// than broken, so recovery may come from the safety-net timer rather than from
+	// reconnecting. Either is fine — the point is that the subscription keeps
+	// working without being restarted, and does not go quietly blind.
+	got := awaitTip(t, ch, 30*time.Second, "a tip after the node restarted")
+	if got.Height <= before.Height {
+		t.Errorf("height %d did not advance past %d", got.Height, before.Height)
+	}
+}
+
+func awaitTip(t *testing.T, ch <-chan chainview.BlockMeta, d time.Duration, what string) chainview.BlockMeta {
+	t.Helper()
+	select {
+	case got, ok := <-ch:
+		if !ok {
+			t.Fatalf("subscription closed while waiting for %s", what)
+		}
+		return got
+	case <-time.After(d):
+		t.Fatalf("timed out after %v waiting for %s", d, what)
+		return chainview.BlockMeta{}
+	}
+}
+
+// sendSomeCoin makes and broadcasts a wallet payment, returning its hash.
+func sendSomeCoin(t *testing.T, v *View) chainhash.Hash {
+	t.Helper()
+	ctx := context.Background()
+	ensureWallet(t, v)
+
+	var addr string
+	if err := v.c.call(ctx, &addr, "getnewaddress"); err != nil {
+		t.Fatal(err)
+	}
+	var txid string
+	if err := v.c.call(ctx, &txid, "sendtoaddress", addr, 1.0); err != nil {
+		t.Fatalf("sendtoaddress: %v", err)
+	}
+	h, err := chainhash.NewHashFromStr(txid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return *h
+}
+
+// freePorts reserves n host ports by opening and closing listeners, so the
+// container can be given fixed bindings that survive a restart.
+func freePorts(t *testing.T, n int) []int {
+	t.Helper()
+	out := make([]int, 0, n)
+	for range n {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("reserving a port: %v", err)
+		}
+		out = append(out, l.Addr().(*net.TCPAddr).Port)
+		if err := l.Close(); err != nil {
+			t.Fatalf("releasing a reserved port: %v", err)
+		}
+	}
+	return out
 }

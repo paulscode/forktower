@@ -21,11 +21,10 @@ import (
 // request/response.
 type View struct {
 	c *client
+	// stall records a consumer that stopped keeping up, so Health can report it
+	// rather than leaving a silent gap that looks like a quiet chain.
+	stall stallState
 }
-
-// The compile-time assertion that this satisfies chainview.ChainView lives with
-// the subscription methods, which are the last two it needs. Asserting it here
-// would only fail.
 
 // New builds a view over the node described by opts.
 //
@@ -245,6 +244,13 @@ func (v *View) Health(ctx context.Context) (chainview.BackendHealth, error) {
 		health.State = chainview.HealthSyncing
 		health.Detail = fmt.Sprintf("%d blocks behind the headers it has seen",
 			info.Headers-info.Blocks)
+	case v.stall.stalled.Load():
+		// A dropped notification is not a quiet chain, and the two look identical
+		// from outside. Say so.
+		health.State = chainview.HealthDegraded
+		health.Detail = fmt.Sprintf(
+			"a consumer stopped keeping up and %d notifications were dropped",
+			v.stall.dropped.Load())
 	case health.PeerCount == 0:
 		// No peers means no new blocks will arrive. The node looks fine and is
 		// blind, which is the shape of failure worth naming loudly.

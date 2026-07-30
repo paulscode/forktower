@@ -43,9 +43,13 @@ declare -A MIN=(
   # in-process SQLite database, which needs no container — so the floor moved up
   # to keep the achievement. Floors ratchet.
   [internal/store]=75
-  # Reached 89.5% against a fake node over httptest — no container needed for
-  # the request/response half, so the floor moved up from 40.
-  [internal/chainview/bitcoindview]=85
+  # Lowered from 85 to 72 when the notification subsystem landed. The
+  # request/response half reaches ~90% against a fake node over httptest, but the
+  # notification path needs a peer that actually speaks the publish/subscribe wire
+  # protocol, which cannot honestly be faked in a unit test — it is covered by the
+  # integration suite instead, which does use a real node. This is a floor moving
+  # *down* with a reason, which the policy allows and which is worth noticing.
+  [internal/chainview/bitcoindview]=72
   [internal/registry/lnd]=40
   [internal/registry/cln]=40
   [internal/companion]=40
