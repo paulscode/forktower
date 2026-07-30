@@ -9,6 +9,7 @@ require (
 	github.com/lightninglabs/gozmq v0.0.0-20191113021534-d20a764486bf
 	github.com/ory/dockertest/v3 v3.12.0
 	golang.org/x/crypto v0.54.0
+	golang.org/x/sync v0.22.0
 	modernc.org/sqlite v1.55.0
 )
 

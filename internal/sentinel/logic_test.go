@@ -7,6 +7,7 @@ import (
 	"github.com/btcsuite/btcd/chainhash/v2"
 
 	"github.com/paulscode/forktower/internal/chainview"
+	"github.com/paulscode/forktower/internal/chainview/chainviewtest"
 	"github.com/paulscode/forktower/internal/store"
 )
 
@@ -766,5 +767,127 @@ func TestHealthChangesAreReportedOnce(t *testing.T) {
 	_, again := Step(next, degraded)
 	if hasEffect(again, EffectHealthChanged) {
 		t.Error("an unchanged health state was reported again")
+	}
+}
+
+// A phase read back from storage is not necessarily one this build knows: a
+// database written by a newer version, or corrupted, can hold anything. Both
+// predicates have to answer safely for a value they have never seen, because the
+// alternative is acting on a phase whose meaning is unknown.
+func TestPhasePredicatesAnswerSafelyForAnUnknownValue(t *testing.T) {
+	t.Parallel()
+
+	for _, p := range AllPhases() {
+		if !p.Valid() {
+			t.Errorf("%q is a real phase but Valid() says otherwise", p)
+		}
+	}
+
+	const unknown Phase = "RESOLVED_BY_A_LATER_VERSION"
+	if unknown.Valid() {
+		t.Error("an unrecognised phase was accepted as valid")
+	}
+	if unknown.Resolved() {
+		t.Error("an unrecognised phase was treated as a recorded outcome, which would " +
+			"stop the daemon acting on a split it can still see")
+	}
+}
+
+// Which chain has gone quiet depends entirely on where the hashing power goes, so
+// the check is symmetric. Assuming it will be the other chain would leave the more
+// likely case — the user's own node on the minority branch — unhandled.
+func TestStalledBranchLooksAtWhicheverChainWouldHaveLost(t *testing.T) {
+	t.Parallel()
+
+	const now int64 = 1_790_000_000
+	// One side produced a block recently; the other has been quiet far longer than
+	// any ordinary gap.
+	st := State{
+		SFCadence:     Cadence{},
+		SQCadence:     Cadence{},
+		LastSFBlockAt: now - 10,
+		LastSQBlockAt: now - 100_000,
+	}
+	obs := Observation{At: now, StallFactor: 6}
+
+	// If the user's own chain is what persisted, the quiet one is the other.
+	if !stalledBranch(st, obs, PhaseResolvedSFWon) {
+		t.Error("the other chain has been quiet for a day and was not seen as stalled")
+	}
+	// And the reverse: the user's own chain is producing, so it is not the stalled one.
+	if stalledBranch(st, obs, PhaseResolvedSQWon) {
+		t.Error("a chain producing blocks ten seconds ago was called stalled")
+	}
+
+	// Phases that are not an outcome say nothing about a stall. Answering otherwise
+	// would let a phase that is still unfolding be reported as decided.
+	for _, p := range []Phase{PhaseUnarmed, PhaseArmed, PhaseSplit, PhaseResolving} {
+		if stalledBranch(st, obs, p) {
+			t.Errorf("%q is not an outcome, so no chain has lost yet", p)
+		}
+	}
+	if stalledBranch(st, obs, Phase("SOMETHING_ELSE")) {
+		t.Error("an unrecognised phase produced a stall verdict")
+	}
+}
+
+// The cache is what keeps the separation search from re-fetching the same
+// ancestors on every tick, and it is keyed by branch so that one view's answers
+// can never be served for the other — a misconfiguration where both views point at
+// one node must not be masked here.
+func TestHeaderCacheKeepsBranchesApartAndEvictsTheOldest(t *testing.T) {
+	t.Parallel()
+
+	c := NewHeaderCache(2)
+
+	meta := func(tag string, h int32) chainview.BlockMeta {
+		return chainview.BlockMeta{
+			BlockRef: chainview.BlockRef{Hash: chainviewtest.TaggedHash(tag, h), Height: h},
+		}
+	}
+
+	shared := meta("shared", 1)
+	c.Put(chainview.BranchSF, shared)
+	if _, ok := c.Get(chainview.BranchSQ, shared.Hash); ok {
+		t.Fatal("a header stored for one branch was served for the other")
+	}
+
+	// Re-putting the same header updates it in place rather than growing the cache.
+	c.Put(chainview.BranchSF, shared)
+	if c.Len() != 1 {
+		t.Errorf("cache holds %d entries after storing one header twice, want 1", c.Len())
+	}
+
+	c.Put(chainview.BranchSF, meta("shared", 2))
+	// Touching the first makes the second the least recently used.
+	if _, ok := c.Get(chainview.BranchSF, shared.Hash); !ok {
+		t.Fatal("a header stored a moment ago was already gone")
+	}
+	c.Put(chainview.BranchSF, meta("shared", 3))
+
+	if c.Len() != 2 {
+		t.Errorf("cache holds %d entries, want its limit of 2", c.Len())
+	}
+	if _, ok := c.Get(chainview.BranchSF, shared.Hash); !ok {
+		t.Error("the recently used header was evicted instead of the idle one")
+	}
+	if _, ok := c.Get(chainview.BranchSF, chainviewtest.TaggedHash("shared", 2)); ok {
+		t.Error("the idle header survived eviction, so the cache is over its limit")
+	}
+}
+
+// A limit of zero means "use the default", not "remember nothing" — a cache that
+// silently held nothing would turn every tick into a full re-walk.
+func TestHeaderCacheWithoutALimitUsesTheDefault(t *testing.T) {
+	t.Parallel()
+
+	c := NewHeaderCache(0)
+	for h := int32(0); h < 50; h++ {
+		c.Put(chainview.BranchSQ, chainview.BlockMeta{
+			BlockRef: chainview.BlockRef{Hash: chainviewtest.TaggedHash("theirs", h), Height: h},
+		})
+	}
+	if c.Len() != 50 {
+		t.Errorf("cache holds %d of 50 headers", c.Len())
 	}
 }

@@ -54,6 +54,15 @@ declare -A MIN=(
   [internal/registry/cln]=40
   [internal/companion]=40
 
+  # A fake used by other packages' tests. It has no tests of its own, and
+  # measuring it here would report 0% no matter how heavily it is exercised,
+  # because `go test -cover` credits a statement only to the package whose tests
+  # ran it. The risk this floor cannot address — a fake that answers differently
+  # from a real node — is not one tests of the fake would catch either; it is held
+  # off by the compile-time assertions that it satisfies the same interfaces, and
+  # by the integration suite running the same scenarios against a real node.
+  [internal/chainview/chainviewtest]=0
+
   # Composition roots: wiring, almost no logic of their own.
   [internal/app]=0
   [cmd/forktowerd]=0
