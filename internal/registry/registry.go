@@ -413,25 +413,9 @@ func (r *Registry) apply(
 ) {
 	isNew := prior.ID == 0
 
-	ch := store.Channel{
-		LNNodeID:    nodeID,
-		FundingTxID: rec.FundingTxID,
-		FundingVout: rec.FundingVout,
-		// Never cleared by a poll. The node does not know the funding script and
-		// never reports one, so an empty value here means "not said", not "gone" —
-		// and overwriting a script the backfill found would mean finding it again
-		// every minute.
-		FundingScriptHex: firstNonEmpty(rec.FundingScriptHex, prior.FundingScriptHex),
-		CapacitySat:      rec.CapacitySat,
-		ChanType:         rec.ChanType,
-		CSVDelayLocal:    rec.CSVDelayLocal,
-		CSVDelayRemote:   rec.CSVDelayRemote,
-		PeerPubkey:       rec.PeerPubkey,
-		PeerAlias:        rec.PeerAlias,
-		OpenHeight:       rec.OpenHeight,
-		SCID:             rec.SCID,
-		UpdatedAt:        now,
-	}
+	ch := merge(prior, rec)
+	ch.LNNodeID = nodeID
+	ch.UpdatedAt = now
 
 	id, changed, err := r.store.UpsertChannel(ctx, ch)
 	if err != nil {
@@ -469,6 +453,75 @@ func (r *Registry) apply(
 			},
 		})
 	}
+}
+
+// merge builds the row to store, keeping anything the node did not mention.
+//
+// **Silence is not a retraction, and this is not a hypothetical.** A Lightning
+// node describes a channel that is closing with far fewer fields than one that
+// is open: no short-channel id, no delays, no funding height. Taking those at
+// face value meant a channel lost the delay that decides its deadline and the
+// height that decides whether it is exposed at all — at exactly the moment it
+// started closing, which is the moment those answers matter most. The countdown
+// then fell back to a conservative floor and the classification fell back to
+// "we do not know", both silently, both looking like ordinary caution.
+//
+// So: an empty value from a poll means "not said" and the previous answer
+// stands. A value that is actually present always wins, because a node revising
+// something it can see is a node that knows better than a stored copy.
+func merge(prior store.Channel, rec ChannelRecord) store.Channel {
+	out := store.Channel{
+		FundingTxID: rec.FundingTxID,
+		FundingVout: rec.FundingVout,
+		ChanType:    rec.ChanType,
+
+		FundingScriptHex: firstNonEmpty(rec.FundingScriptHex, prior.FundingScriptHex),
+		PeerPubkey:       firstNonEmpty(rec.PeerPubkey, prior.PeerPubkey),
+		PeerAlias:        firstNonEmpty(rec.PeerAlias, prior.PeerAlias),
+		SCID:             firstNonEmpty(rec.SCID, prior.SCID),
+
+		CapacitySat:    firstNonZero64(rec.CapacitySat, prior.CapacitySat),
+		OpenHeight:     firstNonZero32(rec.OpenHeight, prior.OpenHeight),
+		CSVDelayLocal:  firstKnownDelay(rec.CSVDelayLocal, prior.CSVDelayLocal),
+		CSVDelayRemote: firstKnownDelay(rec.CSVDelayRemote, prior.CSVDelayRemote),
+	}
+	if out.ChanType == "" || out.ChanType == store.ChanTypeUnknown {
+		// A channel that was recognised once does not become unrecognisable.
+		if prior.ChanType != "" {
+			out.ChanType = prior.ChanType
+		}
+	}
+	if out.ChanType == "" {
+		out.ChanType = store.ChanTypeUnknown
+	}
+	return out
+}
+
+func firstNonZero64(a, b int64) int64 {
+	if a != 0 {
+		return a
+	}
+	return b
+}
+
+func firstNonZero32(a, b int32) int32 {
+	if a != 0 {
+		return a
+	}
+	return b
+}
+
+// firstKnownDelay keeps a delay somebody told us over one nobody did. Nil and
+// zero are both "not said": a delay of zero would put a deadline in the block
+// the commitment confirmed in, which reads as already lost.
+func firstKnownDelay(a, b *int32) *int32 {
+	if a != nil && *a > 0 {
+		return a
+	}
+	if b != nil && *b > 0 {
+		return b
+	}
+	return nil
 }
 
 // closeRank orders the close states so that the registry can move a channel

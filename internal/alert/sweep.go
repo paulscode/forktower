@@ -35,7 +35,11 @@ func (a *Alerter) sweepLoop(ctx context.Context) error {
 
 // sweep raises the slow-burn warning for channels closed on one chain only.
 func (a *Alerter) sweep(ctx context.Context) {
-	channels, err := a.store.ListChannels(ctx, store.ChannelFilter{Relevance: store.Relevant})
+	// Everything, then filtered here — because the safety rule is that `relevant`
+	// *and* `unknown` are watched, and asking the store for only the relevant ones
+	// quietly excluded the channels whose exposure nobody could establish. Those
+	// are precisely the ones an attacker would choose.
+	channels, err := a.store.ListChannels(ctx, store.ChannelFilter{})
 	if err != nil {
 		a.log.Warn("could not re-read your channels to check for old exposures",
 			slog.String("error", err.Error()))
@@ -53,6 +57,11 @@ func (a *Alerter) sweep(ctx context.Context) {
 	}
 
 	for _, c := range channels {
+		if c.Relevance == store.Irrelevant {
+			// Established as not exposed, with a reason recorded. The only
+			// classification that removes a channel from watching.
+			continue
+		}
 		if c.CloseState == store.CloseOpen {
 			// Still open on the user's own chain. Nothing unexpected about it.
 			continue

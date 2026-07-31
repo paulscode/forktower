@@ -90,19 +90,19 @@ func TestASplitReachesTheUser(t *testing.T) {
 	daemon := startDaemon(t, repo, bin, alerts.server.URL)
 
 	// Before the split, the daemon is watching and calm about the chain itself.
-	waitFor(t, "the daemon to start watching", detectionBudget, func() bool {
+	waitFor(t, "the daemon to start watching", func() bool {
 		return daemon.status(t)["split"].(map[string]any)["state"] == "ARMED"
 	})
 
 	// It proves its own alarm works before anything has gone wrong, which is the
 	// only reason to believe the notification below means anything.
-	waitFor(t, "the daemon to test its own notifications", detectionBudget, func() bool {
+	waitFor(t, "the daemon to test its own notifications", func() bool {
 		return alerts.sawKind("self_test")
 	})
 
 	world.split(t)
 
-	waitFor(t, "the split to be reported", detectionBudget, func() bool {
+	waitFor(t, "the split to be reported", func() bool {
 		return daemon.status(t)["split"].(map[string]any)["state"] == "SPLIT"
 	})
 
@@ -116,11 +116,11 @@ func TestASplitReachesTheUser(t *testing.T) {
 		t.Errorf("the dashboard is calm during a split: %v", headline["state"])
 	}
 
-	waitFor(t, "the alert to be delivered", detectionBudget, func() bool {
+	waitFor(t, "the alert to be delivered", func() bool {
 		return alerts.sawKind("split_detected")
 	})
 
-	waitFor(t, "the split to reach the timeline", detectionBudget, func() bool {
+	waitFor(t, "the split to reach the timeline", func() bool {
 		for _, entry := range daemon.list(t, "/api/v1/timeline") {
 			if summary, _ := entry["summary"].(string); strings.Contains(summary, "separated") {
 				return true
@@ -337,7 +337,7 @@ level = "debug"
 
 	// Waiting out the whole budget for a process that has already died wastes two
 	// minutes and reports a timeout where the real answer is in the log.
-	waitFor(t, "the daemon to answer", detectionBudget, func() bool {
+	waitFor(t, "the daemon to answer", func() bool {
 		select {
 		case <-exited:
 			body, _ := os.ReadFile(logPath)
@@ -467,13 +467,13 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-func waitFor(t *testing.T, what string, timeout time.Duration, cond func() bool) {
+func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.After(timeout)
+	deadline := time.After(detectionBudget)
 	for !cond() {
 		select {
 		case <-deadline:
-			t.Fatalf("timed out after %s waiting for %s", timeout, what)
+			t.Fatalf("timed out after %s waiting for %s", detectionBudget, what)
 		case <-time.After(250 * time.Millisecond):
 		}
 	}

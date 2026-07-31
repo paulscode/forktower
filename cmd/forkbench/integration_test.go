@@ -250,7 +250,7 @@ func TestABreachOnOneChainOnly(t *testing.T) {
 	if err := commandSplit(ctx); err != nil {
 		t.Fatalf("splitting: %v", err)
 	}
-	if err := commandBreach(ctx, nodeSQ, ""); err != nil {
+	if err := commandBreach(ctx, BreachOptions{Branch: nodeSQ, Revoked: true, Confirm: true}); err != nil {
 		t.Fatalf("staging the breach: %v", err)
 	}
 

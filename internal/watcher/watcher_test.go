@@ -101,8 +101,10 @@ func (h *liveHarness) spends() []store.Spend {
 func (h *liveHarness) plant(label string, prevout wire.OutPoint) (chainview.BlockMeta, *wire.MsgTx) {
 	h.t.Helper()
 	tx := spend(prevout)
-	meta := h.view.Extend(label, 1)
-	h.view.PutTransactions(meta.Hash, coinbase(), tx)
+	// The block arrives complete. Extending first and filling it in afterwards is
+	// a race: the tip is announced the moment the block exists, so the watcher can
+	// read it before the transactions are there.
+	meta := h.view.ExtendWith(label, coinbase(), tx)
 	return meta, tx
 }
 
@@ -895,8 +897,7 @@ func TestACommitmentIsFollowedByWhatBecomesOfIt(t *testing.T) {
 	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
 
 	commitment := commitmentSpending(fundingOutpoint(t, fundingA, 1))
-	first := h.view.Extend("commitment", 1)
-	h.view.PutTransactions(first.Hash, coinbase(), commitment)
+	h.view.ExtendWith("commitment", coinbase(), commitment)
 
 	h.waitFor("the commitment to be recorded", func() bool { return len(h.spends()) == 1 })
 	if got := h.spends()[0].Shape; got != store.ShapeCommitmentUnknown {
@@ -923,8 +924,7 @@ func TestACommitmentIsFollowedByWhatBecomesOfIt(t *testing.T) {
 
 	// And the answer to it, in a later block.
 	justice := justiceSpending(wire.OutPoint{Hash: commitment.TxHash(), Index: 0})
-	second := h.view.Extend("justice", 1)
-	h.view.PutTransactions(second.Hash, coinbase(), justice)
+	h.view.ExtendWith("justice", coinbase(), justice)
 
 	h.waitFor("the justice transaction", func() bool { return len(h.spends()) == 2 })
 	var found bool
@@ -955,8 +955,7 @@ func TestASweepInTheSameBlockAsItsCommitmentIsFound(t *testing.T) {
 	commitment := commitmentSpending(fundingOutpoint(t, fundingA, 1))
 	justice := justiceSpending(wire.OutPoint{Hash: commitment.TxHash(), Index: 0})
 
-	meta := h.view.Extend("both-at-once", 1)
-	h.view.PutTransactions(meta.Hash, coinbase(), commitment, justice)
+	meta := h.view.ExtendWith("both-at-once", coinbase(), commitment, justice)
 
 	h.waitFor("both the commitment and its answer", func() bool { return len(h.spends()) == 2 })
 
@@ -989,8 +988,7 @@ func TestOurOwnForceCloseIsNotReportedAsAnAttack(t *testing.T) {
 	h.run()
 	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
 
-	meta := h.view.Extend("our-force-close", 1)
-	h.view.PutTransactions(meta.Hash, coinbase(), commitment)
+	h.view.ExtendWith("our-force-close", coinbase(), commitment)
 
 	h.waitFor("the commitment", func() bool { return len(h.spends()) == 1 })
 	if got := h.spends()[0].Shape; got != store.ShapeCommitmentOurs {
@@ -1016,8 +1014,7 @@ func TestACooperativeCloseIsRecognised(t *testing.T) {
 	tx.AddTxOut(wire.NewTxOut(500_000, p2wpkh))
 	tx.AddTxOut(wire.NewTxOut(400_000, p2wpkh))
 
-	meta := h.view.Extend("coop", 1)
-	h.view.PutTransactions(meta.Hash, coinbase(), tx)
+	h.view.ExtendWith("coop", coinbase(), tx)
 
 	h.waitFor("the close", func() bool { return len(h.spends()) == 1 })
 	if got := h.spends()[0].Shape; got != store.ShapeMutualClose {
@@ -1046,8 +1043,7 @@ func TestAJusticeTransactionSettlesWhatTheCommitmentWas(t *testing.T) {
 	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
 
 	commitment := commitmentSpending(fundingOutpoint(t, fundingA, 1))
-	first := h.view.Extend("commitment", 1)
-	h.view.PutTransactions(first.Hash, coinbase(), commitment)
+	h.view.ExtendWith("commitment", coinbase(), commitment)
 	h.waitFor("the commitment", func() bool { return len(h.spends()) == 1 })
 
 	if got := h.spends()[0].Shape; got != store.ShapeCommitmentUnknown {
@@ -1055,8 +1051,7 @@ func TestAJusticeTransactionSettlesWhatTheCommitmentWas(t *testing.T) {
 	}
 
 	justice := justiceSpending(wire.OutPoint{Hash: commitment.TxHash(), Index: 0})
-	second := h.view.Extend("justice", 1)
-	h.view.PutTransactions(second.Hash, coinbase(), justice)
+	h.view.ExtendWith("justice", coinbase(), justice)
 
 	h.waitFor("the commitment to be settled as a revoked one", func() bool {
 		for _, sp := range h.spends() {
@@ -1086,13 +1081,11 @@ func TestOurOwnCommitmentKeepsItsLabelEvenWhenAnswered(t *testing.T) {
 	h.run()
 	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
 
-	first := h.view.Extend("our-commitment", 1)
-	h.view.PutTransactions(first.Hash, coinbase(), commitment)
+	h.view.ExtendWith("our-commitment", coinbase(), commitment)
 	h.waitFor("the commitment", func() bool { return len(h.spends()) == 1 })
 
 	justice := justiceSpending(wire.OutPoint{Hash: commitment.TxHash(), Index: 0})
-	second := h.view.Extend("justice", 1)
-	h.view.PutTransactions(second.Hash, coinbase(), justice)
+	h.view.ExtendWith("justice", coinbase(), justice)
 	h.waitFor("the justice transaction", func() bool { return len(h.spends()) == 2 })
 
 	for _, sp := range h.spends() {

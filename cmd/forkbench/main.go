@@ -38,6 +38,9 @@ Lightning:
   forkbench restore-mallory        put the counterparty back to that state
   forkbench breach -branch sq      publish the counterparty's old commitment,
                                    on one chain only
+                                   -revoked=false publishes their current one
+                                   -confirm=false leaves it unmined
+  forkbench reorg -node sq         replace the tip of one chain
   forkbench coop-close             close the channel the agreeable way
   forkbench force-close -node user close it unilaterally
 
@@ -72,6 +75,9 @@ func run(args []string) error {
 		branch   = flags.String("branch", nodeSQ, "which chain to publish on: sf or sq")
 		lnName   = flags.String("ln-node", lnUser, "which Lightning node: user or mallory")
 		outDir   = flags.String("fixtures", "", "write the transactions seen to this directory")
+		revoked  = flags.Bool("revoked", true,
+			"publish a commitment the counterparty had promised not to")
+		confirm  = flags.Bool("confirm", true, "mine the block, rather than leaving it unmined")
 		credsDir = flags.String("out", "", "where to write a node's credentials")
 	)
 	if err := flags.Parse(rest); err != nil {
@@ -107,7 +113,11 @@ func run(args []string) error {
 	case "restore-mallory":
 		return commandRestoreMallory(ctx)
 	case "breach":
-		return commandBreach(ctx, *branch, *outDir)
+		return commandBreach(ctx, BreachOptions{
+			Branch: *branch, Revoked: *revoked, Confirm: *confirm, FixtureDir: *outDir,
+		})
+	case "reorg":
+		return commandReorg(ctx, *nodeName, *blocks)
 	case "coop-close":
 		return commandCoopClose(ctx, *outDir)
 	case "force-close":

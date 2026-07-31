@@ -11,9 +11,16 @@ name: CI
 # locally and signed on an offline machine.
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # The scenario suite, nightly. It builds two Bitcoin nodes, two Lightning
+    # nodes and a channel per case, so it does not belong on every push — and it
+    # is the only thing here that proves the pieces add up rather than each
+    # working alone.
+    - cron: "0 4 * * *"
 permissions:
   contents: read
 
@@ -76,3 +83,19 @@ jobs:
           check-latest: true
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  scenarios:
+    # Only on the nightly schedule, or when asked for by hand. Several minutes of
+    # containers is not something to put in front of every push, and nothing else
+    # in this file needs Docker at all.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: The situations this software exists for
+        run: make integration

@@ -241,3 +241,19 @@ func TestTheSweepIntervalHasADefault(t *testing.T) {
 		t.Errorf("an explicit interval was overwritten: %v", got)
 	}
 }
+
+// The safety rule the first version of this sweep quietly broke: `relevant`
+// *and* `unknown` are watched, and asking the store for only the relevant ones
+// excluded the channels whose exposure nobody could establish — which are
+// precisely the ones an attacker would choose.
+func TestAChannelNobodyCouldClassifyIsStillWarnedAbout(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil, func(c *Config) { c.SweepInterval = 5 * time.Millisecond })
+
+	addChannel(t, h.store, fundingA, store.CloseCoop, store.RelevanceUnknown)
+	h.start(t)
+
+	waitFor(t, "the warning", func() bool {
+		return len(slowBurnAlerts(t, h.store)) == 1
+	})
+}

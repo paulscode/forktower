@@ -1052,3 +1052,114 @@ func TestAChannelWithNoKnownHeightIsNotLookedUp(t *testing.T) {
 		t.Errorf("a channel with no known funding height was classified %q", got)
 	}
 }
+
+// A Lightning node describes a channel that is closing with far fewer fields
+// than one that is open. Taking that silence at face value cost the channel the
+// delay that decides its deadline and the height that decides whether it is
+// exposed — at exactly the moment it started closing, which is when those
+// answers matter most.
+func TestAThinnerPollDoesNotEraseWhatWasAlreadyKnown(t *testing.T) {
+	t.Parallel()
+
+	node := &fakeNode{snap: snapshotWith(record(fundingA, func(r *ChannelRecord) {
+		r.CSVDelayLocal = ptr32(144)
+		r.CSVDelayRemote = ptr32(2016)
+		r.SCID = "961632x7x0"
+		r.OpenHeight = 961_632
+		r.CapacitySat = 2_100_000
+		r.PeerAlias = "ACINQ"
+	}))}
+	h := newHarness(t, []Source{{Name: "lnd", Client: node}}, nil)
+	h.run()
+
+	h.waitFor("the channel to be recorded in full", func() bool {
+		c, ok := h.find(fundingA)
+		return ok && c.OpenHeight == 961_632 && c.CSVDelayRemote != nil
+	})
+
+	// The channel starts closing, and the node now says much less about it.
+	node.set(func(s *Snapshot, _ *error) {
+		s.Channels[0] = ChannelRecord{
+			FundingTxID: fundingA,
+			FundingVout: 0,
+			ChanType:    store.ChanTypeUnknown,
+			PeerPubkey:  "03peer",
+			CloseState:  store.ClosePending,
+			CloseTxID:   "closing",
+		}
+	})
+
+	h.waitFor("the close to be recorded", func() bool {
+		c, ok := h.find(fundingA)
+		return ok && c.CloseState == store.ClosePending
+	})
+
+	got := h.channel(fundingA)
+	if got.OpenHeight != 961_632 {
+		t.Errorf("the funding height was erased when the channel started closing: %d",
+			got.OpenHeight)
+	}
+	if got.SCID != "961632x7x0" {
+		t.Errorf("the short channel id was erased: %q", got.SCID)
+	}
+	if got.CapacitySat != 2_100_000 {
+		t.Errorf("the capacity was erased: %d", got.CapacitySat)
+	}
+	if got.PeerAlias != "ACINQ" {
+		t.Errorf("the counterparty's name was erased: %q", got.PeerAlias)
+	}
+	if got.CSVDelayRemote == nil || *got.CSVDelayRemote != 2016 {
+		t.Errorf("the delay that decides the deadline was erased: %v", got.CSVDelayRemote)
+	}
+	if got.ChanType != store.ChanAnchors {
+		t.Errorf("a channel that was recognised became unrecognisable: %q", got.ChanType)
+	}
+}
+
+// A value the node does say always wins: a node revising something it can see
+// knows better than a stored copy.
+func TestAValueThatIsActuallyThereWins(t *testing.T) {
+	t.Parallel()
+
+	prior := store.Channel{
+		CapacitySat: 1000, OpenHeight: 100, SCID: "old", PeerAlias: "old",
+		CSVDelayLocal: ptr32(10), CSVDelayRemote: ptr32(20),
+		ChanType: store.ChanAnchors,
+	}
+	got := merge(prior, ChannelRecord{
+		FundingTxID: fundingA, CapacitySat: 2000, OpenHeight: 200, SCID: "new",
+		PeerAlias: "new", CSVDelayLocal: ptr32(30), CSVDelayRemote: ptr32(40),
+		ChanType: store.ChanTaproot,
+	})
+
+	if got.CapacitySat != 2000 || got.OpenHeight != 200 || got.SCID != "new" ||
+		got.PeerAlias != "new" || got.ChanType != store.ChanTaproot {
+		t.Errorf("a stored copy overrode what the node said: %+v", got)
+	}
+	if *got.CSVDelayLocal != 30 || *got.CSVDelayRemote != 40 {
+		t.Errorf("stored delays overrode reported ones: %v %v",
+			got.CSVDelayLocal, got.CSVDelayRemote)
+	}
+}
+
+// A delay of zero is not a delay. It would put a deadline in the block the
+// commitment confirmed in, which reads as already lost.
+func TestAZeroDelayIsNotTreatedAsAnAnswer(t *testing.T) {
+	t.Parallel()
+
+	got := merge(
+		store.Channel{CSVDelayRemote: ptr32(2016)},
+		ChannelRecord{FundingTxID: fundingA, CSVDelayRemote: ptr32(0)},
+	)
+	if got.CSVDelayRemote == nil || *got.CSVDelayRemote != 2016 {
+		t.Errorf("a zero delay replaced a real one: %v", got.CSVDelayRemote)
+	}
+
+	// And when nobody has ever said, it stays unsaid rather than becoming zero.
+	none := merge(store.Channel{}, ChannelRecord{FundingTxID: fundingA})
+	if none.CSVDelayRemote != nil {
+		t.Errorf("a delay nobody reported became %v", *none.CSVDelayRemote)
+	}
+}
+
+func ptr32(v int32) *int32 { return &v }

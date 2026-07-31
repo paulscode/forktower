@@ -131,7 +131,38 @@ func (v *View) appendLocked(block chainview.BlockMeta) {
 	v.known[block.Hash] = block
 }
 
-// Extend adds n blocks to the chain, tagged with label, and notifies subscribers.
+// ExtendWith adds one block containing the given transactions.
+//
+// Its own method rather than Extend-then-PutTransactions, because that order is
+// a race: the tip is announced the moment the block exists, so a consumer can
+// fetch it and find it empty before the transactions are put in. A test written
+// that way passes on a quiet machine and fails under the race detector, which is
+// the worst way for a test to be wrong.
+func (v *View) ExtendWith(label string, txs ...*wire.MsgTx) chainview.BlockMeta {
+	v.mu.Lock()
+	last := v.blocks[len(v.blocks)-1]
+	next := chainview.BlockMeta{
+		BlockRef: chainview.BlockRef{
+			Hash:   TaggedHash(label, last.Height+1),
+			Height: last.Height + 1,
+		},
+		PrevHash: last.Hash,
+		Time:     last.Time.Add(10 * time.Minute),
+	}
+	v.appendLocked(next)
+	if v.txs == nil {
+		v.txs = map[chainhash.Hash][]*wire.MsgTx{}
+	}
+	v.txs[next.Hash] = txs
+	subs := append([]chan chainview.BlockMeta(nil), v.subscribers...)
+	v.mu.Unlock()
+
+	notify(subs, next)
+	return next
+}
+
+// Extend adds n blocks to the chain, tagged with label, and notifies
+// subscribers. The blocks are empty; use ExtendWith when their contents matter.
 func (v *View) Extend(label string, n int32) chainview.BlockMeta {
 	v.mu.Lock()
 	last := v.blocks[len(v.blocks)-1]

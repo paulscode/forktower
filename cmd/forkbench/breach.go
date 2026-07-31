@@ -141,11 +141,29 @@ func commandRestoreMallory(ctx context.Context) error {
 // it had already promised not to, and that transaction is then pushed onto one
 // chain only. On the chain the user's own node follows, nothing happened — which
 // is exactly what makes this dangerous, and exactly what Forktower is for.
-func commandBreach(ctx context.Context, branch, fixtureDir string) error {
-	target, err := nodeByName(branch)
+// BreachOptions vary what is staged. The defaults are the full attack.
+type BreachOptions struct {
+	// Branch is the chain the commitment is published on.
+	Branch string
+	// Revoked restores the saved state first, so the commitment published is one
+	// the counterparty had already promised not to. False publishes their
+	// *current* commitment instead — the same shape on the chain, and no
+	// wrongdoing, which is the case Forktower cannot tell apart from the outside
+	// and must therefore not claim to.
+	Revoked bool
+	// Confirm mines the block. False leaves the transaction sitting in the
+	// target chain's memory pool, which is the early-warning case.
+	Confirm bool
+	// FixtureDir, when set, saves the transaction produced.
+	FixtureDir string
+}
+
+func commandBreach(ctx context.Context, opts BreachOptions) error {
+	target, err := nodeByName(opts.Branch)
 	if err != nil {
 		return err
 	}
+	fixtureDir := opts.FixtureDir
 	mallory, err := lnByName(lnMallory)
 	if err != nil {
 		return err
@@ -155,8 +173,18 @@ func commandBreach(ctx context.Context, branch, fixtureDir string) error {
 		return err
 	}
 
-	if err := commandRestoreMallory(ctx); err != nil {
-		return err
+	if opts.Revoked {
+		if err := commandRestoreMallory(ctx); err != nil {
+			return err
+		}
+	} else {
+		// The counterparty publishes what it currently holds. Nothing is being
+		// stolen; the user's node still cannot see it, because it is on the other
+		// chain.
+		say("Stopping the user's node, so the close is not negotiated…")
+		if err := composeQuiet(ctx, "stop", user.service); err != nil {
+			return err
+		}
 	}
 
 	channels, err := mallory.channels(ctx)
@@ -200,8 +228,12 @@ func commandBreach(ctx context.Context, branch, fixtureDir string) error {
 	if err := other.call(ctx, "sendrawtransaction", []any{raw}, nil); err != nil {
 		return fmt.Errorf("publishing the commitment on %s: %w", target.name, err)
 	}
-	if _, err := other.mine(ctx, 1); err != nil {
-		return err
+	if opts.Confirm {
+		if _, err := other.mine(ctx, 1); err != nil {
+			return err
+		}
+	} else {
+		say("Leaving it unconfirmed, waiting to be mined.")
 	}
 
 	if fixtureDir != "" {
@@ -218,11 +250,65 @@ func commandBreach(ctx context.Context, branch, fixtureDir string) error {
 	}
 
 	say("")
-	say("Done. Channel %s now has a revoked commitment confirmed on the %s chain,",
-		channelPoint, target.name)
-	say("and nothing at all on the %s chain. Forktower should be reporting a",
-		nodes()[0].name)
-	say("confirmed commitment it cannot attribute.")
+	say("Done. Channel %s: a commitment is on the %s chain%s,",
+		channelPoint, target.name, confirmedPhrase(opts.Confirm))
+	say("and nothing at all on the %s chain.", nodes()[0].name)
+	return nil
+}
+
+func confirmedPhrase(confirmed bool) string {
+	if confirmed {
+		return " and confirmed"
+	}
+	return ", waiting to be mined"
+}
+
+// commandReorg replaces the tip of one chain, which is how a spend already
+// recorded is made to disappear.
+func commandReorg(ctx context.Context, nodeName string, blocks int) error {
+	n, err := nodeByName(nodeName)
+	if err != nil {
+		return err
+	}
+	if blocks < 1 {
+		return errors.New("say how many blocks to replace the tip with")
+	}
+	c := newClient(n.rpcURL)
+
+	info, err := c.chainInfo(ctx)
+	if err != nil {
+		return err
+	}
+	say("Rejecting the tip of the %s chain at height %d…", n.name, info.Blocks)
+	if err := c.call(ctx, "invalidateblock", []any{info.Best}, nil); err != nil {
+		return fmt.Errorf("rejecting the block: %w", err)
+	}
+
+	// Empty blocks, deliberately. Rejecting a block returns its transactions to
+	// the memory pool, so ordinary mining puts the very thing being removed
+	// straight back into the replacement — which is a real situation, and the
+	// daemon handles it by re-confirming the spend, but it is not the one this
+	// command exists to stage.
+	say("Mining %d empty block(s) in its place…", blocks)
+	w := c.wallet()
+	if err := w.ensureWallet(ctx); err != nil {
+		return fmt.Errorf("preparing the wallet: %w", err)
+	}
+	var address string
+	if err := w.call(ctx, "getnewaddress", nil, &address); err != nil {
+		return fmt.Errorf("getting an address to mine to: %w", err)
+	}
+	for range blocks {
+		if err := w.call(ctx, "generateblock", []any{address, []any{}}, nil); err != nil {
+			return fmt.Errorf("mining an empty block: %w", err)
+		}
+	}
+
+	after, err := c.chainInfo(ctx)
+	if err != nil {
+		return err
+	}
+	say("The %s chain is now at height %d, on a different branch.", n.name, after.Blocks)
 	return nil
 }
 

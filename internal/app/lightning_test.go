@@ -267,14 +267,9 @@ func TestARescanRediscoversWhatWasWipedFromTheRecord(t *testing.T) {
 	h := newHarnessWith(t, nil, func(d *app.Deps) {
 		d.LNSources = []registry.Source{}
 	})
-	h.start(t)
 
-	// Watching has to have got somewhere before there is anything behind it.
-	waitFor(t, "the watcher to record where it has got to", func() bool {
-		return watcherHeight(t, h) > 0
-	})
-
-	// A separation point, so there is somewhere to sweep back to.
+	// A separation point, so there is somewhere to sweep back to. Written before
+	// the daemon runs, for the reason in the test below.
 	st := openDaemonStore(t, h)
 	if err := st.SaveSplitState(context.Background(), store.Split{
 		State: store.StateSplit, ForkHeight: 1, ForkHash: "aa", DetectedAt: 1,
@@ -282,6 +277,12 @@ func TestARescanRediscoversWhatWasWipedFromTheRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = st.Close()
+
+	h.start(t)
+	// Watching has to have got somewhere before there is anything behind it.
+	waitFor(t, "the watcher to record where it has got to", func() bool {
+		return watcherHeight(t, h) > 0
+	})
 
 	resp := postJSON(t, h, "/api/v1/rescan", "{}")
 	if resp.StatusCode != http.StatusOK {
@@ -297,9 +298,11 @@ func TestStandingDownIsRefusedWhileACountdownRuns(t *testing.T) {
 	h := newHarnessWith(t, nil, func(d *app.Deps) {
 		d.LNSources = []registry.Source{}
 	})
-	h.start(t)
-	waitFor(t, "the daemon to settle", func() bool { return watcherHeight(t, h) > 0 })
 
+	// Written before the daemon runs. SQLite lets a second connection wait for a
+	// write lock, but not upgrade a transaction that began reading before another
+	// process wrote — so a test that writes into a busy database fails for
+	// reasons that have nothing to do with what it is testing.
 	st := openDaemonStore(t, h)
 	ctx := context.Background()
 	if err := st.UpsertLNNode(ctx, store.LNNode{
@@ -331,6 +334,9 @@ func TestStandingDownIsRefusedWhileACountdownRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = st.Close()
+
+	h.start(t)
+	waitFor(t, "the daemon to settle", func() bool { return watcherHeight(t, h) > 0 })
 
 	resp := postJSON(t, h, "/api/v1/watch/stand-down", "")
 	if resp.StatusCode != http.StatusConflict {

@@ -73,8 +73,7 @@ func TestConfirmingASightingUpdatesTheSameRecord(t *testing.T) {
 	h.waitFor("the sighting", func() bool { return len(h.spends()) == 1 })
 	first := h.spends()[0].ID
 
-	meta := h.view.Extend("confirmed", 1)
-	h.view.PutTransactions(meta.Hash, coinbase(), commitment)
+	meta := h.view.ExtendWith("confirmed", coinbase(), commitment)
 
 	h.waitFor("the sighting to be confirmed", func() bool {
 		got := h.spends()
@@ -261,8 +260,7 @@ func TestACommitmentSeenEarlyIsStillFollowedUp(t *testing.T) {
 		t.Fatalf("started watching %d outputs before they existed", len(watched))
 	}
 
-	meta := h.view.Extend("confirmed", 1)
-	h.view.PutTransactions(meta.Hash, coinbase(), commitment)
+	h.view.ExtendWith("confirmed", coinbase(), commitment)
 
 	h.waitFor("the commitment's outputs to be watched", func() bool {
 		got, listErr := h.store.ListWatchOutpoints(context.Background(), store.BranchSQ)
@@ -272,8 +270,7 @@ func TestACommitmentSeenEarlyIsStillFollowedUp(t *testing.T) {
 	// And the answer to it is then found, which is the thing that would have been
 	// lost entirely.
 	justice := justiceSpending(wire.OutPoint{Hash: commitment.TxHash(), Index: 0})
-	second := h.view.Extend("justice", 1)
-	h.view.PutTransactions(second.Hash, coinbase(), justice)
+	h.view.ExtendWith("justice", coinbase(), justice)
 
 	h.waitFor("the justice transaction", func() bool {
 		for _, sp := range h.spends() {

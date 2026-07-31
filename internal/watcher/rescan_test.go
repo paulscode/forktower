@@ -145,8 +145,7 @@ func TestSweepingTwiceRecordsEachSpendOnce(t *testing.T) {
 
 	addChannel(t, h.store, fundingA, store.Relevant)
 	forkHeight := h.view.Tip().Height
-	meta := h.view.Extend("breach", 1)
-	h.view.PutTransactions(meta.Hash, coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
+	h.view.ExtendWith("breach", coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
 	h.view.Extend("after", 3)
 	splitAt(t, h.store, forkHeight)
 
@@ -169,8 +168,7 @@ func TestANewChannelTriggersASweepOfItsHistory(t *testing.T) {
 	h := newLiveHarness(t, nil)
 
 	forkHeight := h.view.Tip().Height
-	meta := h.view.Extend("breach", 1)
-	h.view.PutTransactions(meta.Hash, coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
+	h.view.ExtendWith("breach", coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
 	h.view.Extend("after", 2)
 	splitAt(t, h.store, forkHeight)
 
@@ -194,8 +192,7 @@ func TestAChangedChannelDoesNotTriggerASweep(t *testing.T) {
 	h := newLiveHarness(t, nil)
 
 	forkHeight := h.view.Tip().Height
-	meta := h.view.Extend("breach", 1)
-	h.view.PutTransactions(meta.Hash, coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
+	h.view.ExtendWith("breach", coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
 	h.view.Extend("after", 2)
 	splitAt(t, h.store, forkHeight)
 	addChannel(t, h.store, fundingA, store.Relevant)
@@ -243,8 +240,7 @@ func TestOverlappingSweepsAreWidenedNotReplaced(t *testing.T) {
 
 	addChannel(t, h.store, fundingA, store.Relevant)
 	forkHeight := h.view.Tip().Height
-	early := h.view.Extend("early-breach", 1)
-	h.view.PutTransactions(early.Hash, coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
+	h.view.ExtendWith("early-breach", coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
 	h.view.Extend("later", 20)
 	splitAt(t, h.store, forkHeight)
 
@@ -293,8 +289,7 @@ func TestASweepBlockedByThePastRetriesOnTheNextBlock(t *testing.T) {
 
 	addChannel(t, h.store, fundingA, store.Relevant)
 	forkHeight := h.view.Tip().Height
-	meta := h.view.Extend("breach", 1)
-	h.view.PutTransactions(meta.Hash, coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
+	h.view.ExtendWith("breach", coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
 	h.view.Extend("after", 3)
 	splitAt(t, h.store, forkHeight)
 
@@ -329,8 +324,7 @@ func TestNoSweepingWhileTheDaemonIsUnsureOfTheChain(t *testing.T) {
 
 	addChannel(t, h.store, fundingA, store.Relevant)
 	forkHeight := h.view.Tip().Height
-	meta := h.view.Extend("breach", 1)
-	h.view.PutTransactions(meta.Hash, coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
+	h.view.ExtendWith("breach", coinbase(), spend(fundingOutpoint(t, fundingA, 1)))
 	h.view.Extend("after", 2)
 	splitAt(t, h.store, forkHeight)
 

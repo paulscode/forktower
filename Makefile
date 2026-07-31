@@ -56,6 +56,10 @@ lint: check-boundary check-artifacts
 	@# it exits non-zero when a file would be reformatted.
 	$(GOLANGCI) fmt --diff ./...
 	$(GOLANGCI) run ./...
+	@# Again with the integration tag. Those files are excluded from the build
+	@# without it, so they were never linted — and they are the least-run code in
+	@# the repository, which makes them the code that benefits from it most.
+	$(GOLANGCI) run --build-tags integration ./...
 
 ## fmt: apply formatting
 fmt:
