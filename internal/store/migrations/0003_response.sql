@@ -67,6 +67,11 @@ CREATE TABLE tower_channel_coverage (
   -- is an accusation without evidence, and "coverable" with no reason gives a
   -- reader nothing to check.
   reason     TEXT NOT NULL,
+  -- Not a per-channel figure: no Lightning node reports one. This is the
+  -- states backed up on the sessions of this channel's *type*, shared with
+  -- every other channel of that type. Kept because it is the only backup
+  -- signal there is, and kept per row so it sits beside the verdict it
+  -- belongs to — but it must never be shown as "this channel has N backups".
   num_backups    INTEGER NOT NULL DEFAULT 0,
   last_backup_at INTEGER,
   -- The sweep fee rate negotiated for the session covering this channel, in

@@ -139,6 +139,28 @@ linters:
             - pkg: github.com/paulscode/forktower/internal/bus
               desc: the deadline computation returns clocks, it does not publish them
 
+        # Whether a tower covers a channel decides whether a user is told their
+        # money is protected. Same "no I/O" bar as the scanner and the shape
+        # classifier, with the store allowed for its vocabulary of channel types.
+        pure-coverage:
+          files:
+            - "**/internal/responder/tower/coverage.go"
+          deny:
+            - pkg: net
+              desc: the coverage check must not perform I/O
+            - pkg: net/http
+              desc: the coverage check must not perform I/O
+            - pkg: os
+              desc: the coverage check must not touch the filesystem
+            - pkg: database/sql
+              desc: the coverage check must not touch storage
+            - pkg: time
+              desc: >-
+                the coverage check is given how long a tower has been registered,
+                it does not read a clock
+            - pkg: github.com/paulscode/forktower/internal/bus
+              desc: the coverage check returns a verdict, it does not publish one
+
         # The alerting policy is held to the same "no I/O" bar, but with a
         # narrower deny list. It maps bus events onto the store's alert
         # vocabulary, so denying those two packages would force a parallel copy

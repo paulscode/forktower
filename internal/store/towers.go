@@ -310,7 +310,13 @@ type Coverage struct {
 	// Reason is required in both directions. "Not coverable" with no reason is
 	// an accusation without evidence; "coverable" with no reason gives a reader
 	// nothing to check.
-	Reason       string
+	Reason string
+	// NumBackups is **not a per-channel figure**, because no Lightning node
+	// reports one. It is the states backed up on the sessions of this channel's
+	// *type*, shared with every other channel of that type. Recorded here anyway
+	// because it is the only backup signal there is, and stored per channel so a
+	// reader sees it beside the verdict it belongs to — but it must never be
+	// presented as "this channel has N backups".
 	NumBackups   int64
 	LastBackupAt int64
 	// SweepFeeSatPerKW is the rate negotiated for the session covering this

@@ -1,0 +1,85 @@
+{
+    "towers": [
+        {
+            "pubkey": "AqvntqF4WUtgzk8o3dD2mDDIPZScQzDgKIvpZtkas2t7",
+            "addresses": [
+                "172.19.0.4:9911"
+            ],
+            "active_session_candidate": true,
+            "num_sessions": 1,
+            "sessions": [
+                {
+                    "num_backups": 12,
+                    "num_pending_backups": 0,
+                    "max_backups": 1024,
+                    "sweep_sat_per_byte": 10,
+                    "sweep_sat_per_vbyte": 10,
+                    "id": "AmyavfYBaz/a0gjYcdP0HbpX/qwR1WK/Eh4/B8n90khD"
+                },
+                {
+                    "num_backups": 0,
+                    "num_pending_backups": 0,
+                    "max_backups": 1024,
+                    "sweep_sat_per_byte": 10,
+                    "sweep_sat_per_vbyte": 10,
+                    "id": "A/Gna4PjhjdtGrbJtT5QcSVWa37fP7SF7nCEzabkHJVl"
+                },
+                {
+                    "num_backups": 0,
+                    "num_pending_backups": 0,
+                    "max_backups": 1024,
+                    "sweep_sat_per_byte": 10,
+                    "sweep_sat_per_vbyte": 10,
+                    "id": "AhajxFzdywkO1TPEMa5Lxu/1af32r1abaw3r4/qdTHXm"
+                }
+            ],
+            "session_info": [
+                {
+                    "active_session_candidate": true,
+                    "num_sessions": 1,
+                    "sessions": [
+                        {
+                            "num_backups": 12,
+                            "num_pending_backups": 0,
+                            "max_backups": 1024,
+                            "sweep_sat_per_byte": 10,
+                            "sweep_sat_per_vbyte": 10,
+                            "id": "AmyavfYBaz/a0gjYcdP0HbpX/qwR1WK/Eh4/B8n90khD"
+                        }
+                    ],
+                    "policy_type": "ANCHOR"
+                },
+                {
+                    "active_session_candidate": true,
+                    "num_sessions": 1,
+                    "sessions": [
+                        {
+                            "num_backups": 0,
+                            "num_pending_backups": 0,
+                            "max_backups": 1024,
+                            "sweep_sat_per_byte": 10,
+                            "sweep_sat_per_vbyte": 10,
+                            "id": "A/Gna4PjhjdtGrbJtT5QcSVWa37fP7SF7nCEzabkHJVl"
+                        }
+                    ],
+                    "policy_type": "TAPROOT"
+                },
+                {
+                    "active_session_candidate": true,
+                    "num_sessions": 1,
+                    "sessions": [
+                        {
+                            "num_backups": 0,
+                            "num_pending_backups": 0,
+                            "max_backups": 1024,
+                            "sweep_sat_per_byte": 10,
+                            "sweep_sat_per_vbyte": 10,
+                            "id": "AhajxFzdywkO1TPEMa5Lxu/1af32r1abaw3r4/qdTHXm"
+                        }
+                    ],
+                    "policy_type": "LEGACY"
+                }
+            ]
+        }
+    ]
+}

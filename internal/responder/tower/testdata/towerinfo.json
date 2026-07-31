@@ -1,0 +1,9 @@
+{
+    "pubkey": "AqvntqF4WUtgzk8o3dD2mDDIPZScQzDgKIvpZtkas2t7",
+    "listeners": [
+        "[::]:9911"
+    ],
+    "uris": [
+        "02abe7b6a178594b60ce4f28ddd0f69830c83d949c4330e0288be966d91ab36b7b@172.19.0.4:9911"
+    ]
+}

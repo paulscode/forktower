@@ -1,0 +1,16 @@
+{
+    "towers": [
+        {
+            "pubkey": "AqvntqF4WUtgzk8o3dD2mDDIPZScQzDgKIvpZtkas2t7",
+            "addresses": ["172.19.0.4:9911"],
+            "active_session_candidate": true,
+            "num_sessions": 0,
+            "sessions": [],
+            "session_info": [
+                {"active_session_candidate": true, "num_sessions": 0, "sessions": [], "policy_type": "LEGACY"},
+                {"active_session_candidate": true, "num_sessions": 0, "sessions": [], "policy_type": "ANCHOR"},
+                {"active_session_candidate": true, "num_sessions": 0, "sessions": [], "policy_type": "TAPROOT"}
+            ]
+        }
+    ]
+}
