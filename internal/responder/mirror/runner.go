@@ -102,6 +102,9 @@ func (r *Runner) Run(ctx context.Context) error {
 			r.scan(ctx, extended.Block.Height)
 
 		case <-ticker.C:
+			// Look again at what was refused before working the queue, so that a
+			// decision repaired on this tick is acted on during it.
+			r.reconsider(ctx)
 			r.send(ctx)
 		}
 	}
@@ -138,6 +141,19 @@ func (r *Runner) scan(ctx context.Context, height int32) {
 	// timer: a close the user is waiting on should not sit for half a minute.
 	if len(found) > 0 {
 		r.send(ctx)
+	}
+}
+
+// reconsider looks again at what was refused, in case the evidence has changed.
+func (r *Runner) reconsider(ctx context.Context) {
+	changed, err := r.observer.Reconsider(ctx, time.Now().Unix())
+	if err != nil {
+		r.log.Error("looking again at what was not copied", slog.String("error", err.Error()))
+		return
+	}
+	for _, f := range changed {
+		r.log.Info("a transaction is being copied after all",
+			slog.String("txid", f.Lifted.TxID), slog.String("why", f.Decision.Reason))
 	}
 }
 

@@ -42,6 +42,8 @@ type Store interface {
 	RecordSpend(ctx context.Context, sp store.Spend) (int64, bool, error)
 	RecordMirrorDecision(ctx context.Context, d store.MirrorDecision) (int64, bool, error)
 	ListSpends(ctx context.Context, f store.SpendFilter) ([]store.Spend, error)
+	ListMirrorDecisions(ctx context.Context, f store.MirrorFilter) ([]store.MirrorDecision, error)
+	RedecideMirror(ctx context.Context, id int64, state store.MirrorState, reason string, at int64) error
 }
 
 // ObserverOptions configures an Observer.
@@ -255,6 +257,91 @@ func (o *Observer) factsFor(
 		break
 	}
 	return out, nil
+}
+
+// Reconsider looks again at what was refused, in case the evidence has changed.
+//
+// **A decision made on evidence that had not arrived yet must not stand for
+// ever**, and this is not a hypothetical. The user's own force-close and the
+// counterparty's look identical on the chain; the only thing that tells them
+// apart is the closing transaction id the user's node reports, which arrives on
+// the next registry poll — up to a minute after the block. Decide once, at the
+// moment the block lands, and their own close is filed as the counterparty's and
+// never copied. Nothing would ever say so: the record would read as a
+// principled refusal.
+//
+// Only refusals are revisited. A transaction already accepted, or already being
+// sent, has moved past the point where the classification is the open question.
+//
+// Driven from stored state rather than from an event, for the same reason the
+// alerter's reconciliation is: an event announcing the close can be missed, and
+// the thing being repaired here is precisely a decision made with too little
+// information.
+func (o *Observer) Reconsider(ctx context.Context, at int64) ([]Found, error) {
+	refused, err := o.store.ListMirrorDecisions(ctx, store.MirrorFilter{
+		State: store.MirrorDenied, TargetBranch: o.to,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reading what was not copied: %w", err)
+	}
+	if len(refused) == 0 {
+		return nil, nil
+	}
+
+	channels, err := o.store.ListChannels(ctx, store.ChannelFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("reading your channels to look again: %w", err)
+	}
+	byID := make(map[int64]store.Channel, len(channels))
+	for _, c := range channels {
+		byID[c.ID] = c
+	}
+
+	var changed []Found
+	for _, d := range refused {
+		channel, known := byID[d.ChannelID]
+		if !known {
+			// Refused because it belongs to no channel of the user's. Nothing that
+			// arrives later changes that.
+			continue
+		}
+
+		// Re-classify with what is known now. The shape is the part that moves:
+		// `commitment_unknown` becomes `commitment_ours` once the node has told us
+		// which transaction it closed with.
+		shape := d.Shape
+		if shape == store.ShapeCommitmentUnknown && channel.CloseTxID == d.TxID {
+			shape = store.ShapeCommitmentOurs
+		}
+		if shape == d.Shape {
+			continue
+		}
+
+		verdict := Decide(Inputs{
+			Shape: shape, From: o.from, To: o.to, ChannelKnown: true,
+			FundingOptIn: channel.MirrorFundingOptIn,
+		})
+		if !verdict.Mirror {
+			continue
+		}
+
+		if err := o.store.RedecideMirror(
+			ctx, d.ID, store.MirrorPending, verdict.Reason, at); err != nil {
+			o.log.Error("changing a decision that was made too early",
+				slog.String("txid", d.TxID), slog.String("error", err.Error()))
+			continue
+		}
+		o.log.Info("a transaction refused before its channel had been read is now "+
+			"being copied", slog.String("txid", d.TxID),
+			slog.String("why", verdict.Reason))
+
+		d.State, d.Shape, d.Reason = store.MirrorPending, shape, verdict.Reason
+		changed = append(changed, Found{
+			Lifted:   Lifted{TxID: d.TxID, ChannelID: d.ChannelID, Shape: shape},
+			Decision: d, New: true,
+		})
+	}
+	return changed, nil
 }
 
 // LastScanned is the highest block this observer has looked at.

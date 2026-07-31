@@ -364,6 +364,40 @@ func waitForActiveChannel(ctx context.Context, n lnNode, timeout time.Duration) 
 	}
 }
 
+// paymentRetries is how many times a payment is re-attempted before giving up.
+//
+// A channel reports itself active before its balance has reached the part of the
+// node that finds routes, so a payment sent immediately after opening one can
+// fail with "insufficient local balance" against a link that plainly has it.
+// That is a race in the world rather than a fact about it, and a scripted world
+// that fails one run in five is worse than no world at all.
+const paymentRetries = 6
+
+// payWithRetry sends one payment, waiting out the moments after a channel opens
+// when the node has not finished agreeing with itself.
+//
+// Only the transient shapes are retried. A payment that failed because there is
+// genuinely no route or no money is a fact worth reporting straight away, and
+// retrying it six times would turn a clear failure into a slow one.
+func payWithRetry(ctx context.Context, from lnNode, invoice string) error {
+	var last error
+	for attempt := range paymentRetries {
+		last = from.lncli(ctx, nil, "payinvoice", "--force", "--json", invoice)
+		if last == nil {
+			return nil
+		}
+		if attempt == paymentRetries-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(lnPollInterval):
+		}
+	}
+	return last
+}
+
 // commandPay sends payments from the user to mallory, which is how the channel
 // is advanced past a state somebody might later revert to.
 func commandPay(ctx context.Context, times int) error {
@@ -384,8 +418,7 @@ func commandPay(ctx context.Context, times int) error {
 			"--amt="+strconv.Itoa(paymentSat)); err != nil {
 			return err
 		}
-		if err := user.lncli(ctx, nil, "payinvoice", "--force",
-			"--json", invoice.PaymentRequest); err != nil {
+		if err := payWithRetry(ctx, user, invoice.PaymentRequest); err != nil {
 			return fmt.Errorf("payment %d of %d: %w", i, times, err)
 		}
 		say("Paid %d of %d.", i, times)

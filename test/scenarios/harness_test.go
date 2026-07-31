@@ -326,6 +326,36 @@ type towersPayload struct {
 	Towers []tower `json:"towers"`
 }
 
+// mirrorDecision is one transaction the mirror considered.
+type mirrorDecision struct {
+	TxID    string `json:"txid"`
+	From    string `json:"from"`
+	To      string `json:"to"`
+	State   string `json:"state"`
+	Reason  string `json:"reason"`
+	Display struct {
+		What      string `json:"what"`
+		ShortTxID string `json:"short_txid"`
+		Copied    bool   `json:"copied"`
+		Refused   bool   `json:"refused"`
+		NeedsYou  bool   `json:"needs_you"`
+	} `json:"display"`
+}
+
+type mirrorPayload struct {
+	Decisions []mirrorDecision `json:"decisions"`
+}
+
+// mirrorDecisions is what the mirror decided, optionally narrowed to one state.
+func mirrorDecisions(t *testing.T, state string) []mirrorDecision {
+	t.Helper()
+	path := "/api/v1/mirror"
+	if state != "" {
+		path += "?state=" + state
+	}
+	return get[mirrorPayload](t, path).Decisions
+}
+
 func towers(t *testing.T) []tower {
 	t.Helper()
 	return get[towersPayload](t, "/api/v1/towers").Towers
@@ -388,6 +418,28 @@ func (w *world) staged(t *testing.T) {
 	w.forkbench(t, "snapshot-mallory")
 	w.forkbench(t, "pay", "-times", "3")
 	w.forkbench(t, "split")
+}
+
+// forkbenchFails runs a command that is expected not to work, and fails the test
+// if it does.
+//
+// For the assertions that are about an absence: "this transaction is not on that
+// chain" is only worth checking if the check would have noticed it being there.
+func (w *world) forkbenchFails(t *testing.T, what string, args ...string) {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "forkbench")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/forkbench") //nolint:gosec // this repo's own
+	build.Dir = w.repoDir
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building forkbench: %v\n%s", err, out)
+	}
+
+	cmd := exec.Command(binary, args...) //nolint:gosec // this repository's own, just built
+	cmd.Dir = w.repoDir
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("%s\n%s", what, out)
+	}
 }
 
 // mineUntil waits for something, mining on the other chain as it goes.

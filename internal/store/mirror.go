@@ -156,6 +156,34 @@ func (s *Store) UpdateMirrorState(
 	return requireOneRow(res, "mirror decision", id)
 }
 
+// RedecideMirror changes what was decided about a transaction, and why.
+//
+// **Separate from UpdateMirrorState because it means something different.** That
+// one records an attempt to send; this one records that the *decision* was
+// wrong — made on evidence that had not arrived yet, and remade now that it has.
+// The attempt count is left alone, because no attempt was made.
+//
+// The reason is rewritten too, and has to be: a row that now says `pending` while
+// still carrying the sentence explaining why it was refused would be a record
+// that contradicts itself.
+func (s *Store) RedecideMirror(
+	ctx context.Context, id int64, state MirrorState, reason string, at int64,
+) error {
+	if !state.Valid() {
+		return fmt.Errorf("store: %q is not a mirror state this schema accepts", state)
+	}
+	if reason == "" {
+		return errors.New("store: a mirror decision needs a reason, in either direction")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE mirror_decisions SET state = ?, reason = ?, updated_at = ? WHERE id = ?`,
+		state, reason, at, id)
+	if err != nil {
+		return fmt.Errorf("changing a mirror decision: %w", err)
+	}
+	return requireOneRow(res, "mirror decision", id)
+}
+
 // MirrorFilter narrows ListMirrorDecisions.
 type MirrorFilter struct {
 	// State, when set, restricts to decisions in that state.

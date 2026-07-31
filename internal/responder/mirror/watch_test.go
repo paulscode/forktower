@@ -746,3 +746,116 @@ func TestTheTransactionsBytesAreStoredSoTheyCanBeSentLater(t *testing.T) {
 		t.Errorf("recorded against %q, want the chain it was observed on", spends[0].Branch)
 	}
 }
+
+// **A decision made before the evidence arrived must not stand for ever.**
+//
+// The user's own force-close and the counterparty's look identical on the chain.
+// The only thing that tells them apart is the closing transaction id the user's
+// node reports, and that arrives on the next registry poll — up to a minute
+// after the block. Decide once, at the moment the block lands, and their own
+// close is filed as the counterparty's and never copied, with a record that
+// reads as a principled refusal.
+func TestARefusalIsRemadeOnceTheChannelIsKnown(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	tx := realClose(t, "force_close_user.hex")
+	id := h.channelSpending(tx)
+
+	// The block arrives before the node has said which transaction it closed
+	// with, so the commitment cannot be attributed and is refused.
+	found := h.scan(tx)
+	if len(found) != 1 {
+		t.Fatalf("found %d transactions", len(found))
+	}
+	if found[0].Decision.State != store.MirrorDenied {
+		t.Fatalf("with the channel unread, the close was not refused: %+v", found[0].Decision)
+	}
+
+	// Nothing has changed yet, so nothing is remade.
+	changed, err := h.obs.Reconsider(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 0 {
+		t.Errorf("a decision was remade with no new evidence: %+v", changed)
+	}
+
+	// The registry catches up and says the close was ours.
+	if err := h.store.SetChannelCloseSF(ctx, id, store.CloseForce,
+		tx.TxHash().String(), 900_000, 3); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err = h.obs.Reconsider(ctx, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 1 {
+		t.Fatalf("the refusal was not remade once the channel was read: %+v", changed)
+	}
+
+	rows, err := h.store.ListMirrorDecisions(ctx, store.MirrorFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].State != store.MirrorPending {
+		t.Errorf("state = %q, want it queued to be copied", rows[0].State)
+	}
+	// The reason is rewritten too: a row saying "queued" while still carrying the
+	// sentence explaining why it was refused would contradict itself.
+	if strings.Contains(rows[0].Reason, "at risk there") {
+		t.Errorf("the refusal's reason survived the change of mind: %q", rows[0].Reason)
+	}
+	if !strings.Contains(rows[0].Reason, "yourself") {
+		t.Errorf("the new reason does not say why it is being copied: %q", rows[0].Reason)
+	}
+}
+
+// Only refusals are revisited. Something already sent, or already going, has
+// moved past the point where the classification is the open question.
+func TestOnlyRefusalsAreReconsidered(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	tx := realClose(t, "coop_close.hex")
+	h.channelSpending(tx)
+
+	found := h.scan(tx)
+	if len(found) != 1 || found[0].Decision.State != store.MirrorPending {
+		t.Fatalf("the agreed close was not queued: %+v", found)
+	}
+
+	changed, err := h.obs.Reconsider(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 0 {
+		t.Errorf("a transaction already on its way was reconsidered: %+v", changed)
+	}
+}
+
+// A refusal that no later evidence can change is left alone, or the sweep would
+// churn over the same rows for ever.
+func TestARefusalNothingCanChangeIsLeftAlone(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	tx := realClose(t, "force_close_commitment.hex")
+	h.channelSpending(tx)
+
+	if found := h.scan(tx); found[0].Decision.State != store.MirrorDenied {
+		t.Fatalf("their close was not refused: %+v", found[0].Decision)
+	}
+
+	// Their close, still theirs however long anybody waits.
+	for _, at := range []int64{2, 3, 4} {
+		changed, err := h.obs.Reconsider(ctx, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(changed) != 0 {
+			t.Errorf("the counterparty's close was reconsidered into being copied: %+v", changed)
+		}
+	}
+}

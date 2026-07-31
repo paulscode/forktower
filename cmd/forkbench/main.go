@@ -38,6 +38,8 @@ Lightning:
   forkbench tower-backups -min N   wait until N states have reached the tower
   forkbench tower-stop             take the watchtower away
   forkbench tower-status           what both ends of the tower think
+  forkbench tx-present -node sq -txid X
+                                   whether a chain has heard of a transaction
   forkbench snapshot-mallory       save the counterparty's channel state
   forkbench restore-mallory        put the counterparty back to that state
   forkbench breach -branch sq      publish the counterparty's old commitment,
@@ -87,6 +89,7 @@ func run(args []string) error {
 			"how many backed-up states to wait for at the watchtower")
 		register = flags.Bool("register", true,
 			"point the user's node at the watchtower after starting it")
+		txid = flags.String("txid", "", "which transaction to look for")
 	)
 	if err := flags.Parse(rest); err != nil {
 		return err
@@ -132,6 +135,8 @@ func run(args []string) error {
 		return commandTowerStop(ctx)
 	case "tower-status":
 		return commandTowerStatus(ctx)
+	case "tx-present":
+		return commandTxPresent(ctx, *nodeName, *txid)
 	case "reorg":
 		return commandReorg(ctx, *nodeName, *blocks)
 	case "coop-close":
