@@ -16,6 +16,7 @@ import (
 	"github.com/paulscode/forktower/internal/alert"
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/config"
+	"github.com/paulscode/forktower/internal/deadline"
 	"github.com/paulscode/forktower/internal/registry"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
@@ -62,6 +63,12 @@ type Lightning interface {
 	Health() []registry.SourceHealth
 }
 
+// Deadlines is what the API needs from the countdown engine. Nil is allowed, and
+// means the countdowns are not being reported yet.
+type Deadlines interface {
+	Status() deadline.Status
+}
+
 // Config configures the server.
 type Config struct {
 	Auth           config.AuthMode
@@ -78,13 +85,14 @@ type Config struct {
 
 // Server holds everything the handlers need.
 type Server struct {
-	store    *store.Store
-	sentinel Sentinel
-	alerter  Alerter
-	ln       Lightning
-	cfg      Config
-	now      func() time.Time
-	log      *slog.Logger
+	store     *store.Store
+	sentinel  Sentinel
+	alerter   Alerter
+	ln        Lightning
+	deadlines Deadlines
+	cfg       Config
+	now       func() time.Time
+	log       *slog.Logger
 
 	auth *authenticator
 	mux  *http.ServeMux
@@ -96,6 +104,7 @@ func New(
 	sen Sentinel,
 	al Alerter,
 	ln Lightning,
+	dl Deadlines,
 	cfg Config,
 	log *slog.Logger,
 	now func() time.Time,
@@ -123,7 +132,8 @@ func New(
 	}
 
 	s := &Server{
-		store: st, sentinel: sen, alerter: al, ln: ln, cfg: cfg, now: now, log: log,
+		store: st, sentinel: sen, alerter: al, ln: ln, deadlines: dl,
+		cfg: cfg, now: now, log: log,
 		mux: http.NewServeMux(),
 	}
 	s.auth = newAuthenticator(cfg, now, log, al)

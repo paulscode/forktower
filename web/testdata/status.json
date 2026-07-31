@@ -92,6 +92,14 @@
       "why": "Forktower is watching the chains, which is what matters first. Connect your Lightning node and it will also track which of your channels are exposed.",
       "detail": "",
       "action": null
+    },
+    {
+      "id": "deadline_inputs_known",
+      "ok": true,
+      "label": "No countdown is running",
+      "why": "Nothing has closed any of your channels on the other chain.",
+      "detail": "",
+      "action": null
     }
   ]
 }

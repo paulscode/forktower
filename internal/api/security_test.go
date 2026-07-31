@@ -385,16 +385,16 @@ func TestNewRejectsAnUnusableConfiguration(t *testing.T) {
 
 	h := newHarness(t, nil)
 
-	if _, err := New(h.store, h.sen, h.alerter, h.ln, Config{Auth: config.AuthPassword}, nil, nil); err == nil {
+	if _, err := New(h.store, h.sen, h.alerter, h.ln, h.dl, Config{Auth: config.AuthPassword}, nil, nil); err == nil {
 		t.Error("password mode was accepted with no password set, which nobody could ever sign in to")
 	}
-	if _, err := New(h.store, h.sen, h.alerter, h.ln, Config{Auth: "something-else"}, nil, nil); err == nil {
+	if _, err := New(h.store, h.sen, h.alerter, h.ln, h.dl, Config{Auth: "something-else"}, nil, nil); err == nil {
 		t.Error("an unknown authentication mode was accepted")
 	}
-	if _, err := New(nil, h.sen, h.alerter, h.ln, Config{}, nil, nil); err == nil {
+	if _, err := New(nil, h.sen, h.alerter, h.ln, h.dl, Config{}, nil, nil); err == nil {
 		t.Error("a server with no store was accepted")
 	}
-	if _, err := New(h.store, nil, h.alerter, h.ln, Config{}, nil, nil); err == nil {
+	if _, err := New(h.store, nil, h.alerter, h.ln, h.dl, Config{}, nil, nil); err == nil {
 		t.Error("a server with no sentinel was accepted")
 	}
 }

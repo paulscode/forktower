@@ -15,6 +15,10 @@ const (
 	KindSecondOrderSpent = "watch.second_order_spent"
 	KindSpendReorgedOut  = "watch.spend_reorged_out"
 	KindMempoolSighting  = "watch.mempool_sighting"
+
+	KindDeadlineEscalated   = "deadline.escalated"
+	KindDeadlineResolved    = "deadline.resolved"
+	KindDeadlineExpiredLoss = "deadline.expired_loss"
 )
 
 // BlockRefJSON identifies a block. Hashes are lowercase hex in the usual display
@@ -227,6 +231,53 @@ type SpendReorgedOut struct {
 // Kind implements Event.
 func (SpendReorgedOut) Kind() string { return KindSpendReorgedOut }
 
+// DeadlineEscalated reports that a countdown has reached a louder tier.
+//
+// Carries the time as well as the block count, because a block count on its own
+// is not an answer: a minority chain can take half an hour a block, so the same
+// number of blocks can mean far more human time than instinct says. EstWallClock
+// is empty when the chain's cadence is not known, and a reader must then say
+// nothing about time rather than assume ten minutes.
+type DeadlineEscalated struct {
+	DeadlineID      int64  `json:"deadline_id"`
+	ChannelID       int64  `json:"channel_id"`
+	Level           int    `json:"level"`
+	RemainingBlocks int32  `json:"remaining_blocks"`
+	EstWallClock    string `json:"est_wall_clock,omitempty"`
+}
+
+// Kind implements Event.
+func (DeadlineEscalated) Kind() string { return KindDeadlineEscalated }
+
+// DeadlineResolved reports a countdown that stopped without anybody losing
+// anything.
+//
+// ByTxid names the transaction that answered it, when one did. Empty means the
+// threat simply went away — the close it was counting from left the chain and
+// did not come back.
+type DeadlineResolved struct {
+	DeadlineID int64  `json:"deadline_id"`
+	ByTxid     string `json:"by_txid,omitempty"`
+}
+
+// Kind implements Event.
+func (DeadlineResolved) Kind() string { return KindDeadlineResolved }
+
+// DeadlineExpiredLoss reports a countdown that ran out with nobody having
+// answered it.
+//
+// AmountSat is the channel's whole capacity: an upper bound rather than a
+// measurement, because what a revoked commitment takes is everything in the
+// channel and the balance at that moment is not something this daemon can know.
+type DeadlineExpiredLoss struct {
+	DeadlineID int64 `json:"deadline_id"`
+	ChannelID  int64 `json:"channel_id"`
+	AmountSat  int64 `json:"amount_sat"`
+}
+
+// Kind implements Event.
+func (DeadlineExpiredLoss) Kind() string { return KindDeadlineExpiredLoss }
+
 // AllKinds lists every event kind the bus carries, for diagnostics and for tests
 // that check nothing has been added without being registered here.
 func AllKinds() []string {
@@ -241,5 +292,8 @@ func AllKinds() []string {
 		KindSecondOrderSpent,
 		KindSpendReorgedOut,
 		KindMempoolSighting,
+		KindDeadlineEscalated,
+		KindDeadlineResolved,
+		KindDeadlineExpiredLoss,
 	}
 }

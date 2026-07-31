@@ -26,6 +26,9 @@ DEFAULT_MIN=70
 declare -A MIN=(
   # Pure decision logic: no I/O, so there is no excuse for a gap.
   [internal/sentinel]=90  # decision logic: no I/O, so no excuse for a gap
+  # The computation decides when somebody loses money and is pure, so it is held
+  # near-total; the engine around it is I/O against an in-process database and a
+  # real bus, which needs no container either.
   [internal/deadline]=90
   # The block scanner is pure and is held near-total; the watchset reader is a
   # translation from stored rows to matchable outpoints, exercised against a real

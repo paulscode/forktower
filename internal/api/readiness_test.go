@@ -9,6 +9,7 @@ import (
 
 	"github.com/paulscode/forktower/internal/alert"
 	"github.com/paulscode/forktower/internal/chainview"
+	"github.com/paulscode/forktower/internal/deadline"
 	"github.com/paulscode/forktower/internal/registry"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
@@ -237,6 +238,7 @@ func TestReadinessOrderIsStable(t *testing.T) {
 	want := []string{
 		CheckSQBackendDistinct, CheckSQSynced, CheckSQOnBranch,
 		CheckSFEnforcing, CheckAlertTransports, CheckLNConnected,
+		CheckDeadlineInputs,
 	}
 	got := h.srv.Readiness(context.Background())
 	if len(got) != len(want) {
@@ -415,6 +417,65 @@ func TestTheLightningCheckReportsWhatIsActuallyHappening(t *testing.T) {
 		}
 		if !strings.Contains(ln.Why, "cln-1") || strings.Contains(ln.Why, "lnd-1") {
 			t.Errorf("the wrong node is named: %q", ln.Why)
+		}
+	})
+}
+
+// The countdown check exists to be read *before* anything goes wrong, which is
+// the only time the answer can still be changed.
+func TestTheCountdownCheckSaysWhatIsBeingCountedOn(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nothing running is not a problem", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, nil)
+		item := itemByID(t, h.srv.Readiness(context.Background()), CheckDeadlineInputs)
+		if !item.OK {
+			t.Errorf("having no countdown was reported as a fault: %q", item.Label)
+		}
+	})
+
+	t.Run("counting on real numbers", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, nil)
+		h.dl.set(deadline.Status{Counting: 2, EarliestHeight: 900})
+
+		item := itemByID(t, h.srv.Readiness(context.Background()), CheckDeadlineInputs)
+		if !item.OK {
+			t.Errorf("a countdown on real numbers was reported as a fault: %q", item.Label)
+		}
+	})
+
+	t.Run("counting on a floor is flagged but not a failure", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, nil)
+		h.dl.set(deadline.Status{Counting: 2, Assumed: 1, AssumedChannels: []int64{7}})
+
+		items := h.srv.Readiness(context.Background())
+		item := itemByID(t, items, CheckDeadlineInputs)
+		if item.OK {
+			t.Error("a countdown on a guess was reported as fully known")
+		}
+		// A countdown on a floor is worth far more than no countdown, so this must
+		// not drag the headline down as though protection had failed.
+		for _, failing := range blockingFailures(items) {
+			if failing.ID == CheckDeadlineInputs {
+				t.Error("counting from a cautious floor was treated as a broken protection")
+			}
+		}
+		if !strings.Contains(item.Why, "one of your channels") {
+			t.Errorf("the wording does not say how many are affected: %q", item.Why)
+		}
+	})
+
+	t.Run("several channels affected reads correctly", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, nil)
+		h.dl.set(deadline.Status{Counting: 3, Assumed: 2, AssumedChannels: []int64{7, 9}})
+
+		item := itemByID(t, h.srv.Readiness(context.Background()), CheckDeadlineInputs)
+		if !strings.Contains(item.Why, "some of your channels") {
+			t.Errorf("the wording does not read for several: %q", item.Why)
 		}
 	})
 }

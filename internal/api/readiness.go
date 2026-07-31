@@ -21,6 +21,7 @@ const (
 	CheckSFEnforcing       = "sf_enforcing"
 	CheckAlertTransports   = "alert_transports"
 	CheckLNConnected       = "ln_connected"
+	CheckDeadlineInputs    = "deadline_inputs_known"
 )
 
 // ReadinessItem is one thing that is or is not in place.
@@ -60,6 +61,7 @@ func (s *Server) Readiness(ctx context.Context) []ReadinessItem {
 		s.checkSFEnforcing(sfIdentity, sfView),
 		s.checkAlertTransports(ctx),
 		s.checkLNConnected(),
+		s.checkDeadlineInputs(),
 	}
 }
 
@@ -318,6 +320,61 @@ func humanList(items []string) string {
 	default:
 		return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
 	}
+}
+
+// checkDeadlineInputs reports whether the countdowns are built on real numbers.
+//
+// This check exists to be read *before* anything goes wrong, which is the only
+// time the answer can still be changed. Once a commitment has confirmed, a
+// countdown running on a conservative floor is what the user has, and finding
+// out then that their Lightning node never reported the real delay is finding
+// out too late to do anything about it.
+//
+// Never a hard failure. A countdown on a floor is worth far more than no
+// countdown, and turning this red would say the opposite.
+func (s *Server) checkDeadlineInputs() ReadinessItem {
+	if s.deadlines == nil {
+		return ReadinessItem{
+			ID: CheckDeadlineInputs, OK: false, informational: true,
+			Label: "Not tracking any countdowns yet",
+			Why: "Once a channel of yours is closed on the other chain, Forktower " +
+				"works out how long you have to respond.",
+		}
+	}
+
+	status := s.deadlines.Status()
+	if status.Counting == 0 {
+		return ReadinessItem{
+			ID: CheckDeadlineInputs, OK: true,
+			Label: "No countdown is running",
+			Why:   "Nothing has closed any of your channels on the other chain.",
+		}
+	}
+	if status.InputsKnown() {
+		return ReadinessItem{
+			ID: CheckDeadlineInputs, OK: true,
+			Label: "Counting down on real numbers",
+			Why: "Forktower knows the actual delay on every channel it is counting, " +
+				"so the time it shows you is the time you have.",
+		}
+	}
+	return ReadinessItem{
+		ID: CheckDeadlineInputs, OK: false, informational: true,
+		Label: "Counting down on an assumed delay",
+		Why: "Your Lightning node did not say how long the delay on " +
+			plural(len(status.AssumedChannels), "one of your channels", "some of your channels") +
+			" is, so Forktower is counting from a cautious floor instead. The " +
+			"countdown is real; it may simply be shorter than the truth. " +
+			"Reconnecting your Lightning node usually fixes it.",
+	}
+}
+
+// plural picks the wording for one thing or several.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // LNStaleAfter is how long a Lightning node may go unread before the dashboard

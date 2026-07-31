@@ -20,6 +20,7 @@ import (
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/chainview/bitcoindview"
 	"github.com/paulscode/forktower/internal/config"
+	"github.com/paulscode/forktower/internal/deadline"
 	"github.com/paulscode/forktower/internal/registry"
 	"github.com/paulscode/forktower/internal/registry/cln"
 	"github.com/paulscode/forktower/internal/registry/lnd"
@@ -53,6 +54,7 @@ type App struct {
 	sentinel *sentinel.Sentinel
 	registry *registry.Registry
 	watcher  *watcher.Watcher
+	deadline *deadline.Engine
 	alerter  *alert.Alerter
 	timeline *store.TimelineSubscriber
 	api      *api.Server
@@ -193,7 +195,17 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 		return nil, fmt.Errorf("setting up spend watching: %w", err)
 	}
 
-	a.api, err = api.New(st, a.sentinel, a.alerter, a.registry, api.Config{
+	// Built after the watcher, because the countdowns it keeps are started by
+	// what the watcher finds — and both subscribe in their constructors, so the
+	// order they are built in is the order they hear about anything.
+	a.deadline, err = deadline.New(st, a.bus, store.BranchSQ,
+		log.With(slog.String("component", "deadline")), now)
+	if err != nil {
+		a.closeOnFailure()
+		return nil, fmt.Errorf("setting up the countdowns: %w", err)
+	}
+
+	a.api, err = api.New(st, a.sentinel, a.alerter, a.registry, a.deadline, api.Config{
 		Auth:                  cfg.UI.Auth,
 		PasswordHash:          cfg.UI.PasswordHash,
 		AllowedOrigins:        cfg.UI.AllowedOrigins,
@@ -357,6 +369,7 @@ func (a *App) Run(ctx context.Context) error {
 	group.Go(func() error { return a.sentinel.Run(groupCtx) })
 	group.Go(func() error { return a.registry.Run(groupCtx) })
 	group.Go(func() error { return a.watcher.Run(groupCtx) })
+	group.Go(func() error { return a.deadline.Run(groupCtx) })
 
 	group.Go(func() error {
 		a.log.Info("Forktower is running")

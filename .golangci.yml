@@ -121,6 +121,24 @@ linters:
             - pkg: github.com/paulscode/forktower/internal/bus
               desc: the shape classifier returns a verdict, it does not publish one
 
+        # The deadline computation decides when somebody loses money. Same bar as
+        # the scanner and the shape classifier, with the store allowed for its
+        # vocabulary of kinds and shapes.
+        pure-deadline:
+          files:
+            - "**/internal/deadline/compute.go"
+          deny:
+            - pkg: net
+              desc: the deadline computation must not perform I/O
+            - pkg: net/http
+              desc: the deadline computation must not perform I/O
+            - pkg: os
+              desc: the deadline computation must not touch the filesystem
+            - pkg: database/sql
+              desc: the deadline computation must not touch storage
+            - pkg: github.com/paulscode/forktower/internal/bus
+              desc: the deadline computation returns clocks, it does not publish them
+
         # The alerting policy is held to the same "no I/O" bar, but with a
         # narrower deny list. It maps bus events onto the store's alert
         # vocabulary, so denying those two packages would force a parallel copy

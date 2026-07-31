@@ -76,6 +76,9 @@ func TestTheTimelineRecordsEveryKindOfEvent(t *testing.T) {
 		bus.SecondOrderSpent{SpendEventID: 2, SourceSpendEventID: 1, Role: "to_local"},
 		bus.SpendReorgedOut{SpendEventID: 1, Branch: "sq"},
 		bus.MempoolSighting{SpendEventID: 3, ChannelID: 1, Branch: "sq"},
+		bus.DeadlineEscalated{DeadlineID: 1, ChannelID: 1, Level: 2, RemainingBlocks: 40},
+		bus.DeadlineResolved{DeadlineID: 1, ByTxid: "abc"},
+		bus.DeadlineExpiredLoss{DeadlineID: 1, ChannelID: 1, AmountSat: 1000},
 	}
 	for _, e := range events {
 		b.Publish(e)

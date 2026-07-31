@@ -127,6 +127,18 @@ func Summarize(e bus.Event) string {
 		return "A transaction closing one of your channels was seen on the other " +
 			"chain, before any block had accepted it."
 
+	case bus.DeadlineEscalated:
+		return summarizeDeadline(ev)
+
+	case bus.DeadlineResolved:
+		if ev.ByTxid == "" {
+			return "A countdown stopped: what started it is no longer on the other chain."
+		}
+		return "A countdown was answered before it ran out."
+
+	case bus.DeadlineExpiredLoss:
+		return "A countdown ran out with nobody having answered it."
+
 	case bus.SpendReorgedOut:
 		return "Something that had happened on the other chain was undone by a " +
 			"change to that chain."
@@ -176,6 +188,20 @@ func summarizeChannelClose(ev bus.ChannelClosedSF) string {
 	}
 	return "One of your channels closed on your own chain. It still needs watching until " +
 		"that close reaches the other one."
+}
+
+// summarizeDeadline says how much time is left, in the register of something
+// read afterwards rather than something interrupting.
+//
+// The time estimate is included when there is one, because a block count alone
+// tells a reader nothing they can act on.
+func summarizeDeadline(ev bus.DeadlineEscalated) string {
+	if ev.EstWallClock == "" {
+		return fmt.Sprintf("A countdown on one of your channels reached %d blocks left.",
+			ev.RemainingBlocks)
+	}
+	return fmt.Sprintf("A countdown on one of your channels reached %d blocks left, "+
+		"which was %s.", ev.RemainingBlocks, ev.EstWallClock)
 }
 
 // The two view states this summary distinguishes. Kept as literals rather than
