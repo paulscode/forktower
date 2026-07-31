@@ -77,9 +77,54 @@ make forkbench-down    # removes the containers and their state
 | `forkbench mine -node sf -blocks 6` | Adds blocks to one chain. This is how you make a split deepen. |
 | `forkbench status` | Both chains' tips, and — if one is running — what Forktower makes of them. |
 | `forkbench down` | Removes the world and everything in it. |
+| `forkbench ln-up` | Adds two Lightning nodes, funds them, and opens a channel between them. Running it again is safe. |
+| `forkbench ln-status` | Both Lightning nodes and their channels. |
+| `forkbench pay -times 3` | Sends payments through the channel, which advances its state. |
+| `forkbench snapshot-mallory` | Saves the counterparty's channel state, to be put back later. |
+| `forkbench restore-mallory` | Puts it back, so the counterparty believes an old commitment is current. |
+| `forkbench breach -branch sq` | Restores that state, publishes the old commitment, and puts it on one chain only. |
+| `forkbench coop-close` | Closes the channel by agreement. |
+| `forkbench force-close -ln-node user` | Closes it unilaterally, honestly. |
+
+Any of the three closing commands takes `-fixtures DIR` to save the transaction
+it produced, which is how the classifier's test data is made.
 
 `status` asks Forktower at `http://127.0.0.1:8330` by default. Point it elsewhere
 with `-forktower`, or pass `-forktower ""` to skip it.
+
+## Staging the attack
+
+`make demo-s1-detect` runs the whole thing:
+
+```
+forkbench up               two Bitcoin nodes, agreeing
+forkbench ln-up            two Lightning nodes, one channel
+forkbench pay -times 3     the channel advances
+forkbench snapshot-mallory the counterparty's state is saved here
+forkbench pay -times 3     the channel advances past it
+forkbench split            the chains separate
+forkbench breach -branch sq
+```
+
+That last step is the one worth understanding. The counterparty is given back the
+channel database it had three payments ago, so it now believes a commitment it
+has since promised never to publish is still current. It force-closes, and that
+transaction is pushed onto the other chain and mined there — and only there.
+
+Afterwards, the user's own Bitcoin node shows nothing at all. Their channel is
+open, their balance is what it was, and every tool they have says everything is
+fine. On the chain nobody is watching, an old commitment is confirmed and a
+countdown has started.
+
+That asymmetry is the entire reason this software exists, and the reason the
+world can stage it is the reason the world exists.
+
+**This is a staged attack against a node you control, in a throwaway regtest
+world with no money in it.** The counterparty is called `mallory` so that nobody
+reading a log has to wonder. Doing this to somebody else's channel would be
+theft, and it would also lose you money: the punishment mechanism this
+demonstrates is exactly what makes it a bad idea on a chain anybody is watching.
+The whole problem is that during a split, nobody is.
 
 ## How the split works
 
@@ -115,6 +160,12 @@ own, that it has seen the other chain and will not have it.
 **Both nodes report no peers.** The world has exactly two nodes, so separating
 them leaves each with nobody to talk to. In a real split each side keeps its own
 peers, and the dashboard would not show both views as degraded.
+
+**The counterparty is cooperating with its own downfall.** A real attacker would
+not helpfully stop their node so its database could be copied. Rolling LND back
+by restoring a directory is a shortcut to a state a determined counterparty would
+reach some other way, and what lands on the chain afterwards is a genuine revoked
+commitment either way — which is the part that matters here.
 
 **Nothing is signalling anything.** These are ordinary regtest nodes. The
 divergence is produced by hand rather than by two pieces of software disagreeing

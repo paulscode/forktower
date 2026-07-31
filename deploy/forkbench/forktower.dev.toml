@@ -18,6 +18,19 @@ rpc_pass = "forkbench"
 zmq_rawblock = "tcp://127.0.0.1:28342"
 zmq_rawtx = "tcp://127.0.0.1:28343"
 
+# The Lightning node forkbench builds. Its certificate and a read-only macaroon
+# have to be copied out of the container first:
+#
+#     forkbench ln-credentials -ln-node user -out deploy/forkbench/creds
+#
+# They are not committed — they belong to a world that is rebuilt from nothing
+# every time — so this section does nothing until that has been run, and the
+# dashboard says so plainly rather than pretending.
+[[ln.lnd]]
+rest_addr = "https://127.0.0.1:8081"
+tls_cert_path = "deploy/forkbench/creds/user/tls.cert"
+macaroon_path = "deploy/forkbench/creds/user/readonly.macaroon"
+
 [sentinel]
 # Faster than the shipped defaults, because a development loop measured in
 # minutes is a development loop nobody runs.

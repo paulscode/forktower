@@ -236,3 +236,51 @@ func TestScanningNothingFindsNothing(t *testing.T) {
 		t.Errorf("a coinbase matched: %v", got)
 	}
 }
+
+// A commitment noticed before it confirmed must still be followed up once it
+// does. On a full node this is the ordinary path, not the unusual one — the
+// memory pool sees almost everything first — so getting it wrong means the
+// outcome of an attack is never reported at all.
+func TestACommitmentSeenEarlyIsStillFollowedUp(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	addChannel(t, h.store, fundingA, store.Relevant)
+	h.run()
+	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
+
+	commitment := commitmentSpending(fundingOutpoint(t, fundingA, 1))
+	h.view.InjectMempoolTx(commitment)
+	h.waitFor("the sighting", func() bool { return len(h.spends()) == 1 })
+
+	// Nothing yet: an unconfirmed commitment has no outputs to watch.
+	watched, err := h.store.ListWatchOutpoints(context.Background(), store.BranchSQ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(watched) != 0 {
+		t.Fatalf("started watching %d outputs before they existed", len(watched))
+	}
+
+	meta := h.view.Extend("confirmed", 1)
+	h.view.PutTransactions(meta.Hash, coinbase(), commitment)
+
+	h.waitFor("the commitment's outputs to be watched", func() bool {
+		got, listErr := h.store.ListWatchOutpoints(context.Background(), store.BranchSQ)
+		return listErr == nil && len(got) == len(commitment.TxOut)
+	})
+
+	// And the answer to it is then found, which is the thing that would have been
+	// lost entirely.
+	justice := justiceSpending(wire.OutPoint{Hash: commitment.TxHash(), Index: 0})
+	second := h.view.Extend("justice", 1)
+	h.view.PutTransactions(second.Hash, coinbase(), justice)
+
+	h.waitFor("the justice transaction", func() bool {
+		for _, sp := range h.spends() {
+			if sp.SpendTxID == justice.TxHash().String() {
+				return sp.Shape == store.ShapeJustice
+			}
+		}
+		return false
+	})
+}

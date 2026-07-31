@@ -261,10 +261,17 @@ func (w *Watcher) recordMatches(
 		}
 
 		if existed {
-			// Seen before. Its status may still need moving on — a spend that was
-			// reorganised out and has landed again — but it is not news.
-			if err := w.confirmIfPending(ctx, id, m, meta, shape); err != nil {
+			// Seen before, but its status may still need moving on: a spend first
+			// noticed in the memory pool, or one that was reorganised out and has
+			// landed again. That counts as something happening, so the pass loop
+			// looks again — the confirmation may have made outputs real that the
+			// same block already spends.
+			changed, err := w.confirmIfPending(ctx, id, m, meta, shape)
+			if err != nil {
 				return fresh, err
+			}
+			if changed {
+				fresh++
 			}
 			continue
 		}
@@ -350,28 +357,38 @@ func (w *Watcher) followCommitment(
 // is back.
 func (w *Watcher) confirmIfPending(
 	ctx context.Context, id int64, m Match, meta chainview.BlockMeta, shape store.SpendShape,
-) error {
+) (bool, error) {
 	wctx, cancel := writeCtx(ctx)
 	defer cancel()
 
 	sp, err := w.store.GetSpend(wctx, id)
 	if err != nil {
-		return fmt.Errorf("reading a spend already recorded: %w", err)
+		return false, fmt.Errorf("reading a spend already recorded: %w", err)
 	}
 	if sp.Status == store.SpendConfirmed && sp.BlockHash == meta.Hash.String() {
-		return nil
+		return false, nil
 	}
 
 	if err := w.store.UpdateSpendStatus(wctx, id, store.SpendConfirmed,
 		meta.Hash.String(), meta.Height, w.now().Unix()); err != nil {
-		return fmt.Errorf("confirming a spend: %w", err)
+		return false, fmt.Errorf("confirming a spend: %w", err)
 	}
 	if sp.Status == store.SpendReorgedOut {
 		w.log.Info("a spend that had been dropped from the other chain is back in a block",
 			slog.Int64("spend_id", id), slog.Int("height", int(meta.Height)))
 	}
+
+	// The outputs become real here, and only here. A commitment first seen
+	// unconfirmed reached storage through the memory pool, which deliberately
+	// starts nothing watching — the outputs did not exist yet. This is the block
+	// saying they do, so it is the moment to start; and on a full node, which
+	// sees the memory pool, this is the *ordinary* path rather than the unusual
+	// one. Missing it meant a commitment noticed early was never followed up,
+	// which is to say the outcome was never reported at all.
+	w.followCommitment(ctx, id, m, sp.Shape)
+
 	w.announce(m, id, meta, shape)
-	return nil
+	return true, nil
 }
 
 // resolveSource settles what a commitment was, after the fact.

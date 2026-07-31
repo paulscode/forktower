@@ -43,3 +43,7 @@ Thumbs.db
 *.swo
 *.bak
 tmp/
+
+# Credentials copied out of the forkbench world. Regenerated with
+# `forkbench ln-credentials`; they belong to a world rebuilt from nothing.
+deploy/forkbench/creds/

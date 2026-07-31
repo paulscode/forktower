@@ -197,3 +197,99 @@ func TestMiningGrowsOneChainOnly(t *testing.T) {
 		t.Error("mining zero blocks was accepted")
 	}
 }
+
+// The scenario this whole project exists for, staged end to end: a channel, a
+// counterparty rolled back to a state it had already revoked, and the commitment
+// it then publishes landing on one chain and not the other.
+//
+// Slow — several minutes, two Bitcoin nodes and two Lightning nodes — and worth
+// every second of it. Everything else about the watcher is checked against
+// transactions this project builds; this is the only thing that checks the world
+// itself behaves the way the daemon assumes.
+func TestABreachOnOneChainOnly(t *testing.T) {
+	ctx := testContext(t)
+
+	if err := commandUp(ctx); err != nil {
+		t.Fatalf("bringing the world up: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := commandDown(context.Background()); err != nil {
+			t.Errorf("removing the world: %v", err)
+		}
+	})
+
+	if err := commandLNUp(ctx); err != nil {
+		t.Fatalf("bringing the Lightning layer up: %v", err)
+	}
+
+	user := lnNodes()[0]
+	channels, err := user.channels(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(channels) != 1 {
+		t.Fatalf("opened %d channels, want 1", len(channels))
+	}
+	fundingTxid, fundingVout, err := channels[0].fundingOutpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Payments before the snapshot and after it. The ones after are what make the
+	// saved state a *revoked* one rather than merely an old one.
+	if err := commandPay(ctx, 2); err != nil {
+		t.Fatalf("paying: %v", err)
+	}
+	if err := commandSnapshotMallory(ctx); err != nil {
+		t.Fatalf("saving the counterparty's state: %v", err)
+	}
+	if err := commandPay(ctx, 2); err != nil {
+		t.Fatalf("paying again: %v", err)
+	}
+
+	if err := commandSplit(ctx); err != nil {
+		t.Fatalf("splitting: %v", err)
+	}
+	if err := commandBreach(ctx, nodeSQ, ""); err != nil {
+		t.Fatalf("staging the breach: %v", err)
+	}
+
+	// The assertion that matters: the funding output is spent on one chain and
+	// untouched on the other. That asymmetry is the entire threat model.
+	sf, sq := newClient(nodes()[0].rpcURL), newClient(nodes()[1].rpcURL)
+
+	spentOnSQ, err := outpointSpentInABlock(ctx, sq, fundingTxid, fundingVout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !spentOnSQ {
+		t.Error("the commitment did not confirm on the chain it was published to")
+	}
+
+	spentOnSF, err := outpointSpentInABlock(ctx, sf, fundingTxid, fundingVout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spentOnSF {
+		t.Error("the commitment confirmed on the user's own chain too, which is not " +
+			"the scenario: the whole point is that their node sees nothing")
+	}
+}
+
+// outpointSpentInABlock reports whether a node has a *confirmed* spend of an
+// outpoint. Confirmed specifically: a transaction sitting in a memory pool is
+// not a fact about the chain, and treating it as one would make this test pass
+// for the wrong reason.
+func outpointSpentInABlock(
+	ctx context.Context, c *client, txid string, vout uint32,
+) (bool, error) {
+	var out *struct {
+		Confirmations int64 `json:"confirmations"`
+	}
+	// A null answer means the output is unspent as far as this node knows;
+	// gettxout ignores the memory pool when asked to.
+	if err := c.call(ctx, "gettxout", []any{txid, vout, false}, &out); err != nil {
+		return false, err
+	}
+	return out == nil, nil
+}

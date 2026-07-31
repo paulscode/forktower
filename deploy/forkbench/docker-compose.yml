@@ -88,12 +88,102 @@ services:
     networks:
       - forkbench
 
+  # Two Lightning nodes, both on the chain the user's own node follows.
+  #
+  # `lnd-user` is the node Forktower is protecting. `lnd-mallory` is the
+  # counterparty, and it is called that because its whole purpose is to be
+  # rolled back to an old channel state and made to publish a commitment it has
+  # already promised not to. That is the attack this software exists to notice,
+  # and there is no honest way to demonstrate it without staging it.
+  #
+  # --noseedbackup means no wallet passphrase and no seed to keep: exactly what
+  # nobody should ever do with real money, and exactly right for a regtest world
+  # that is deleted after every run. --nolisten is not set, because the two need
+  # to reach each other to open a channel at all.
+  lnd-user:
+    image: lightninglabs/lnd:v0.18.5-beta
+    restart: unless-stopped
+    depends_on:
+      sf-node:
+        condition: service_healthy
+    command:
+      - lnd
+      - --noseedbackup
+      - --bitcoin.active
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=sf-node:18443
+      - --bitcoind.rpcuser=forkbench
+      - --bitcoind.rpcpass=forkbench
+      - --bitcoind.zmqpubrawblock=tcp://sf-node:28332
+      - --bitcoind.zmqpubrawtx=tcp://sf-node:28333
+      - --rpclisten=0.0.0.0:10009
+      - --restlisten=0.0.0.0:8080
+      - --listen=0.0.0.0:9735
+      - --tlsextradomain=lnd-user
+      - --alias=user
+      - --trickledelay=50
+      - --debuglevel=info
+      # Confirming a channel in one block keeps the demonstrations short. Nothing
+      # about Forktower depends on the number, and waiting three blocks for every
+      # step of a scripted scenario is time nobody gets back.
+      - --bitcoin.defaultchanconfs=1
+      - --maxpendingchannels=10
+    volumes:
+      - lnd-user-data:/root/.lnd
+    ports:
+      - "127.0.0.1:10009:10009"
+      - "127.0.0.1:8081:8080"
+    networks:
+      - forkbench
+
+  lnd-mallory:
+    image: lightninglabs/lnd:v0.18.5-beta
+    restart: unless-stopped
+    depends_on:
+      sf-node:
+        condition: service_healthy
+    command:
+      - lnd
+      - --noseedbackup
+      - --bitcoin.active
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=sf-node:18443
+      - --bitcoind.rpcuser=forkbench
+      - --bitcoind.rpcpass=forkbench
+      - --bitcoind.zmqpubrawblock=tcp://sf-node:28332
+      - --bitcoind.zmqpubrawtx=tcp://sf-node:28333
+      - --rpclisten=0.0.0.0:10009
+      - --restlisten=0.0.0.0:8080
+      - --listen=0.0.0.0:9735
+      - --tlsextradomain=lnd-mallory
+      - --alias=mallory
+      - --trickledelay=50
+      - --debuglevel=info
+      - --bitcoin.defaultchanconfs=1
+      - --maxpendingchannels=10
+    volumes:
+      - lnd-mallory-data:/root/.lnd
+      # Where a saved channel state is kept. Its own volume, so that saving it
+      # does not mean writing a copy of the channel database into the directory
+      # being copied — and so `forkbench down` takes it away with everything else.
+      - lnd-mallory-snapshot:/snapshot
+    ports:
+      - "127.0.0.1:10010:10009"
+      - "127.0.0.1:8082:8080"
+    networks:
+      - forkbench
+
 # Named volumes rather than bind mounts: `forkbench down` removes them, and a
 # world that cannot be wiped cleanly is a world that accumulates the state of
 # every experiment anyone has ever run in it.
 volumes:
   sf-data:
   sq-data:
+  lnd-user-data:
+  lnd-mallory-data:
+  lnd-mallory-snapshot:
 
 networks:
   forkbench:

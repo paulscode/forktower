@@ -28,6 +28,19 @@ Usage:
   forkbench status                 show where both chains are
   forkbench down                   remove the world and its state
 
+Lightning:
+  forkbench ln-up                  two Lightning nodes with a channel between them
+  forkbench ln-status              show the Lightning nodes and their channels
+  forkbench ln-credentials -out D  copy a node's certificate and read-only
+                                   macaroon out, so Forktower can read it
+  forkbench pay -times N           send N payments, advancing the channel state
+  forkbench snapshot-mallory       save the counterparty's channel state
+  forkbench restore-mallory        put the counterparty back to that state
+  forkbench breach -branch sq      publish the counterparty's old commitment,
+                                   on one chain only
+  forkbench coop-close             close the channel the agreeable way
+  forkbench force-close -node user close it unilaterally
+
 Flags:
   -forktower URL   ask a running Forktower what it makes of the world
                    (default http://127.0.0.1:8330; empty to skip)
@@ -55,6 +68,11 @@ func run(args []string) error {
 			"base URL of a running Forktower, or empty to skip")
 		nodeName = flags.String("node", nodeSF, "which chain to mine on: sf or sq")
 		blocks   = flags.Int("blocks", 1, "how many blocks to mine")
+		times    = flags.Int("times", 1, "how many payments to send")
+		branch   = flags.String("branch", nodeSQ, "which chain to publish on: sf or sq")
+		lnName   = flags.String("ln-node", lnUser, "which Lightning node: user or mallory")
+		outDir   = flags.String("fixtures", "", "write the transactions seen to this directory")
+		credsDir = flags.String("out", "", "where to write a node's credentials")
 	)
 	if err := flags.Parse(rest); err != nil {
 		return err
@@ -76,6 +94,24 @@ func run(args []string) error {
 		return commandStatus(ctx, *forktowerURL)
 	case "down":
 		return commandDown(ctx)
+	case "ln-up":
+		return commandLNUp(ctx)
+	case "ln-status":
+		return commandLNStatus(ctx)
+	case "ln-credentials":
+		return commandLNCredentials(ctx, *lnName, *credsDir)
+	case "pay":
+		return commandPay(ctx, *times)
+	case "snapshot-mallory":
+		return commandSnapshotMallory(ctx)
+	case "restore-mallory":
+		return commandRestoreMallory(ctx)
+	case "breach":
+		return commandBreach(ctx, *branch, *outDir)
+	case "coop-close":
+		return commandCoopClose(ctx, *outDir)
+	case "force-close":
+		return commandForceClose(ctx, *lnName, *outDir)
 	case "version", "-version", "--version":
 		//nolint:forbidigo // a command's answer, not a log line
 		fmt.Println("forkbench " + version)

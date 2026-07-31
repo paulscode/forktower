@@ -225,13 +225,31 @@ func (c *client) mine(ctx context.Context, blocks int) ([]string, error) {
 	return hashes, nil
 }
 
+// tipAge is how long ago a block claims to have been made.
+//
+// The miner's claim, not a measurement — which is all that is wanted here,
+// because it is the same claim LND reads when deciding whether it has caught up.
+func (c *client) tipAge(ctx context.Context, hash string) (time.Duration, error) {
+	var header struct {
+		Time int64 `json:"time"`
+	}
+	if err := c.call(ctx, "getblockheader", []any{hash}, &header); err != nil {
+		return 0, err
+	}
+	return time.Since(time.Unix(header.Time, 0)), nil
+}
+
+// composeVerb is docker's subcommand for all of this. A constant because it
+// appears in every one of the four places this tool shells out.
+const composeVerb = "compose"
+
 // compose runs a docker compose command against the forkbench world.
 func compose(ctx context.Context, args ...string) error {
 	file, err := composeFile()
 	if err != nil {
 		return err
 	}
-	full := append([]string{"compose", "-f", file}, args...)
+	full := append([]string{composeVerb, "-f", file}, args...)
 
 	// Fixed command, and the only variable among the arguments is the compose
 	// file this tool located itself.

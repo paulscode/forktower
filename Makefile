@@ -25,7 +25,8 @@ GOLANGCI   ?= golangci-lint
 .DEFAULT_GOAL := build
 .PHONY: build test lint fmt integration run-dev cover-html icons icons-check \
         forkbench-up forkbench-split forkbench-status forkbench-down \
-        check check-boundary cover-check cover tidy-check vuln tidy clean help
+        forkbench-ln-up forkbench-ln-status forkbench-fixtures demo-s1-detect \
+        check check-boundary check-artifacts cover-check cover tidy-check vuln tidy clean help
 
 ## check: everything that must pass before a commit — the only gate there is
 #
@@ -49,7 +50,7 @@ test:
 	go test -race -count=1 ./...
 
 ## lint: static analysis, formatting check, and the documentation boundary check
-lint: check-boundary
+lint: check-boundary check-artifacts
 	$(GOLANGCI) config verify
 	@# `run` does not check formatters; `fmt --diff` is the gate that does, and
 	@# it exits non-zero when a file would be reformatted.
@@ -92,6 +93,10 @@ tidy-check:
 check-boundary:
 	@./scripts/check-boundary.sh
 
+## check-artifacts: no compiled binary may be committed
+check-artifacts:
+	@./scripts/check-artifacts.sh
+
 ## cover-check: enforce the per-package coverage floors
 cover-check:
 	@./scripts/check-coverage.sh
@@ -133,6 +138,59 @@ forkbench-status: build
 ## forkbench-down: tear it down again, including its state
 forkbench-down: build
 	$(BIN_DIR)/forkbench down
+
+## forkbench-ln-up: add two Lightning nodes with a channel between them
+forkbench-ln-up: build
+	$(BIN_DIR)/forkbench ln-up
+
+## forkbench-ln-status: show the Lightning nodes and their channels
+forkbench-ln-status: build
+	$(BIN_DIR)/forkbench ln-status
+
+## demo-s1-detect: stage the attack this whole project is about, end to end
+#
+# A channel is opened and paid through, the counterparty is rolled back to an
+# older state, the chains are split, and the counterparty publishes the
+# commitment it had already promised not to — on the other chain only. On the
+# chain the user's own node follows, nothing happened.
+#
+# Start Forktower first (`make run-dev` in another terminal) and watch it notice.
+demo-s1-detect: build
+	$(BIN_DIR)/forkbench up
+	$(BIN_DIR)/forkbench ln-up
+	$(BIN_DIR)/forkbench pay -times 3
+	$(BIN_DIR)/forkbench snapshot-mallory
+	$(BIN_DIR)/forkbench pay -times 3
+	$(BIN_DIR)/forkbench split
+	$(BIN_DIR)/forkbench breach -branch sq
+
+## forkbench-fixtures: rebuild the real closing transactions the classifier is tested against
+#
+# Three worlds, because each scenario needs a channel of its own and a channel
+# can only be closed once. Slow, and rarely needed: run it when the Lightning
+# implementation is upgraded, or when the classifier is changed and the crafted
+# transactions alone are not enough to trust it.
+FIXTURES := internal/watcher/testdata
+forkbench-fixtures: build
+	$(BIN_DIR)/forkbench down
+	$(BIN_DIR)/forkbench up
+	$(BIN_DIR)/forkbench ln-up
+	$(BIN_DIR)/forkbench pay -times 3
+	$(BIN_DIR)/forkbench snapshot-mallory
+	$(BIN_DIR)/forkbench pay -times 3
+	$(BIN_DIR)/forkbench split
+	$(BIN_DIR)/forkbench breach -branch sq -fixtures $(FIXTURES)
+	$(BIN_DIR)/forkbench down
+	$(BIN_DIR)/forkbench up
+	$(BIN_DIR)/forkbench ln-up
+	$(BIN_DIR)/forkbench pay -times 2
+	$(BIN_DIR)/forkbench force-close -ln-node user -fixtures $(FIXTURES)
+	$(BIN_DIR)/forkbench down
+	$(BIN_DIR)/forkbench up
+	$(BIN_DIR)/forkbench ln-up
+	$(BIN_DIR)/forkbench pay -times 2
+	$(BIN_DIR)/forkbench coop-close -fixtures $(FIXTURES)
+	@printf '\n  fixtures rebuilt in %s\n' "$(FIXTURES)"
 
 ## icons: regenerate the shipped icons from the source art
 #
