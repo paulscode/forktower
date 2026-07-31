@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/config"
+	"github.com/paulscode/forktower/internal/responder/mirror"
 	"github.com/paulscode/forktower/internal/responder/tower"
 	"github.com/paulscode/forktower/internal/store"
 )
@@ -136,4 +138,49 @@ func towerReader(kind store.TowerKind, conf config.TowerInstance) (tower.Reader,
 	default:
 		return nil, fmt.Errorf("%q is not a watchtower kind", kind)
 	}
+}
+
+// buildMirrors sets up copying transactions between the two chains.
+//
+// Two runners, one each way, because the rules differ sharply between the
+// directions: away from the user's own chain the mirror carries closes and
+// sweeps and justice; back towards it, only a close both parties agreed to.
+// A single engine serving both would need a flag at every decision.
+func (a *App) buildMirrors(log *slog.Logger) error {
+	directions := []struct {
+		from, to store.Branch
+		view     chainview.ChainView
+		target   chainview.ChainView
+	}{
+		{store.BranchSF, store.BranchSQ, a.sf, a.sq},
+		{store.BranchSQ, store.BranchSF, a.sq, a.sf},
+	}
+
+	for _, d := range directions {
+		observer, err := mirror.NewObserver(mirror.ObserverOptions{
+			Store: a.store, View: d.view, From: d.from, To: d.to,
+			Log: log.With(slog.String("component", "mirror")),
+		})
+		if err != nil {
+			return fmt.Errorf("setting up copying from %s: %w", d.from, err)
+		}
+
+		sender, err := mirror.New(mirror.Options{
+			Store: a.store, Target: d.target, Branch: d.to,
+			Log: log.With(slog.String("component", "mirror")),
+		})
+		if err != nil {
+			return fmt.Errorf("setting up copying to %s: %w", d.to, err)
+		}
+
+		runner, err := mirror.NewRunner(mirror.RunnerOptions{
+			Observer: observer, Mirror: sender, Bus: a.bus, From: d.from,
+			Log: log.With(slog.String("component", "mirror")),
+		})
+		if err != nil {
+			return fmt.Errorf("setting up copying from %s: %w", d.from, err)
+		}
+		a.mirrors = append(a.mirrors, runner)
+	}
+	return nil
 }

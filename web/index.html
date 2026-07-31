@@ -74,6 +74,29 @@
         on the other chain.</p>
       <ul id="details-spends" class="detail-list"></ul>
       <ul id="details-deadlines" class="detail-list"></ul>
+
+      <div id="mirror-section" class="hidden">
+        <h3>Copying between the chains</h3>
+        <p class="quiet" id="mirror-note"></p>
+        <ul id="mirror-list" class="detail-list"></ul>
+      </div>
+    </details>
+
+    <details class="details" id="funding-optin">
+      <summary>Copy a channel's funding transaction</summary>
+      <p class="warn-note">
+        This is the one setting here that puts money at risk rather than
+        protecting it. Copying a channel's funding transaction to the other
+        chain creates money there that is not there now — and once it is there,
+        that channel can be closed against you on both chains instead of one.
+      </p>
+      <p class="quiet">
+        The ordinary advice during a split is not to open channels, rather than
+        to make the ones you have span both chains. Leave this off unless you
+        know why you want it.
+      </p>
+      <p class="quiet" id="funding-optin-empty">You have no channels to choose from.</p>
+      <ul id="funding-optin-list" class="detail-list"></ul>
     </details>
   </section>
 

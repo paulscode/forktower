@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,16 +16,47 @@ import (
 )
 
 // fakeChain takes transactions, or refuses them however a test needs.
+//
+// Guarded because the runner tests drive it from its own goroutine while the
+// test reads what arrived. Without the lock the race detector is right to
+// complain, and the complaint would be about the test rather than the code.
 type fakeChain struct {
+	mu   sync.Mutex
 	err  error
 	sent []string
 }
 
 func (f *fakeChain) Broadcast(_ context.Context, tx *wire.MsgTx) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if tx != nil {
 		f.sent = append(f.sent, tx.TxHash().String())
 	}
 	return f.err
+}
+
+// refuse sets what the chain says next.
+func (f *fakeChain) refuse(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
+// took is how many transactions it has been given.
+func (f *fakeChain) took() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.sent)
+}
+
+// lastTook is the id of the most recent one, or empty.
+func (f *fakeChain) lastTook() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.sent) == 0 {
+		return ""
+	}
+	return f.sent[len(f.sent)-1]
 }
 
 type mirrorHarness struct {
@@ -137,7 +169,7 @@ func TestATransactionTheOtherChainAcceptsIsRecordedAsAccepted(t *testing.T) {
 	if len(out) != 1 || out[0].State != store.MirrorAccepted {
 		t.Fatalf("outcomes = %+v", out)
 	}
-	if len(h.chain.sent) != 1 || h.chain.sent[0] != tx.TxHash().String() {
+	if h.chain.took() != 1 || h.chain.lastTook() != tx.TxHash().String() {
 		t.Errorf("the wrong bytes were sent: %v", h.chain.sent)
 	}
 	if got := h.decision(id); got.State != store.MirrorAccepted || got.Attempts != 1 {
@@ -153,7 +185,7 @@ func TestAFeeTooLowForTheOtherChainIsExplainedRatherThanFixed(t *testing.T) {
 	h := newMirrorHarness(t)
 	tx := realClose(t, "coop_close.hex")
 	id := h.queue(tx)
-	h.chain.err = errors.New("min relay fee not met, 200 < 1100")
+	h.chain.refuse(errors.New("min relay fee not met, 200 < 1100"))
 
 	out, err := h.m.Pass(context.Background())
 	if err != nil {
@@ -203,7 +235,7 @@ func TestARefusalThatCannotChangeIsGivenUpOnAndSaidSo(t *testing.T) {
 		h := newMirrorHarness(t)
 		tx := realClose(t, "coop_close.hex")
 		id := h.queue(tx)
-		h.chain.err = errors.New(tc.nodeSaid)
+		h.chain.refuse(errors.New(tc.nodeSaid))
 
 		out, err := h.m.Pass(context.Background())
 		if err != nil {
@@ -237,18 +269,18 @@ func TestARefusedTransactionIsNotRetriedImmediately(t *testing.T) {
 	h := newMirrorHarness(t)
 	tx := realClose(t, "coop_close.hex")
 	h.queue(tx)
-	h.chain.err = errors.New("min relay fee not met")
+	h.chain.refuse(errors.New("min relay fee not met"))
 
 	if _, err := h.m.Pass(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	sentAfterFirst := len(h.chain.sent)
+	sentAfterFirst := h.chain.took()
 
 	// Straight away: nothing.
 	if _, err := h.m.Pass(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.chain.sent) != sentAfterFirst {
+	if h.chain.took() != sentAfterFirst {
 		t.Error("a refused transaction was retried immediately")
 	}
 
@@ -257,9 +289,9 @@ func TestARefusedTransactionIsNotRetriedImmediately(t *testing.T) {
 	if _, err := h.m.Pass(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.chain.sent) != sentAfterFirst+1 {
+	if h.chain.took() != sentAfterFirst+1 {
 		t.Errorf("after the wait, sent %d times, want %d",
-			len(h.chain.sent), sentAfterFirst+1)
+			h.chain.took(), sentAfterFirst+1)
 	}
 }
 
@@ -269,7 +301,7 @@ func TestEventuallyItStopsTryingAndSaysWhy(t *testing.T) {
 	h := newMirrorHarness(t)
 	tx := realClose(t, "coop_close.hex")
 	id := h.queue(tx)
-	h.chain.err = errors.New("min relay fee not met")
+	h.chain.refuse(errors.New("min relay fee not met"))
 
 	for range MaxAttempts + 2 {
 		if _, err := h.m.Pass(context.Background()); err != nil {
@@ -290,12 +322,12 @@ func TestEventuallyItStopsTryingAndSaysWhy(t *testing.T) {
 		t.Errorf("tried %d times, want no more than %d", got.Attempts, MaxAttempts)
 	}
 	// And it stays given up on rather than starting over.
-	before := len(h.chain.sent)
+	before := h.chain.took()
 	h.clock.Add(int64(MaxDelay.Seconds()) + 1)
 	if _, err := h.m.Pass(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.chain.sent) != before {
+	if h.chain.took() != before {
 		t.Error("a transaction that had been given up on was tried again")
 	}
 }
@@ -307,7 +339,7 @@ func TestAnAttemptSurvivesARestart(t *testing.T) {
 	h := newMirrorHarness(t)
 	tx := realClose(t, "coop_close.hex")
 	id := h.queue(tx)
-	h.chain.err = errors.New("min relay fee not met")
+	h.chain.refuse(errors.New("min relay fee not met"))
 
 	if _, err := h.m.Pass(context.Background()); err != nil {
 		t.Fatal(err)
@@ -338,7 +370,7 @@ func TestAnUnrecognisedRefusalIsPassedOnInTheNodesOwnWords(t *testing.T) {
 	h := newMirrorHarness(t)
 	tx := realClose(t, "coop_close.hex")
 	h.queue(tx)
-	h.chain.err = errors.New("something nobody has seen before")
+	h.chain.refuse(errors.New("something nobody has seen before"))
 
 	out, err := h.m.Pass(context.Background())
 	if err != nil {
@@ -373,7 +405,7 @@ func TestARefusedDecisionIsNeverBroadcast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 0 || len(h.chain.sent) != 0 {
+	if len(out) != 0 || h.chain.took() != 0 {
 		t.Errorf("a refused transaction was offered to the other chain: %+v %v",
 			out, h.chain.sent)
 	}
@@ -434,7 +466,7 @@ func TestATransactionWhoseBytesAreGoneIsGivenUpOn(t *testing.T) {
 	if h.decision(id).State != store.MirrorAbandoned {
 		t.Error("it was left waiting to be retried forever")
 	}
-	if len(h.chain.sent) != 0 {
+	if h.chain.took() != 0 {
 		t.Error("something was sent despite having no bytes")
 	}
 }

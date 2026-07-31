@@ -39,6 +39,7 @@ type Observer struct {
 // read fail without a broken database.
 type Store interface {
 	watcher.Source
+	RecordSpend(ctx context.Context, sp store.Spend) (int64, bool, error)
 	RecordMirrorDecision(ctx context.Context, d store.MirrorDecision) (int64, bool, error)
 	ListSpends(ctx context.Context, f store.SpendFilter) ([]store.Spend, error)
 }
@@ -166,6 +167,24 @@ func (o *Observer) consider(
 	lifted, err := Lift(m, m.Tx, facts.Facts)
 	if err != nil {
 		return Found{}, err
+	}
+
+	// The transaction's bytes are recorded before the decision about them.
+	//
+	// **Without this the whole arm is dead**, and quietly: the mirror reads the
+	// raw transaction back from the spend record when it comes to send it — which
+	// may be much later, across restarts and across a fee market changing — and
+	// on this chain nothing else writes one. The detection engine watches the
+	// *other* chain. The schema has carried `spend_tx_hex` since it was written,
+	// with a comment saying it is for the mirror; this is the writer it meant.
+	if _, _, err := o.store.RecordSpend(ctx, store.Spend{
+		Branch: o.from, ChannelID: lifted.ChannelID,
+		OutpointTxID: lifted.OutpointTxID, OutpointVout: lifted.OutpointVout,
+		SpendTxID: lifted.TxID, SpendTxHex: lifted.RawHex,
+		Shape: lifted.Shape, Status: store.SpendConfirmed,
+		BlockHeight: height, FirstSeenAt: at, UpdatedAt: at,
+	}); err != nil {
+		return Found{}, fmt.Errorf("recording the transaction to copy: %w", err)
 	}
 
 	decision := Decision(lifted, o.from, o.to, facts.fundingOptIn, at)

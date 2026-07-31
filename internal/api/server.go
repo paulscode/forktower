@@ -188,6 +188,9 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/spends", s.guard(s.handleSpends))
 	s.mux.Handle("GET /api/v1/deadlines", s.guard(s.handleDeadlines))
 	s.mux.Handle("GET /api/v1/towers", s.guard(s.handleTowers))
+	s.mux.Handle("GET /api/v1/mirror", s.guard(s.handleMirror))
+	s.mux.Handle("POST /api/v1/channels/{id}/mirror-funding",
+		s.guard(s.handleChannelMirrorOptIn))
 	s.mux.Handle("GET /api/v1/alerts", s.guard(s.handleAlerts))
 	s.mux.Handle("POST /api/v1/alerts/{id}/ack", s.guard(s.handleAckAlert))
 	s.mux.Handle("POST /api/v1/alerts/test", s.guard(s.handleTestAlerts))

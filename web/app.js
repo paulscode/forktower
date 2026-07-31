@@ -589,6 +589,83 @@ function renderTowerCommand(uri) {
 }
 
 // ---------------------------------------------------------------------------
+// Copying between the chains.
+// ---------------------------------------------------------------------------
+
+// What the mirror decided about each of the user's transactions.
+//
+// **The refusals are shown, and they are the larger half.** Most of what the
+// mirror sees it declines — on purpose, because copying the wrong thing puts
+// money at risk on a chain where it was not at risk. A page showing only the
+// copied ones would look like a feature that barely does anything, and would
+// leave "why was that not copied?" unanswerable.
+function renderMirror(payload) {
+  const section = el('mirror-section');
+  const list = el('mirror-list');
+  const decisions = (payload && payload.decisions) || [];
+  const summary = (payload && payload.summary) || {};
+
+  show(section, decisions.length > 0);
+  clear(list);
+  setText(el('mirror-note'), summary.note || '');
+
+  for (const decision of decisions) {
+    const display = decision.display || {};
+    const item = make('li', display.needs_you ? 'at-risk' : '');
+
+    item.appendChild(make('span', 'detail-what', display.what || ''));
+    if (display.short_txid) {
+      item.appendChild(make('span', 'detail-id', display.short_txid));
+    }
+    list.appendChild(item);
+  }
+}
+
+// The one control on this page that creates exposure rather than reducing it.
+//
+// Rendered as a list of channels with a switch each, never as a single global
+// setting: the decision is about one channel's money, and a control that turned
+// it on for everything at once would be a control somebody flips without
+// thinking about any particular channel.
+function renderFundingOptIn(rows) {
+  const list = el('funding-optin-list');
+  const channels = rows || [];
+
+  clear(list);
+  show(el('funding-optin-empty'), channels.length === 0);
+
+  for (const channel of channels) {
+    const display = channel.display || {};
+    const item = make('li', '');
+
+    const label = make('label', 'optin-row');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = Boolean(channel.mirror_funding_opt_in);
+    box.addEventListener('change', () => setFundingOptIn(channel.id, box.checked, box));
+
+    label.appendChild(box);
+    label.appendChild(make('span', '', display.partner || 'a channel'));
+    item.appendChild(label);
+    item.appendChild(make('span', 'quiet', formatSats(channel.capacity_sat)));
+    list.appendChild(item);
+  }
+}
+
+// setFundingOptIn records the decision, and puts the switch back if it did not
+// take. A control that looks changed and did not is worse than one that refuses
+// visibly.
+async function setFundingOptIn(channelId, enabled, box) {
+  try {
+    await api('POST', '/api/v1/channels/' + channelId + '/mirror-funding',
+      { enabled });
+  } catch (err) {
+    box.checked = !enabled;
+    setText(el('connection'), 'That change did not save. ' + (err.message || ''));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Details.
 // ---------------------------------------------------------------------------
 
@@ -696,6 +773,10 @@ async function refresh() {
     const towers = await api('GET', '/api/v1/towers');
     renderTowers(towers);
 
+    const mirror = await api('GET', '/api/v1/mirror');
+    renderMirror(mirror);
+    renderFundingOptIn(channels);
+
     const spends = await api('GET', '/api/v1/spends');
     const deadlines = await api('GET', '/api/v1/deadlines');
     renderDetails(spends, deadlines);
@@ -753,7 +834,8 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined' && window.d
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderHeadline, renderReadiness, renderAlerts, renderTimeline, renderAdvanced,
-    renderChannels, renderDetails, renderTowers, renderStandDown, formatSats,
+    renderChannels, renderDetails, renderTowers, renderMirror,
+    renderFundingOptIn, renderStandDown, formatSats,
     describeTestResults, formatDuration, formatPercent, setText, KNOWN_STATES,
     refresh, api,
   };

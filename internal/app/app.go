@@ -24,6 +24,7 @@ import (
 	"github.com/paulscode/forktower/internal/registry"
 	"github.com/paulscode/forktower/internal/registry/cln"
 	"github.com/paulscode/forktower/internal/registry/lnd"
+	"github.com/paulscode/forktower/internal/responder/mirror"
 	"github.com/paulscode/forktower/internal/responder/tower"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/standdown"
@@ -61,6 +62,7 @@ type App struct {
 	watcher   *watcher.Watcher
 	deadline  *deadline.Engine
 	wardens   []*tower.Warden
+	mirrors   []*mirror.Runner
 	standDown *standdown.Switch
 	alerter   *alert.Alerter
 	timeline  *store.TimelineSubscriber
@@ -239,6 +241,15 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 	// engine because nothing subscribes here — a warden only publishes — so its
 	// place in the order is a matter of reading rather than of correctness.
 	if err := a.buildWardens(cfg, log, now); err != nil {
+		a.closeOnFailure()
+		return nil, err
+	}
+
+	// Copying transactions between the chains. Built unconditionally: the policy
+	// declines almost everything by default, and the useful half of what this
+	// records is the refusals — which a user can only be shown if something was
+	// there to decline them.
+	if err := a.buildMirrors(log); err != nil {
 		a.closeOnFailure()
 		return nil, err
 	}
@@ -426,6 +437,9 @@ func (a *App) Run(ctx context.Context) error {
 	group.Go(func() error { return a.deadline.Run(groupCtx) })
 	for _, w := range a.wardens {
 		group.Go(func() error { return w.Run(groupCtx) })
+	}
+	for _, m := range a.mirrors {
+		group.Go(func() error { return m.Run(groupCtx) })
 	}
 
 	group.Go(func() error {

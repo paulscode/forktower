@@ -710,3 +710,39 @@ func TestATargetOfAnUnrecognisedKindIsNotClassified(t *testing.T) {
 		t.Error("a transaction of an unrecognised kind was queued to be copied")
 	}
 }
+
+// **Without this the whole arm is dead, and quietly.** The mirror reads the raw
+// transaction back from the spend record when it comes to send it — possibly
+// much later, across restarts — and on the chain the user's own node follows
+// nothing else writes one. The detection engine watches the other chain.
+func TestTheTransactionsBytesAreStoredSoTheyCanBeSentLater(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	tx := realClose(t, "coop_close.hex")
+	h.channelSpending(tx)
+
+	found := h.scan(tx)
+	if len(found) != 1 {
+		t.Fatalf("found %d transactions", len(found))
+	}
+
+	spends, err := h.store.ListSpends(context.Background(), store.SpendFilter{
+		Branch: store.BranchSF,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spends) != 1 {
+		t.Fatalf("the transaction's bytes were not stored: %+v", spends)
+	}
+	if spends[0].SpendTxHex != found[0].Lifted.RawHex {
+		t.Error("the stored bytes differ from what was lifted")
+	}
+	if spends[0].SpendTxID != tx.TxHash().String() {
+		t.Errorf("the wrong transaction was stored: %q", spends[0].SpendTxID)
+	}
+	// And on the chain it was found on, not the one it is going to.
+	if spends[0].Branch != store.BranchSF {
+		t.Errorf("recorded against %q, want the chain it was observed on", spends[0].Branch)
+	}
+}

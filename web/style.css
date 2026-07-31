@@ -300,3 +300,23 @@ footer { max-width: 46rem; margin: 0 auto; }
   white-space: pre-wrap;
   font-size: 0.9em;
 }
+
+/* The funding opt-in. Styled to be read before it is clicked: this is the one
+   control here that puts money at risk rather than protecting it. */
+.warn-note {
+  border-left: 3px solid var(--bad, #c62828);
+  padding: 0.4rem 0 0.4rem 0.75rem;
+  margin: 0 0 0.6rem;
+}
+
+.optin-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.detail-list li.at-risk {
+  border-left: 3px solid var(--bad, #c62828);
+  padding-left: 0.5rem;
+}

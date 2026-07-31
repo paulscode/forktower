@@ -39,8 +39,12 @@ type Channel struct {
 	OpenHeight  int32  `json:"open_height,omitempty"`
 	SCID        string `json:"scid,omitempty"`
 	CloseState  string `json:"close_state"`
-	CloseTxID   string `json:"close_txid,omitempty"`
-	CloseHeight int32  `json:"close_height,omitempty"`
+	// MirrorFundingOptIn is the user's decision to copy this channel's funding
+	// transaction to the other chain. The one setting here that creates exposure
+	// rather than reducing it, so it is carried per channel and never inferred.
+	MirrorFundingOptIn bool   `json:"mirror_funding_opt_in"`
+	CloseTxID          string `json:"close_txid,omitempty"`
+	CloseHeight        int32  `json:"close_height,omitempty"`
 
 	Relevance       string `json:"relevance"`
 	RelevanceReason string `json:"relevance_reason,omitempty"`
@@ -181,8 +185,9 @@ func (s *Server) renderChannel(
 		PeerPubkey: c.PeerPubkey, PeerAlias: c.PeerAlias,
 		OpenHeight: c.OpenHeight, SCID: c.SCID,
 		CloseState: string(c.CloseState), CloseTxID: c.CloseTxID,
-		CloseHeight: c.CloseHeight,
-		Relevance:   string(c.Relevance), RelevanceReason: c.RelevanceReason,
+		MirrorFundingOptIn: c.MirrorFundingOptIn,
+		CloseHeight:        c.CloseHeight,
+		Relevance:          string(c.Relevance), RelevanceReason: c.RelevanceReason,
 		UpdatedAt: c.UpdatedAt,
 	}
 

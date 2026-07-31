@@ -628,3 +628,93 @@ test('a hostile reason from a tower stays literal text', () => {
   assert.ok(textOf(byID['towers']).includes(HOSTILE),
     'the hostile string was not rendered as text');
 });
+
+// **The refusals are the larger half and they are shown.** A page listing only
+// what was copied would look like a feature that barely does anything, and would
+// leave "why was that not copied?" with no answer.
+test('the mirror shows what was refused and why', () => {
+  app.renderMirror({
+    summary: { copied: 1, refused: 2, waiting: 0, needs_you: 0, note: '' },
+    decisions: [
+      { display: { what: 'Copied to the other chain.', short_txid: 'aa…bb', copied: true } },
+      {
+        display: {
+          what: 'Not copied — the other party closed this channel on this chain. '
+            + 'Copying that would put your money at risk there.',
+          short_txid: 'cc…dd', refused: true,
+        },
+      },
+    ],
+  });
+
+  const text = textOf(byID['mirror-list']);
+  assert.ok(text.includes('Copied to the other chain'), 'the copied one was not shown');
+  assert.ok(text.includes('Not copied'), 'the refusal was not shown');
+  assert.ok(text.includes('at risk there'), 'the reason for refusing was not shown');
+});
+
+// Something that needs the user is marked, because nothing further will happen
+// on its own.
+test('a transaction that could not be copied is marked', () => {
+  app.renderMirror({
+    summary: { needs_you: 1, note: 'Some transactions could not be copied.' },
+    decisions: [{
+      display: {
+        what: 'Could not be copied to the other chain. Forktower has stopped trying.',
+        short_txid: 'ee…ff', needs_you: true,
+      },
+    }],
+  });
+
+  assert.ok(byID['mirror-list'].children[0].className.includes('at-risk'),
+    'a transaction needing the user was not marked');
+  assert.ok(textOf(byID['mirror-note']).includes('could not be copied'),
+    'the summary line was not shown');
+});
+
+test('nothing to copy hides the section rather than showing an empty heading', () => {
+  app.renderMirror({ summary: {}, decisions: [] });
+  assert.ok(byID['mirror-section'].className.includes('hidden'),
+    'the section was shown with nothing in it');
+});
+
+test('a hostile reason from the mirror stays literal text', () => {
+  app.renderMirror({
+    summary: {},
+    decisions: [{ display: { what: 'Not copied — ' + HOSTILE, short_txid: 'a…b' } }],
+  });
+  assert.ok(textOf(byID['mirror-list']).includes(HOSTILE),
+    'the hostile string was not rendered as text');
+});
+
+// The opt-in is per channel, never global: the decision is about one channel's
+// money, and one switch for everything is a switch somebody flips without
+// thinking about any particular channel.
+test('the funding opt-in is offered per channel and reflects what is stored', () => {
+  app.renderFundingOptIn([
+    { id: 1, capacity_sat: 2100000, mirror_funding_opt_in: false, display: { partner: 'ACINQ' } },
+    { id: 2, capacity_sat: 500000, mirror_funding_opt_in: true, display: { partner: 'a friend' } },
+  ]);
+
+  const list = byID['funding-optin-list'];
+  assert.strictEqual(list.children.length, 2, 'not one row per channel');
+  assert.ok(textOf(list).includes('ACINQ'), 'the partner was not named');
+  assert.ok(byID['funding-optin-empty'].className.includes('hidden'),
+    'the empty note was shown alongside channels');
+});
+
+test('with no channels the opt-in says so rather than sitting empty', () => {
+  app.renderFundingOptIn([]);
+  assert.ok(!byID['funding-optin-empty'].className.includes('hidden'),
+    'the empty note was hidden');
+  assert.strictEqual(byID['funding-optin-list'].children.length, 0,
+    'rows were rendered with no channels');
+});
+
+test('a hostile partner name in the opt-in stays literal text', () => {
+  app.renderFundingOptIn([
+    { id: 1, capacity_sat: 1, mirror_funding_opt_in: false, display: { partner: HOSTILE } },
+  ]);
+  assert.ok(textOf(byID['funding-optin-list']).includes(HOSTILE),
+    'the hostile string was not rendered as text');
+});
