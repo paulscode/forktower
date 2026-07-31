@@ -97,7 +97,15 @@ type Progress struct {
 	// StalledAt is the height it is stuck on, and Why is safe to show.
 	StalledAt int32
 	Why       string
+
+	// RescanNext and RescanTarget bound a catch-up sweep of blocks behind the
+	// high-water mark. Both zero when there is nothing to catch up on.
+	RescanNext   int32
+	RescanTarget int32
 }
+
+// Rescanning reports whether there is history still being caught up on.
+func (p Progress) Rescanning() bool { return p.RescanTarget > 0 && p.RescanNext <= p.RescanTarget }
 
 // Progressing reports whether scanning is moving. False also before the first
 // block is processed, which is honest: nothing has been scanned yet.
@@ -124,11 +132,21 @@ type Watcher struct {
 	// channel that arrives during startup is not lost between wiring up and being
 	// scheduled.
 	events <-chan bus.Event
+	// nudge wakes the loop when something outside it queues work. Without it a
+	// sweep asked for from the dashboard would sit until the next block, which on
+	// this chain can be a long time.
+	nudge chan struct{}
 
 	mu       sync.Mutex
 	ws       WatchSet
 	last     blockRef
 	progress Progress
+	// sweep is the range of blocks behind the high-water mark still to be
+	// looked at, and blockedSweep says it hit something it could not read. The
+	// sweep is retried when the next block arrives rather than immediately, so a
+	// backend that cannot answer is not asked a thousand times a second.
+	sweep        sweep
+	blockedSweep bool
 	// pausedNoted stops the "watching is paused" line repeating on every tip.
 	pausedNoted bool
 }
@@ -182,6 +200,7 @@ func New(
 		cfg:    cfg.withDefaults(),
 		now:    now,
 		log:    log,
+		nudge:  make(chan struct{}, 1),
 		events: b.Subscribe(SubscriberName,
 			bus.KindChannelUpserted, bus.KindChannelClosedSF, bus.KindSplitStateChanged),
 	}, nil
@@ -225,20 +244,15 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 
 	for {
+		// Anything waiting is dealt with first. A new block matters more than
+		// catching up on old ones, and an event may change what the catch-up is
+		// even looking for.
 		select {
 		case <-ctx.Done():
 			return nil
-
-		case _, ok := <-w.events:
-			if !ok {
-				w.events = nil
-				continue
-			}
-			// Any of these can change what must be watched: a new channel, a close,
-			// or a split that re-classified every one of them. Rebuilding is cheap
-			// and idempotent, so it is not worth working out which.
-			w.rebuild(ctx)
-
+		case e, ok := <-w.events:
+			w.onEvent(ctx, e, ok)
+			continue
 		case tip, ok := <-tips:
 			if !ok {
 				// The subscription ended without the context doing so. The backend
@@ -246,6 +260,70 @@ func (w *Watcher) Run(ctx context.Context) error {
 				return nil
 			}
 			w.handleTip(ctx, tip)
+			continue
+		case <-w.nudge:
+			continue
+		default:
+		}
+
+		// Catching up happens here, in slices, on this same goroutine. One writer
+		// of the spend records and one reader of the chain is the whole
+		// concurrency design: blocks are ten minutes apart and there is nothing to
+		// win by racing.
+		if w.sweepSlice(ctx) {
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case e, ok := <-w.events:
+			w.onEvent(ctx, e, ok)
+		case tip, ok := <-tips:
+			if !ok {
+				return nil
+			}
+			w.handleTip(ctx, tip)
+		case <-w.nudge:
+		}
+	}
+}
+
+// wake asks the loop to look for work. Never blocks and never queues more than
+// one: the loop re-reads everything anyway, so one wake-up is as good as ten.
+func (w *Watcher) wake() {
+	select {
+	case w.nudge <- struct{}{}:
+	default:
+	}
+}
+
+// onEvent reacts to something else in the daemon changing.
+func (w *Watcher) onEvent(ctx context.Context, e bus.Event, open bool) {
+	if !open {
+		w.events = nil
+		return
+	}
+
+	// Any of these can change what must be watched: a new channel, a close, or a
+	// split that re-classified every one of them. Rebuilding is cheap and
+	// idempotent, so it is not worth working out which.
+	w.rebuild(ctx)
+
+	switch ev := e.(type) {
+	case bus.SplitStateChanged:
+		// The moment the separation point is known, everything since it needs
+		// looking at — and until now there was no reason to have looked.
+		if store.SplitState(ev.New) == store.StateSplit {
+			w.rescanFromFork(ctx, "the chains separated")
+		}
+
+	case bus.ChannelUpserted:
+		// A channel seen for the first time has a history nobody has checked. Only
+		// on first sighting: re-sweeping every time a counterparty changes its
+		// alias would be a lot of reading for no new information.
+		if ev.New {
+			w.rescanFromFork(ctx, "a channel Forktower had not seen before")
 		}
 	}
 }
@@ -286,6 +364,7 @@ func (w *Watcher) load(ctx context.Context) error {
 	w.mu.Unlock()
 
 	w.rebuild(ctx)
+	w.loadSweep(ctx)
 	return nil
 }
 
@@ -365,6 +444,12 @@ func (w *Watcher) handleTip(ctx context.Context, tip chainview.BlockMeta) {
 	if tip.Hash == last.Hash {
 		return // already processed
 	}
+
+	// A new block is the cue to try again at whatever the catch-up could not
+	// read: the backend has evidently started answering.
+	w.mu.Lock()
+	w.blockedSweep = false
+	w.mu.Unlock()
 
 	if tip.PrevHash == last.Hash {
 		w.processTo(ctx, []chainview.BlockMeta{tip})

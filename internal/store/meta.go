@@ -18,6 +18,14 @@ const (
 	// height alone cannot distinguish "the chain grew" from "the chain was
 	// replaced up to here", and those need opposite responses.
 	MetaLastScannedSQHash = "last_scanned_sq_hash"
+	// MetaRescanNextSQHeight and MetaRescanTargetSQHeight bound a backwards sweep
+	// of the other chain: the next height still to scan, and the last one in
+	// range. Separate from the high-water mark because a rescan looks *behind* it
+	// — a daemon installed after a split has a mark at the tip and a fork point
+	// far below — and rewinding the mark instead would make the live loop treat
+	// the next block as an enormous gap.
+	MetaRescanNextSQHeight   = "rescan_next_sq_height"
+	MetaRescanTargetSQHeight = "rescan_target_sq_height"
 	// MetaSQBranchVerifiedAt records when the other chain's backend was last
 	// confirmed to be on the branch we think it is.
 	MetaSQBranchVerifiedAt = "sq_backend_branch_verified_at"

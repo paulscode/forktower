@@ -472,8 +472,18 @@ func TestScanningResumesWhereItLeftOff(t *testing.T) {
 	h.run()
 
 	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
-	h.plant("spent", fundingOutpoint(t, fundingA, 1))
-	h.waitFor("the spend", func() bool { return len(h.spends()) == 1 })
+	meta, _ := h.plant("spent", fundingOutpoint(t, fundingA, 1))
+
+	// Waiting for the block to be *committed*, not merely for the spend row to
+	// appear. The row is written first and the mark advances afterwards — which is
+	// what makes a crash mid-block safe — so reading the mark as soon as the row
+	// exists reads the height from before this block.
+	h.waitFor("the block to be committed", func() bool {
+		return h.w.Progress().Height == meta.Height
+	})
+	if len(h.spends()) != 1 {
+		t.Fatalf("recorded %d spends, want 1", len(h.spends()))
+	}
 	before := h.w.Progress().Height
 
 	// A second watcher over the same database and the same chain, as a restart is.
