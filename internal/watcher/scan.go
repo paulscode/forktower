@@ -49,26 +49,46 @@ func ScanBlock(blk *wire.MsgBlock, ws WatchSet) []Match {
 
 	var out []Match
 	for txIndex, tx := range blk.Transactions {
-		// A coinbase spends nothing: its single input names the empty outpoint.
-		// Skipped explicitly rather than relied upon not to match, because a
-		// watchset that ever contained a zero outpoint would otherwise match the
-		// coinbase of every block ever scanned.
-		if isCoinbase(tx) {
+		out = append(out, scanTx(tx, ws, txIndex)...)
+	}
+	return out
+}
+
+// ScanTx finds every watched outpoint one transaction spends.
+//
+// The same reading as ScanBlock, for a transaction that is not in a block yet.
+// Sharing the matching means an unconfirmed sighting and the confirmation that
+// follows it cannot disagree about what was spent — which they would eventually,
+// if this were written twice.
+func ScanTx(tx *wire.MsgTx, ws WatchSet) []Match {
+	if ws.Empty() {
+		return nil
+	}
+	return scanTx(tx, ws, 0)
+}
+
+func scanTx(tx *wire.MsgTx, ws WatchSet, txIndex int) []Match {
+	// A coinbase spends nothing: its single input names the empty outpoint.
+	// Skipped explicitly rather than relied upon not to match, because a watchset
+	// that ever contained a zero outpoint would otherwise match the coinbase of
+	// every block ever scanned.
+	if tx == nil || isCoinbase(tx) {
+		return nil
+	}
+
+	var out []Match
+	for inputIndex, in := range tx.TxIn {
+		target, watched := ws.Lookup(in.PreviousOutPoint)
+		if !watched {
 			continue
 		}
-		for inputIndex, in := range tx.TxIn {
-			target, watched := ws.Lookup(in.PreviousOutPoint)
-			if !watched {
-				continue
-			}
-			out = append(out, Match{
-				Target:     target,
-				Tx:         tx,
-				TxID:       tx.TxHash(),
-				TxIndex:    txIndex,
-				InputIndex: inputIndex,
-			})
-		}
+		out = append(out, Match{
+			Target:     target,
+			Tx:         tx,
+			TxID:       tx.TxHash(),
+			TxIndex:    txIndex,
+			InputIndex: inputIndex,
+		})
 	}
 	return out
 }

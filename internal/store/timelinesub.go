@@ -123,6 +123,10 @@ func Summarize(e bus.Event) string {
 	case bus.SecondOrderSpent:
 		return "Money from one of your closed channels was moved on the other chain."
 
+	case bus.MempoolSighting:
+		return "A transaction closing one of your channels was seen on the other " +
+			"chain, before any block had accepted it."
+
 	case bus.SpendReorgedOut:
 		return "Something that had happened on the other chain was undone by a " +
 			"change to that chain."

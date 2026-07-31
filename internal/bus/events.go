@@ -14,6 +14,7 @@ const (
 	KindFundingSpent     = "watch.funding_spent"
 	KindSecondOrderSpent = "watch.second_order_spent"
 	KindSpendReorgedOut  = "watch.spend_reorged_out"
+	KindMempoolSighting  = "watch.mempool_sighting"
 )
 
 // BlockRefJSON identifies a block. Hashes are lowercase hex in the usual display
@@ -192,6 +193,25 @@ type SecondOrderSpent struct {
 // Kind implements Event.
 func (SecondOrderSpent) Kind() string { return KindSecondOrderSpent }
 
+// MempoolSighting reports a spend of something being watched, seen before any
+// block contains it.
+//
+// The early warning. A commitment noticed while it is still unconfirmed buys the
+// user a block of time they would not otherwise have had, which on a chain with
+// slow blocks can be a great deal of time. It is a sighting and not a fact: an
+// unconfirmed transaction may be replaced, may never confirm, and may not even
+// be what the rest of the network is seeing. Carries no height for that reason.
+type MempoolSighting struct {
+	SpendEventID int64  `json:"spend_event_id"`
+	ChannelID    int64  `json:"channel_id"`
+	Branch       string `json:"branch"`
+	SpendTxid    string `json:"spend_txid"`
+	Shape        string `json:"shape"`
+}
+
+// Kind implements Event.
+func (MempoolSighting) Kind() string { return KindMempoolSighting }
+
 // SpendReorgedOut reports that a spend we had recorded is no longer on the
 // chain.
 //
@@ -220,5 +240,6 @@ func AllKinds() []string {
 		KindFundingSpent,
 		KindSecondOrderSpent,
 		KindSpendReorgedOut,
+		KindMempoolSighting,
 	}
 }

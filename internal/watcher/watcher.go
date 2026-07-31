@@ -243,6 +243,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 		return fmt.Errorf("following the other chain: %w", subErr)
 	}
 
+	// Unconfirmed transactions arrive on the same loop as blocks, because they
+	// write the same records. A nil channel here means this backend cannot see a
+	// memory pool, and a nil channel in a select never fires.
+	mempool := w.subscribeMempool(ctx)
+
 	for {
 		// Anything waiting is dealt with first. A new block matters more than
 		// catching up on old ones, and an event may change what the catch-up is
@@ -260,6 +265,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 				return nil
 			}
 			w.handleTip(ctx, tip)
+			continue
+		case tx, ok := <-mempool:
+			if !ok {
+				mempool = nil
+				continue
+			}
+			w.handleMempoolTx(ctx, tx)
 			continue
 		case <-w.nudge:
 			continue
@@ -284,6 +296,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 				return nil
 			}
 			w.handleTip(ctx, tip)
+		case tx, ok := <-mempool:
+			if !ok {
+				mempool = nil
+				continue
+			}
+			w.handleMempoolTx(ctx, tx)
 		case <-w.nudge:
 		}
 	}
