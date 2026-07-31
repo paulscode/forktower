@@ -136,6 +136,16 @@ func (w *world) forkbench(t *testing.T, args ...string) {
 // credentials copied out.
 func (w *world) startDaemon(t *testing.T) {
 	t.Helper()
+	w.startDaemonWith(t, nil)
+}
+
+// startDaemonWith starts the daemon with extra settings from the environment.
+//
+// The environment rather than a second config file, because an override always
+// beats the file and a scenario that had to keep its own copy of the whole
+// configuration would drift from the one people actually run.
+func (w *world) startDaemonWith(t *testing.T, env []string) {
+	t.Helper()
 
 	w.forkbench(t, "ln-credentials", "-ln-node", "user",
 		"-out", filepath.Join("deploy", "forkbench", "creds"))
@@ -159,6 +169,9 @@ func (w *world) startDaemon(t *testing.T) {
 	//nolint:gosec // the binary is this repository's own, just built
 	cmd := exec.Command(binary, "--config", filepath.Join("deploy", "forkbench", "forktower.dev.toml"))
 	cmd.Dir = w.repoDir
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stdout = handle
 	cmd.Stderr = handle
 	if err := cmd.Start(); err != nil {
@@ -290,6 +303,34 @@ type countdown struct {
 	Assumed         bool   `json:"assumed"`
 }
 
+// tower is one watchtower as the dashboard sees it.
+type tower struct {
+	ID      int64  `json:"id"`
+	Kind    string `json:"kind"`
+	URI     string `json:"uri"`
+	Status  string `json:"status"`
+	Display struct {
+		State     string `json:"state"`
+		Summary   string `json:"summary"`
+		Covered   int    `json:"covered"`
+		Uncovered int    `json:"uncovered"`
+	} `json:"display"`
+	Coverage []struct {
+		ChannelID int64  `json:"channel_id"`
+		Coverable bool   `json:"coverable"`
+		Reason    string `json:"reason"`
+	} `json:"coverage"`
+}
+
+type towersPayload struct {
+	Towers []tower `json:"towers"`
+}
+
+func towers(t *testing.T) []tower {
+	t.Helper()
+	return get[towersPayload](t, "/api/v1/towers").Towers
+}
+
 func alerts(t *testing.T) []alert     { t.Helper(); return get[[]alert](t, "/api/v1/alerts") }
 func channels(t *testing.T) []channel { t.Helper(); return get[[]channel](t, "/api/v1/channels") }
 func spends(t *testing.T) []spend     { t.Helper(); return get[[]spend](t, "/api/v1/spends") }
@@ -347,6 +388,28 @@ func (w *world) staged(t *testing.T) {
 	w.forkbench(t, "snapshot-mallory")
 	w.forkbench(t, "pay", "-times", "3")
 	w.forkbench(t, "split")
+}
+
+// mineUntil waits for something, mining on the other chain as it goes.
+//
+// For the scenarios where what is being waited for needs a block to happen in:
+// a transaction sitting in a memory pool confirms when somebody mines, and in a
+// world where nobody does, waiting is waiting for the wrong thing. One block per
+// poll, on the chain the user's own node does not follow, which is where the
+// interesting transactions are.
+func (w *world) mineUntil(t *testing.T, what string, ready func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(settle)
+	for {
+		if ready() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out after %s waiting for %s\n%s", settle, what, w.describe(t))
+		}
+		w.forkbench(t, "mine", "-node", "sq", "-blocks", "1")
+		time.Sleep(2 * time.Second) //nolint:forbidigo // pacing real blocks
+	}
 }
 
 // describe is a failure message worth reading: what the dashboard thought, and

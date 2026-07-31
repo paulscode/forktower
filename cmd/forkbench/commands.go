@@ -348,7 +348,14 @@ func showForktower(ctx context.Context, baseURL string) error {
 // commandDown removes the world, including its state.
 func commandDown(ctx context.Context) error {
 	say("Removing the world and everything in it…")
-	if err := compose(ctx, "down", "-v"); err != nil {
+	// **Every profile, not just the enabled ones.** `down` only touches services
+	// whose profile is active, so a service behind one survives — container,
+	// volume and all — and carries a dead world's state into the next one. The
+	// watchtower is an LND with its own chain database, and one that remembers a
+	// chain nobody has any more spends the next scenario wedged in a reorg it
+	// cannot resolve, reporting "block not found" for a block that no longer
+	// exists on either node.
+	if err := compose(ctx, "--profile", "*", "down", "-v"); err != nil {
 		return err
 	}
 	say("Gone.")

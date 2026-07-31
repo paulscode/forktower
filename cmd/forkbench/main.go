@@ -34,6 +34,10 @@ Lightning:
   forkbench ln-credentials -out D  copy a node's certificate and read-only
                                    macaroon out, so Forktower can read it
   forkbench pay -times N           send N payments, advancing the channel state
+  forkbench tower-up               start the watchtower and register with it
+  forkbench tower-backups -min N   wait until N states have reached the tower
+  forkbench tower-stop             take the watchtower away
+  forkbench tower-status           what both ends of the tower think
   forkbench snapshot-mallory       save the counterparty's channel state
   forkbench restore-mallory        put the counterparty back to that state
   forkbench breach -branch sq      publish the counterparty's old commitment,
@@ -77,8 +81,12 @@ func run(args []string) error {
 		outDir   = flags.String("fixtures", "", "write the transactions seen to this directory")
 		revoked  = flags.Bool("revoked", true,
 			"publish a commitment the counterparty had promised not to")
-		confirm  = flags.Bool("confirm", true, "mine the block, rather than leaving it unmined")
-		credsDir = flags.String("out", "", "where to write a node's credentials")
+		confirm    = flags.Bool("confirm", true, "mine the block, rather than leaving it unmined")
+		credsDir   = flags.String("out", "", "where to write a node's credentials")
+		minBackups = flags.Int("min", 1,
+			"how many backed-up states to wait for at the watchtower")
+		register = flags.Bool("register", true,
+			"point the user's node at the watchtower after starting it")
 	)
 	if err := flags.Parse(rest); err != nil {
 		return err
@@ -116,6 +124,14 @@ func run(args []string) error {
 		return commandBreach(ctx, BreachOptions{
 			Branch: *branch, Revoked: *revoked, Confirm: *confirm, FixtureDir: *outDir,
 		})
+	case "tower-up":
+		return commandTowerUp(ctx, *register)
+	case "tower-backups":
+		return commandTowerBackups(ctx, *minBackups)
+	case "tower-stop":
+		return commandTowerStop(ctx)
+	case "tower-status":
+		return commandTowerStatus(ctx)
 	case "reorg":
 		return commandReorg(ctx, *nodeName, *blocks)
 	case "coop-close":

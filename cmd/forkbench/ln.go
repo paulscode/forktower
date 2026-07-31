@@ -59,8 +59,15 @@ func lnByName(name string) (lnNode, error) {
 			return n, nil
 		}
 	}
-	return lnNode{}, fmt.Errorf("no Lightning node called %q; use %q or %q",
-		name, lnUser, lnMallory)
+	// The watchtower is not one of the two channel partners, so it is not in
+	// lnNodes() — funding it or opening channels to it would be nonsense. It is
+	// still an LND this tool talks to, and credentials have to come out of it the
+	// same way.
+	if name == lnTower.name {
+		return lnTower, nil
+	}
+	return lnNode{}, fmt.Errorf("no Lightning node called %q; use %q, %q or %q",
+		name, lnUser, lnMallory, lnTower.name)
 }
 
 // lncli runs a command inside a node's container.
@@ -494,8 +501,12 @@ func commandLNCredentials(ctx context.Context, nodeName, outDir string) error {
 
 // restPortOf is where each node's REST interface is published on the host.
 func restPortOf(name string) string {
-	if name == lnMallory {
+	switch name {
+	case lnMallory:
 		return "8082"
+	case lnTower.name:
+		return "8083"
+	default:
+		return "8081"
 	}
-	return "8081"
 }

@@ -467,3 +467,35 @@ func TestRestartingDoesNotResetTheGracePeriod(t *testing.T) {
 			"a fresh registration and said nothing")
 	}
 }
+
+// **A configured tower that has never answered must still be reported.**
+//
+// It has no identity to key a row on — the row is keyed by the pubkey, and it
+// has not told us one — so there is nothing to file. Reporting only what could
+// be filed would make the one case where protection was never there at all the
+// one case nobody hears about.
+func TestATowerThatNeverAnsweredIsStillAnnounced(t *testing.T) {
+	t.Parallel()
+	h := newWardenHarness(t)
+	h.fake.identityErr = errors.New("connection refused")
+
+	h.pass()
+
+	events := eventsOfKind(h.drain(), bus.KindTowerHealthChanged)
+	if len(events) != 1 {
+		t.Fatalf("a tower that never answered produced %d health events", len(events))
+	}
+	ev, ok := events[0].(bus.TowerHealthChanged)
+	if !ok {
+		t.Fatalf("unexpected event type %T", events[0])
+	}
+	if ev.Status != string(store.TowerUnreachable) {
+		t.Errorf("status = %q, want %q", ev.Status, store.TowerUnreachable)
+	}
+	if ev.TowerID != 0 {
+		t.Errorf("tower id = %d, want zero — there is no row to point at", ev.TowerID)
+	}
+	if ev.Detail == "" {
+		t.Error("nothing was said about why it is not answering")
+	}
+}

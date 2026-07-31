@@ -153,6 +153,13 @@ func (w *Warden) pass(ctx context.Context) {
 		w.log.Error("recording the tower's condition", slog.String("error", err.Error()))
 		return
 	}
+
+	// **Announced whether or not there is a row to attach it to.** A tower that
+	// has never answered has no identity to key a row on — it is keyed by its
+	// pubkey, and it has not told us one — but a configured tower that has never
+	// answered is exactly the thing a user needs to hear about. Reporting only
+	// what we could file would mean the one case where protection was never there
+	// at all is the one case nobody is told about.
 	w.announceHealth(obs)
 
 	var concerns []Concern

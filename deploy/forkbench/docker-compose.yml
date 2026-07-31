@@ -129,6 +129,11 @@ services:
       # step of a scripted scenario is time nobody gets back.
       - --bitcoin.defaultchanconfs=1
       - --maxpendingchannels=10
+      # The watchtower client, which is a configuration setting rather than
+      # something that can be switched on at runtime — the single largest
+      # onboarding obstacle for a real user, and the reason a scenario has to
+      # bake it in rather than turn it on when it needs it.
+      - --wtclient.active
     volumes:
       - lnd-user-data:/root/.lnd
     ports:
@@ -178,12 +183,56 @@ services:
 # Named volumes rather than bind mounts: `forkbench down` removes them, and a
 # world that cannot be wiped cleanly is a world that accumulates the state of
 # every experiment anyone has ever run in it.
+  # The companion watchtower, watching the chain the user's own node does not.
+  #
+  # Its backend is sq-node deliberately: that is where a breach would be
+  # published in these scenarios, and a tower whose view is the same chain as
+  # the victim's node would be watching the wrong place entirely.
+  #
+  # Behind a profile, because most scenarios do not need it and starting an
+  # extra LND costs a minute nobody is spending on purpose.
+  tower:
+    image: lightninglabs/lnd:v0.18.5-beta
+    profiles: ["tower"]
+    depends_on:
+      sq-node:
+        condition: service_healthy
+    command:
+      - lnd
+      - --noseedbackup
+      - --bitcoin.active
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=sq-node:18443
+      - --bitcoind.rpcuser=forkbench
+      - --bitcoind.rpcpass=forkbench
+      - --bitcoind.zmqpubrawblock=tcp://sq-node:28332
+      - --bitcoind.zmqpubrawtx=tcp://sq-node:28333
+      - --restlisten=0.0.0.0:8080
+      - --rpclisten=0.0.0.0:10009
+      # No channels of its own, so no reason to accept peer connections.
+      - --nolisten
+      - --tlsextradomain=tower
+      - --alias=tower
+      - --debuglevel=info,WTWR=debug
+      - --watchtower.active
+      - --watchtower.listen=0.0.0.0:9911
+      - --watchtower.externalip=tower:9911
+    ports:
+      # So a Forktower running on the host can ask the tower how it is doing.
+      - "127.0.0.1:8083:8080"
+    volumes:
+      - tower-data:/root/.lnd
+    networks:
+      - forkbench
+
 volumes:
   sf-data:
   sq-data:
   lnd-user-data:
   lnd-mallory-data:
   lnd-mallory-snapshot:
+  tower-data:
 
 networks:
   forkbench:
