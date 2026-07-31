@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"time"
+
+	"github.com/paulscode/forktower/internal/bus"
 	"github.com/paulscode/forktower/internal/store"
 )
 
@@ -673,5 +676,175 @@ func TestARealTowerWithNothingToProveCarriesNoProof(t *testing.T) {
 	}
 	if towers[0].MisbehavingProof != "" {
 		t.Errorf("a tower with no proof reported one: %q", towers[0].MisbehavingProof)
+	}
+}
+
+// --- The Core Lightning arm, wired into the warden ---
+
+// **Coverage is all-or-nothing on this arm, and that is a fact about teos.**
+// Core Lightning builds the penalty transaction itself and hands the tower an
+// opaque blob, so a teos tower never sees a channel type: what decides whether a
+// channel is protected is whether the subscription is alive, which is the same
+// answer for every channel at once.
+func TestATeosSubscriptionCoversEveryChannelOrNone(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		tower     TeosTower
+		found     bool
+		coverable bool
+		mustSay   string
+	}{
+		{
+			name: "a live subscription", tower: healthyTeos(), found: true,
+			coverable: true, mustSay: "live subscription",
+		},
+		{
+			name: "one that has run out",
+			tower: func() TeosTower {
+				tw := healthyTeos()
+				tw.Status = store.TowerSubscriptionError
+				return tw
+			}(),
+			found: true, coverable: false, mustSay: "run out",
+		},
+		{
+			name: "a tower that misbehaved",
+			tower: func() TeosTower {
+				tw := healthyTeos()
+				tw.Status = store.TowerMisbehaving
+				return tw
+			}(),
+			found: true, coverable: false, mustSay: "does not check out",
+		},
+	} {
+		h := newWardenHarness(t, func(o *WardenOptions) {
+			o.Kind = store.TowerTeos
+			o.CLNClient = &fakeCLN{towers: []TeosTower{tc.tower}}
+			o.TeosPubkey = tc.tower.ID
+		})
+		h.addChannel(store.ChanAnchors, "aa"+strings.Repeat("0", 62))
+		h.addChannel(store.ChanTaproot, "bb"+strings.Repeat("0", 62))
+
+		h.pass()
+
+		rows, err := h.store.ListCoverage(context.Background(), store.CoverageFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 2 {
+			t.Errorf("%s: got %d coverage rows for two channels", tc.name, len(rows))
+			continue
+		}
+		for _, r := range rows {
+			if r.Coverable != tc.coverable {
+				t.Errorf("%s: channel %d coverable = %v, want %v (%s)",
+					tc.name, r.ChannelID, r.Coverable, tc.coverable, r.Reason)
+			}
+			if !strings.Contains(r.Reason, tc.mustSay) {
+				t.Errorf("%s: reason %q does not say %q", tc.name, r.Reason, tc.mustSay)
+			}
+		}
+		// **Every channel gets the same answer**, whatever its commitment type —
+		// which is the point, and which would be wrong on the LND arm.
+		if rows[0].Coverable != rows[1].Coverable {
+			t.Errorf("%s: a taproot and an anchor channel got different answers "+
+				"from a tower that never sees a channel type", tc.name)
+		}
+	}
+}
+
+// The concerns the Core Lightning monitor raises have to reach the warden's
+// caller, or the arm is a monitor nobody listens to.
+func TestTheTeosConcernsReachTheWarden(t *testing.T) {
+	t.Parallel()
+	expiring := healthyTeos()
+	expiring.SubscriptionExpiry = 900_100
+	expiring.PendingAppointments = 3
+
+	h := newWardenHarness(t, func(o *WardenOptions) {
+		o.Kind = store.TowerTeos
+		o.CLNClient = &fakeCLN{towers: []TeosTower{expiring}}
+		o.TeosPubkey = expiring.ID
+		o.Branch = store.BranchSQ
+		o.Interval = 20 * time.Millisecond
+	})
+	h.addChannel(store.ChanAnchors, "aa"+strings.Repeat("0", 62))
+	h.start()
+
+	// The chain the tower watches, which is what an expiry height is measured
+	// against. Without it a subscription expiry means nothing, and the warden
+	// only has it because it subscribed.
+	h.bus.Publish(bus.SplitBranchExtended{
+		Branch: string(store.BranchSQ),
+		Block:  bus.BlockMetaJSON{Height: 900_000},
+	})
+
+	deadline := time.Now().Add(5 * time.Second)
+	seen := map[string]bool{}
+	for time.Now().Before(deadline) &&
+		(!seen[string(ConcernSubscriptionExpiring)] ||
+			!seen[string(ConcernAppointmentsUndelivered)]) {
+		for _, e := range eventsOfKind(h.drain(), bus.KindTowerConcern) {
+			if c, ok := e.(bus.TowerConcern); ok {
+				seen[c.Concern] = true
+			}
+		}
+	}
+	if !seen[string(ConcernSubscriptionExpiring)] {
+		t.Errorf("the subscription running out was not raised: %v", seen)
+	}
+	if !seen[string(ConcernAppointmentsUndelivered)] {
+		t.Errorf("undelivered backups were not raised: %v", seen)
+	}
+}
+
+// Without a Core Lightning node there is nothing to read, and nothing may be
+// claimed about what the tower protects.
+func TestATeosTowerWithNoNodeToReadClaimsNoCoverage(t *testing.T) {
+	t.Parallel()
+	h := newWardenHarness(t, func(o *WardenOptions) {
+		o.Kind = store.TowerTeos
+		o.CLNClient = nil
+	})
+	h.addChannel(store.ChanAnchors, "aa"+strings.Repeat("0", 62))
+
+	h.pass()
+
+	rows, err := h.store.ListCoverage(context.Background(), store.CoverageFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("coverage was claimed with no node to read it from: %+v", rows)
+	}
+	// The tower itself is still watched.
+	if h.tower().Status != store.TowerReachable {
+		t.Error("the tower was not watched without a node to check against")
+	}
+}
+
+// A node with no plugin is backing up to nothing, and every channel is
+// uncovered for one reason rather than each for its own.
+func TestANodeWithoutThePluginLeavesEveryChannelUncovered(t *testing.T) {
+	t.Parallel()
+	h := newWardenHarness(t, func(o *WardenOptions) {
+		o.Kind = store.TowerTeos
+		o.CLNClient = &fakeCLN{err: ErrPluginNotLoaded}
+	})
+	h.addChannel(store.ChanAnchors, "aa"+strings.Repeat("0", 62))
+
+	h.pass()
+
+	rows, err := h.store.ListCoverage(context.Background(), store.CoverageFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Coverable {
+		t.Fatalf("coverage = %+v", rows)
+	}
+	if !strings.Contains(rows[0].Reason, "not running the watchtower plugin") {
+		t.Errorf("the reason does not say what is missing: %q", rows[0].Reason)
 	}
 }

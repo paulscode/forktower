@@ -520,8 +520,11 @@ function renderTowers(payload) {
   const list = el('towers');
   const towers = (payload && payload.towers) || [];
 
+  // Hidden when there are none, and there is no "no watchtower" note inside it:
+  // a note in a hidden card is a note nobody can read. Having no watchtower at
+  // all is said in the readiness list instead, which is where "is this set up
+  // properly" is answered and which is visible whether or not anything exists.
   show(card, towers.length > 0);
-  show(el('towers-empty'), towers.length === 0);
   clear(list);
 
   let anyUri = '';

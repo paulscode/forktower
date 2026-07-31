@@ -29,6 +29,7 @@ const (
 const (
 	anchorSetup         = "#setup"
 	anchorNotifications = "#notifications"
+	anchorTower         = "#towers-card"
 	anchorExposure      = "#exposure"
 )
 
@@ -47,6 +48,13 @@ var (
 	}
 	actionTestAlerts = func() *Action {
 		return &Action{Label: "Send a test alert", Endpoint: "/api/v1/alerts/test"}
+	}
+	// Points at the wizard rather than at a button. Forktower cannot set up a
+	// watchtower for somebody: turning on their node's watchtower client is a
+	// setting in their node's own configuration, and this daemon is only ever
+	// allowed to read from it.
+	actionSetUpTower = func() *Action {
+		return &Action{Label: "Set up a watchtower", Href: anchorTower}
 	}
 )
 

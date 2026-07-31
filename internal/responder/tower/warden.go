@@ -42,8 +42,14 @@ type Warden struct {
 	// coverage monitor is built from it on the first pass that learns the
 	// tower's own pubkey, because that is what the monitor needs to recognise
 	// itself among whatever else the user has registered.
-	client            ClientReader
+	client ClientReader
+	// clnClient is the Core Lightning side, for a teos tower. The two arms read
+	// different things from different nodes and cannot share one reader: an LND
+	// node has watchtower *sessions*, and a Core Lightning node has a plugin with
+	// a subscription.
+	clnClient         CLNTowerReader
 	monitor           *Monitor
+	teos              *TeosMonitor
 	lowFeeSatPerVByte uint32
 	kind              store.TowerKind
 	// managed is whether this installation runs the tower. It changes what may
@@ -52,6 +58,11 @@ type Warden struct {
 	uri      string
 	interval time.Duration
 	now      func() time.Time
+	// events carries the chain the tower watches, so that a teos subscription's
+	// expiry height can be measured against something. Nil for an LND tower,
+	// which has no expiry to measure.
+	events <-chan bus.Event
+	branch store.Branch
 
 	// towerID is filled on the first pass, once the tower has a row. Atomic
 	// because TowerID() is read from outside the goroutine running the loop.
@@ -68,6 +79,12 @@ type Warden struct {
 	// firstSeen is when this tower was first recorded, which is what the grace
 	// period is measured from.
 	firstSeen int64
+	// teosPubkey and teosSlotsAtStart are the Core Lightning arm's inputs.
+	// tipHeight is the chain the tower watches, which is what a subscription's
+	// expiry height has to be measured against.
+	teosPubkey       string
+	teosSlotsAtStart int32
+	tipHeight        int32
 }
 
 // WardenOptions configures a Warden.
@@ -76,18 +93,30 @@ type WardenOptions struct {
 	Bus        *bus.Bus
 	Log        *slog.Logger
 	Supervisor *Supervisor
-	// Client is the user's Lightning node, or nil when they have none. The tower
-	// is still watched without one — it is still running and still costing
-	// disk — but nothing can be said about what it protects.
+	// Client is the user's LND, or nil when they have none. The tower is still
+	// watched without one — it is still running and still costing disk — but
+	// nothing can be said about what it protects.
 	Client ClientReader
+	// CLNClient is the user's Core Lightning node, for a teos tower.
+	CLNClient CLNTowerReader
 	// LowFeeSatPerVByte, when set, is the rate below which a session's baked-in
 	// justice fee is worth mentioning.
 	LowFeeSatPerVByte uint32
 	Kind              store.TowerKind
 	Managed           bool
 	URI               string
-	Interval          time.Duration
-	Now               func() time.Time
+	// TeosPubkey identifies our teos tower among those the node has registered
+	// with, and TeosSlots is the subscription size the tower was configured with,
+	// so that "running low" can be judged as a fraction rather than only as
+	// exhaustion. Zero means unknown, which is the honest state for a tower
+	// somebody else configured.
+	TeosPubkey string
+	TeosSlots  int32
+	// Branch is the chain the tower watches. Its tip is what a subscription's
+	// expiry height is measured against.
+	Branch   store.Branch
+	Interval time.Duration
+	Now      func() time.Time
 }
 
 // NewWarden builds a Warden.
@@ -112,11 +141,18 @@ func NewWarden(opts WardenOptions) (*Warden, error) {
 	}
 	return &Warden{
 		store: opts.Store, bus: opts.Bus, log: opts.Log,
-		supervisor: opts.Supervisor, client: opts.Client,
+		supervisor: opts.Supervisor, client: opts.Client, clnClient: opts.CLNClient,
 		lowFeeSatPerVByte: opts.LowFeeSatPerVByte,
 		kind:              opts.Kind, managed: opts.Managed, uri: opts.URI,
-		interval: opts.Interval, now: opts.Now,
+		teosPubkey:       opts.TeosPubkey,
+		teosSlotsAtStart: opts.TeosSlots,
+		branch:           opts.Branch,
+		interval:         opts.Interval, now: opts.Now,
 		lastConcerns: map[string]bool{},
+		// The chain the tower watches, for the one thing that needs a height: a
+		// teos subscription lapses at one, and nothing else here reads a tip.
+		events: opts.Bus.Subscribe(
+			SubscriberName+":"+string(opts.Kind), bus.KindSplitBranchExtended),
 	}, nil
 }
 
@@ -135,6 +171,19 @@ func (w *Warden) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+
+		case ev, ok := <-w.events:
+			if !ok {
+				return nil
+			}
+			// Only the height is wanted, and only for the chain this tower
+			// watches. A subscription that lapses at a block height needs a block
+			// height to be compared against, and nothing else here reads one.
+			if extended, isBlock := ev.(bus.SplitBranchExtended); isBlock &&
+				store.Branch(extended.Branch) == w.branch {
+				w.tipHeight = extended.Block.Height
+			}
+
 		case <-ticker.C:
 			w.pass(ctx)
 		}
@@ -273,7 +322,13 @@ func (w *Warden) announceHealth(obs Observation) {
 
 // checkCoverage works out what is protected and records it.
 func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) []Concern {
-	if w.client == nil || w.towerID.Load() == 0 {
+	if w.towerID.Load() == 0 {
+		return nil
+	}
+	if w.kind == store.TowerTeos {
+		return w.checkTeosCoverage(ctx, now)
+	}
+	if w.client == nil {
 		return nil
 	}
 	// Built on the first pass that learns the tower's own identity, and rebuilt
@@ -326,6 +381,96 @@ func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) 
 		pass.Coverage, w.previous, advancedSince(w.previous, pass.Coverage))...)
 	w.previous = pass.Coverage
 	return pass.Concerns
+}
+
+// checkTeosCoverage is the Core Lightning arm.
+//
+// **Coverage is all-or-nothing here, and that is a fact about teos rather than a
+// simplification.** Core Lightning builds the penalty transaction itself and
+// hands the tower an opaque blob, so a teos tower never sees a channel type and
+// there is no per-channel session to hold or to lack. What decides whether a
+// channel is protected is whether the *subscription* is alive and has room —
+// which is the same answer for every channel at once.
+func (w *Warden) checkTeosCoverage(ctx context.Context, now int64) []Concern {
+	if w.clnClient == nil {
+		return nil
+	}
+
+	channels, err := w.store.ListChannels(ctx, store.ChannelFilter{OpenOnly: true})
+	if err != nil {
+		w.log.Error("reading channels to check their protection",
+			slog.String("error", err.Error()))
+		return nil
+	}
+
+	monitor, err := NewTeosMonitor(TeosMonitorOptions{
+		Client: w.clnClient, TowerID: w.towerID.Load(),
+		TowerPubkey:  w.teosPubkey,
+		SlotsAtStart: w.teosSlotsAtStart,
+	})
+	if err != nil {
+		w.log.Error("setting up the coverage check", slog.String("error", err.Error()))
+		return nil
+	}
+	w.teos = monitor
+
+	pass, err := monitor.Check(ctx, w.tipHeight)
+	if err != nil {
+		w.log.Error("reading what your node is backing up", slog.String("error", err.Error()))
+		return nil
+	}
+
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+	defer cancel()
+
+	// The tower's condition comes from the node's own view of it, which is richer
+	// than anything the tower's public interface can say: it knows whether
+	// appointments are being accepted, when the subscription lapses, and whether
+	// the tower has provably misbehaved.
+	if pass.Found {
+		if err := w.store.SetTowerStatus(writeCtx, w.towerID.Load(), pass.Health, now); err != nil {
+			w.log.Error("recording the tower's condition", slog.String("error", err.Error()))
+		}
+	}
+
+	protected := pass.Found && pass.PluginLoaded &&
+		pass.Health.Status == store.TowerReachable
+	reason := "your node holds a live subscription with this tower, which covers " +
+		"every channel it has"
+	if !protected {
+		reason = teosGapReason(pass)
+	}
+
+	for _, ch := range channels {
+		cover := store.Coverage{
+			ChannelID: ch.ID, TowerID: w.towerID.Load(),
+			Coverable: protected, Reason: reason, CheckedAt: now,
+		}
+		if err := w.store.UpsertCoverage(writeCtx, cover); err != nil {
+			w.log.Error("recording what this tower protects",
+				slog.String("error", err.Error()))
+			return pass.Concerns
+		}
+	}
+	return pass.Concerns
+}
+
+// teosGapReason says why a Core Lightning channel is not covered.
+func teosGapReason(pass TeosPass) string {
+	switch {
+	case !pass.PluginLoaded:
+		return "your node is not running the watchtower plugin, so nothing is " +
+			"being backed up to any tower"
+	case !pass.Found:
+		return "your node has not registered with this tower"
+	case pass.Health.Status == store.TowerSubscriptionError:
+		return "the subscription with this tower has run out, so it is no longer " +
+			"accepting backups"
+	case pass.Health.Status == store.TowerMisbehaving:
+		return "this tower returned a receipt whose signature does not check out"
+	default:
+		return "this tower is not currently accepting backups from your node"
+	}
 }
 
 // advancedSince is which channels moved to a new state between two passes.

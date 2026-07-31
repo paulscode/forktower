@@ -614,8 +614,10 @@ test('no towers hides the card rather than showing empty furniture', () => {
   app.renderTowers({ towers: [] });
   assert.ok(byID['towers-card'].className.includes('hidden'),
     'the card was shown with no towers');
-  assert.ok(!byID['towers-empty'].className.includes('hidden'),
-    'the empty note was hidden');
+  // And there is no note inside it saying so: a note in a hidden card is one
+  // nobody can read. Having no watchtower is said in the readiness list.
+  assert.strictEqual(byID['towers-empty'], undefined,
+    'a note lives inside the card that is hidden in exactly the case it is for');
 });
 
 test('a hostile reason from a tower stays literal text', () => {

@@ -75,6 +75,20 @@ func (h *wardenHarness) pass() {
 	h.warden.pass(context.Background())
 }
 
+// start runs the real loop until the test ends.
+//
+// Used where the warden has to take something *off the bus* first — a chain tip,
+// which is what a subscription's expiry height is measured against. A test that
+// reimplemented that select in the harness would pass against a warden that
+// never subscribed at all, which is exactly the bug worth catching.
+func (h *wardenHarness) start() {
+	h.t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = h.warden.Run(ctx) }()
+	h.t.Cleanup(func() { cancel(); <-done })
+}
+
 func (h *wardenHarness) tower() store.Tower {
 	h.t.Helper()
 	rows, err := h.store.ListTowers(context.Background(), store.TowerFilter{})

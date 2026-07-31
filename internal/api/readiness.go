@@ -10,6 +10,7 @@ import (
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
+	"github.com/paulscode/forktower/internal/words"
 )
 
 // Readiness check ids. Machine-readable and stable; the label is what a user
@@ -25,6 +26,7 @@ const (
 	CheckWatcherProgressing  = "watcher_progressing"
 	CheckChannelsInventoried = "channels_inventoried"
 	CheckDeadlineInputs      = "deadline_inputs_known"
+	CheckTowerProtection     = "tower_protection"
 )
 
 // ReadinessItem is one thing that is or is not in place.
@@ -68,6 +70,71 @@ func (s *Server) Readiness(ctx context.Context) []ReadinessItem {
 		s.checkLNConnected(),
 		s.checkChannelsInventoried(ctx),
 		s.checkDeadlineInputs(),
+		s.checkTowerProtection(ctx),
+	}
+}
+
+// checkTowerProtection says whether anything would answer a breach.
+//
+// **The item exists so that having no watchtower at all is visible.** The tower
+// card renders from what is stored, and a user who never set one up has nothing
+// stored — so without this the most common state of all, and the one where the
+// response arm can do nothing, is the state nothing anywhere mentions. That is
+// the failure this project is about, arrived at through its own dashboard.
+//
+// Informational rather than blocking. Somebody may have decided against a
+// watchtower, or may be relying on their own node being online, and colouring
+// the whole page red over a considered choice would teach them that red means
+// nothing.
+func (s *Server) checkTowerProtection(ctx context.Context) ReadinessItem {
+	towers, err := s.store.ListTowers(ctx, store.TowerFilter{})
+	if err != nil {
+		return ReadinessItem{
+			ID: CheckTowerProtection, OK: false, informational: true,
+			Label: "Cannot tell whether a watchtower is protecting you",
+			Why:   "Forktower could not read its own record of them.",
+		}
+	}
+
+	if len(towers) == 0 {
+		return ReadinessItem{
+			ID: CheckTowerProtection, OK: false, informational: true,
+			Label: "No watchtower is protecting your channels",
+			Why: "If somebody publishes an old channel state on " + words.OtherChain +
+				", nothing would answer it unless your own node happened to be " +
+				"watching that chain — and it is not.",
+			Action: actionSetUpTower(),
+		}
+	}
+
+	uncovered, err := s.store.ListCoverage(ctx, store.CoverageFilter{UncoverableOnly: true})
+	if err == nil && len(uncovered) > 0 {
+		return ReadinessItem{
+			ID: CheckTowerProtection, OK: false, informational: true,
+			Label:  "Some channels are not covered by a watchtower",
+			Why:    "A breach against those channels would not be answered.",
+			Detail: uncovered[0].Reason,
+		}
+	}
+
+	working := 0
+	for _, t := range towers {
+		if t.Status == store.TowerReachable {
+			working++
+		}
+	}
+	if working == 0 {
+		return ReadinessItem{
+			ID: CheckTowerProtection, OK: false, informational: true,
+			Label: "Your watchtower is not answering",
+			Why: "While it is down, a breach on " + words.OtherChain +
+				" would not be answered.",
+			Detail: towers[0].StatusDetail,
+		}
+	}
+	return ReadinessItem{
+		ID: CheckTowerProtection, OK: true,
+		Label: "A watchtower is ready to answer a breach",
 	}
 }
 

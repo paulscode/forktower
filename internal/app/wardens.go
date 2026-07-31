@@ -16,9 +16,9 @@ import (
 //
 // **A tower that is switched off produces no warden and no complaint.** Most
 // installations will not run one, and a dashboard card saying "no tower" on
-// every one of them would be noise rather than information — the readiness
-// model already covers "you have no watchtower protection" as a separate
-// question about the whole deployment, not about a tower that does not exist.
+// every one of them would be noise rather than information. Having no watchtower
+// at all is answered by the readiness model instead, which is where "is this set
+// up properly" belongs and which is visible whether or not anything exists.
 func (a *App) buildWardens(cfg config.Config, log *slog.Logger, now func() time.Time) error {
 	instances := []struct {
 		kind store.TowerKind
@@ -96,11 +96,18 @@ func (a *App) buildWarden(
 		// being backed up lives. Nil when they have none configured, or when the
 		// tower is a teos one: the LND coverage check reads sessions that a Core
 		// Lightning node does not have. The tower is still watched either way.
-		Client:  a.towerClient(kind, cfg, log),
-		Kind:    kind,
-		Managed: true,
-		URI:     conf.Listen,
-		Now:     now,
+		Client: a.towerClient(kind, cfg, log),
+		// The Core Lightning side, for a teos tower. Nil for an LND one, and nil
+		// when the user runs no Core Lightning node — in which case the tower is
+		// still watched for liveness and nothing is claimed about coverage.
+		CLNClient:  a.clnTowerClient(kind, cfg, log),
+		TeosPubkey: conf.Pubkey,
+		Kind:       kind,
+		Managed:    true,
+		URI:        conf.Listen,
+		// The chain the tower watches is the one the user's own node does not.
+		Branch: store.BranchSQ,
+		Now:    now,
 	})
 }
 
@@ -203,6 +210,39 @@ func (a *App) buildMirrors(log *slog.Logger) error {
 			return fmt.Errorf("setting up copying from %s: %w", d.from, err)
 		}
 		a.mirrors = append(a.mirrors, runner)
+	}
+	return nil
+}
+
+// clnTowerClient is the user's Core Lightning node, read for what its watchtower
+// plugin knows.
+//
+// Only for a teos tower: an LND tower's coverage comes from LND's own sessions,
+// which a Core Lightning node does not have. Returns nil when there is no Core
+// Lightning node to ask, in which case the tower is watched for liveness and
+// nothing is claimed about what it protects.
+func (a *App) clnTowerClient(
+	kind store.TowerKind, cfg config.Config, log *slog.Logger,
+) tower.CLNTowerReader {
+	if kind != store.TowerTeos {
+		return nil
+	}
+	for _, node := range cfg.LN.CLN {
+		client, err := tower.NewCLNTowers(tower.CLNOptions{
+			RESTAddr:    node.RESTAddr,
+			RunePath:    node.RunePath,
+			TLSCertPath: node.TLSCertPath,
+		})
+		if err != nil {
+			// Not fatal, for the same reason the LND side is not: the tower is
+			// still worth watching, and the same credential is already reported on
+			// by the registry.
+			log.Warn("cannot read what this node is backing up",
+				slog.String("node", node.RESTAddr),
+				slog.String("error", err.Error()))
+			continue
+		}
+		return client
 	}
 	return nil
 }

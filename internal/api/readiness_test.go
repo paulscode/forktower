@@ -240,6 +240,9 @@ func TestReadinessOrderIsStable(t *testing.T) {
 		CheckSFEnforcing, CheckAlertTransports,
 		CheckWatchingActive, CheckWatcherProgressing, CheckLNConnected,
 		CheckChannelsInventoried, CheckDeadlineInputs,
+		// Last, and informational: whether a watchtower would answer a breach is
+		// the response arm's question, and somebody may have decided against one.
+		CheckTowerProtection,
 	}
 	got := h.srv.Readiness(context.Background())
 	if len(got) != len(want) {

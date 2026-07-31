@@ -124,6 +124,17 @@
       "why": "Nothing has closed any of your channels on the other chain.",
       "detail": "",
       "action": null
+    },
+    {
+      "id": "tower_protection",
+      "ok": false,
+      "label": "No watchtower is protecting your channels",
+      "why": "If somebody publishes an old channel state on the other chain, nothing would answer it unless your own node happened to be watching that chain — and it is not.",
+      "detail": "",
+      "action": {
+        "label": "Set up a watchtower",
+        "href": "#towers-card"
+      }
     }
   ]
 }
