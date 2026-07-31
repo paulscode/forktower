@@ -155,3 +155,64 @@ func TestConfiguredReportsWhetherAnyLightningNodeIsSetUp(t *testing.T) {
 		t.Error("a Core Lightning node was not reported")
 	}
 }
+
+// Configuration that is accepted and then ignored is the failure this project is
+// about. Not a validation error — somebody may be preparing ahead of a milestone
+// — but never silence either.
+func TestSettingsThatDoNothingAreReported(t *testing.T) {
+	t.Parallel()
+
+	clean := minimalValid()
+	if got := clean.UnusedSettings(); len(got) != 0 {
+		t.Errorf("an ordinary configuration reported %v", got)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{
+			name:   "a companion tower switched on",
+			mutate: func(c *Config) { c.Tower.LND.Enabled = true },
+			want:   "tower.lnd.enabled",
+		},
+		{
+			name:   "the other companion tower",
+			mutate: func(c *Config) { c.Tower.TEOS.Enabled = true },
+			want:   "tower.teos.enabled",
+		},
+		{
+			name:   "an independent second opinion switched on",
+			mutate: func(c *Config) { c.SQ.Witnesses.NeutrinoHeaders = true },
+			want:   "sq.witnesses.neutrino_headers",
+		},
+		{
+			name:   "electrum servers listed",
+			mutate: func(c *Config) { c.SQ.Witnesses.Electrum = []string{"a:1"} },
+			want:   "sq.witnesses.electrum",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := minimalValid()
+			tc.mutate(&cfg)
+
+			// Still a usable configuration: this is a warning, not a refusal.
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("refused a configuration it should only warn about: %v", err)
+			}
+
+			got := cfg.UnusedSettings()
+			if len(got) != 1 || !strings.Contains(got[0], tc.want) {
+				t.Fatalf("reported %v, want one note naming %q", got, tc.want)
+			}
+			// And says what it means, not just that something is unused.
+			if !strings.Contains(got[0], "not built yet") {
+				t.Errorf("the note does not say why: %q", got[0])
+			}
+		})
+	}
+}

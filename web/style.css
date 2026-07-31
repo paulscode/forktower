@@ -210,3 +210,40 @@ footer { max-width: 46rem; margin: 0 auto; }
   background: var(--warn-bg, rgba(184, 134, 11, 0.12));
   font-weight: 600;
 }
+
+/* The Details disclosure under the exposure table. The rows point at this, so it
+   has to exist — an instruction to open something that is not there is worse
+   than no instruction. Everything here is what a reader asked for by opening it:
+   transaction ids, heights, block counts. */
+.details {
+  margin-top: 1rem;
+}
+
+.details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.detail-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.detail-list li {
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.detail-list .what {
+  display: block;
+}
+
+.detail-list .facts {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}

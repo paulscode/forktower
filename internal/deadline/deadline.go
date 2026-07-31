@@ -108,7 +108,7 @@ func New(
 		log:    log,
 		events: b.Subscribe(SubscriberName,
 			bus.KindFundingSpent, bus.KindSecondOrderSpent, bus.KindSpendReorgedOut,
-			bus.KindSplitBranchExtended),
+			bus.KindSplitBranchExtended, bus.KindChannelUpserted),
 	}, nil
 }
 
@@ -146,6 +146,8 @@ func (e *Engine) handle(ctx context.Context, ev bus.Event) {
 		e.onSecondOrderSpent(ctx, v)
 	case bus.SpendReorgedOut:
 		e.onSpendReorgedOut(v)
+	case bus.ChannelUpserted:
+		e.onChannelUpserted(ctx, v)
 	}
 }
 
@@ -244,6 +246,87 @@ func (e *Engine) start(ctx context.Context, ev bus.FundingSpent, computed Comput
 	}
 
 	e.escalateTo(ctx, id, ev.ChannelID, computed.Height, LevelDetected)
+}
+
+// onChannelUpserted recomputes the clocks running against a channel, because
+// something better may now be known about it.
+//
+// **A countdown started from a floor must not stay on that floor for ever.** The
+// rule that a missing delay produces a conservative deadline rather than no
+// deadline is only half an answer: the other half is replacing the guess when the
+// truth arrives. It arrives here — a channel first seen while it was already
+// closing carries almost nothing, and the next full poll fills it in.
+//
+// Nothing else in this daemon ever recomputed, so the store's ability to update a
+// running clock in place — written for exactly this and careful to leave the
+// state and the escalation tier alone — had no caller at all.
+func (e *Engine) onChannelUpserted(ctx context.Context, ev bus.ChannelUpserted) {
+	if ev.Channel.ID == 0 {
+		return
+	}
+
+	wctx, cancel := writeCtx(ctx)
+	defer cancel()
+
+	running, err := e.store.ListDeadlines(wctx, store.DeadlineCounting)
+	if err != nil {
+		e.log.Error("could not read the running countdowns",
+			slog.String("error", err.Error()))
+		return
+	}
+
+	channel, found := e.channel(wctx, ev.Channel.ID)
+	if !found {
+		return
+	}
+	htlcs, _ := e.store.ListHTLCs(wctx, channel.ID)
+
+	// One spend can carry several clocks, and they are all recomputed from the
+	// same inputs — so the spend is looked up once rather than once per clock.
+	seen := map[int64]bool{}
+	var improved int
+	for _, d := range running {
+		if seen[d.SpendEventID] {
+			continue
+		}
+		spend, spendErr := e.store.GetSpend(wctx, d.SpendEventID)
+		if spendErr != nil || spend.ChannelID != channel.ID {
+			continue
+		}
+		seen[d.SpendEventID] = true
+
+		for _, computed := range Compute(Inputs{
+			ConfirmHeight:  spend.BlockHeight,
+			Shape:          spend.Shape,
+			CSVDelayLocal:  channel.CSVDelayLocal,
+			CSVDelayRemote: channel.CSVDelayRemote,
+			HTLCs:          htlcs,
+		}) {
+			_, changed, upErr := e.store.UpsertDeadline(wctx, store.Deadline{
+				SpendEventID:   spend.ID,
+				Kind:           computed.Kind,
+				DeadlineHeight: computed.Height,
+				State:          store.DeadlineCounting,
+				Escalation:     LevelDetected,
+				Assumed:        computed.Assumed,
+				UpdatedAt:      e.now().Unix(),
+			})
+			if upErr != nil {
+				e.log.Error("could not bring a countdown up to date",
+					slog.String("error", upErr.Error()))
+				continue
+			}
+			if changed {
+				improved++
+			}
+		}
+	}
+
+	if improved > 0 {
+		e.log.Info("brought countdowns up to date with what is now known about a channel",
+			slog.Int64("channel_id", channel.ID), slog.Int("countdowns", improved))
+		e.refreshStatus(ctx)
+	}
 }
 
 // onBranchExtended is where the countdowns actually count.
@@ -408,13 +491,15 @@ func (e *Engine) retire(ctx context.Context, d store.Deadline, spend store.Spend
 
 // onSecondOrderSpent stops a countdown that somebody answered.
 func (e *Engine) onSecondOrderSpent(ctx context.Context, ev bus.SecondOrderSpent) {
-	if store.SpendShape(ev.Shape) != store.ShapeJustice {
-		// Only a justice transaction settles a contested output in the user's
-		// favour. A delayed sweep after the deadline is the other outcome, and the
-		// countdown running out is what records that.
+	shape := store.SpendShape(ev.Shape)
+	if shape != store.ShapeJustice && shape != store.ShapeDelayedSweep {
 		return
 	}
 	if ev.SourceSpendEventID == 0 {
+		return
+	}
+	if shape == store.ShapeDelayedSweep {
+		e.settleBySweep(ctx, ev)
 		return
 	}
 
@@ -442,6 +527,64 @@ func (e *Engine) onSecondOrderSpent(ctx context.Context, ev bus.SecondOrderSpent
 		e.log.Info("a countdown was answered before it ran out",
 			slog.Int64("deadline_id", d.ID))
 		e.bus.Publish(bus.DeadlineResolved{DeadlineID: d.ID, ByTxid: txid})
+	}
+	e.refreshStatus(ctx)
+}
+
+// settleBySweep ends a countdown because the contested output was taken.
+//
+// **Evidence beats the clock.** Until now a delayed sweep was ignored and the
+// countdown was left to run out on its own — which is the right answer eventually
+// and the wrong one in the case that matters: a deadline built on the assumed
+// floor can sit later than the real one, so the money leaves and the countdown
+// carries on saying there is time. Watching it happen is better information than
+// counting to a number that was a guess.
+//
+// The witness is what makes this safe to act on. `delayed_sweep` requires the
+// three-item witness of an if-else script with an empty selector, which is the
+// *contested* output specifically — a counterparty collecting their own
+// undelayed output does not look like this.
+//
+// Whose commitment it was decides what it means, exactly as expiry does: our own
+// commitment's delay ending is us claiming our funds, and only somebody else's is
+// a loss. Only the commitment's own clock is settled; payments in flight have
+// their own deadlines and this says nothing about them.
+func (e *Engine) settleBySweep(ctx context.Context, ev bus.SecondOrderSpent) {
+	wctx, cancel := writeCtx(ctx)
+	defer cancel()
+
+	source, err := e.store.GetSpend(wctx, ev.SourceSpendEventID)
+	if err != nil {
+		e.log.Warn("could not look up the close a sweep collected from",
+			slog.String("error", err.Error()))
+		return
+	}
+
+	running, err := e.store.ListDeadlines(wctx, store.DeadlineCounting)
+	if err != nil {
+		e.log.Error("could not read the running countdowns",
+			slog.String("error", err.Error()))
+		return
+	}
+
+	for _, d := range running {
+		if d.SpendEventID != ev.SourceSpendEventID || d.Kind != store.DeadlineCSV {
+			continue
+		}
+		if source.Shape == store.ShapeCommitmentOurs {
+			txid := txidOf(wctx, e.store, ev.SpendEventID)
+			if setErr := e.store.SetDeadlineState(wctx, d.ID,
+				store.DeadlineResolved, txid, e.now().Unix()); setErr != nil {
+				e.log.Error("could not record that your own funds were collected",
+					slog.Int64("deadline_id", d.ID), slog.String("error", setErr.Error()))
+				continue
+			}
+			e.log.Info("the wait on your own channel close ended and the funds were "+
+				"collected", slog.Int64("deadline_id", d.ID))
+			e.bus.Publish(bus.DeadlineResolved{DeadlineID: d.ID, ByTxid: txid})
+			continue
+		}
+		e.expire(wctx, d, source)
 	}
 	e.refreshStatus(ctx)
 }

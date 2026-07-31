@@ -115,6 +115,36 @@ func validateRPCURL(raw string) error {
 	return nil
 }
 
+// UnusedSettings names configuration that was accepted and will do nothing.
+//
+// **Not a validation failure, and not silence either.** Some of this file
+// describes work that is not built yet — the companion towers, the independent
+// second opinions about the other chain — and refusing to start over it would be
+// hostile to somebody preparing a configuration ahead of time. But accepting a
+// setting and quietly ignoring it is the failure this whole project is about: a
+// user who has switched something on is entitled to know it is not doing
+// anything. The daemon logs these once at startup.
+func (c Config) UnusedSettings() []string {
+	var out []string
+	if c.Tower.LND.Enabled {
+		out = append(out, "tower.lnd.enabled is set, but companion watchtowers are "+
+			"not built yet, so nothing is being run or registered")
+	}
+	if c.Tower.TEOS.Enabled {
+		out = append(out, "tower.teos.enabled is set, but companion watchtowers are "+
+			"not built yet, so nothing is being run or registered")
+	}
+	if c.SQ.Witnesses.NeutrinoHeaders {
+		out = append(out, "sq.witnesses.neutrino_headers is set, but independent "+
+			"second opinions about the other chain are not built yet")
+	}
+	if len(c.SQ.Witnesses.Electrum) > 0 {
+		out = append(out, "sq.witnesses.electrum lists servers, but independent "+
+			"second opinions about the other chain are not built yet")
+	}
+	return out
+}
+
 // validateLN checks each configured Lightning node.
 //
 // None at all is not a problem: split detection works without one, and a user

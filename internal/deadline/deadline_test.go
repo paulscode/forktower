@@ -428,14 +428,17 @@ func TestAJusticeTransactionStopsTheClock(t *testing.T) {
 	})
 }
 
-// Somebody sweeping after the delay ran out is the other outcome, and must not
-// be read as the countdown having been answered.
-func TestADelayedSweepDoesNotStopTheClock(t *testing.T) {
+// Watching the contested output leave is better information than counting to a
+// number that may have been a guess. A deadline built on the assumed floor can
+// sit later than the real one, so without this the money goes and the countdown
+// carries on saying there is time.
+func TestASweepOfTheContestedOutputEndsTheCountdownAsALoss(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	channelID := h.channelWithDelays(ptr(144), ptr(1000))
+	channelID := h.channelWithDelays(ptr(144), ptr(5000))
 	spendID := h.commitmentAt(channelID, store.ShapeCommitmentUnknown)
 
+	losses := h.bus.Subscribe("test", bus.KindDeadlineExpiredLoss)
 	h.run()
 	h.extendSQ(500, 600)
 	h.announceSpend(spendID, channelID, store.ShapeCommitmentUnknown)
@@ -443,16 +446,139 @@ func TestADelayedSweepDoesNotStopTheClock(t *testing.T) {
 		return len(h.deadlines(store.DeadlineCounting)) == 1
 	})
 
+	// Far short of the deadline at 5500, which is the point.
+	h.bus.Publish(bus.SecondOrderSpent{
+		SpendEventID: 99, SourceSpendEventID: spendID,
+		Role: string(store.RoleToLocal), Shape: string(store.ShapeDelayedSweep),
+	})
+
+	select {
+	case <-losses:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the contested output was swept and nothing was said")
+	}
+	h.waitFor("the countdown to end", func() bool {
+		return len(h.deadlines(store.DeadlineExpired)) == 1
+	})
+	// And never as though it had been answered.
+	if len(h.deadlines(store.DeadlineResolved)) != 0 {
+		t.Error("somebody taking the money was read as the countdown being answered")
+	}
+}
+
+// The same event on our own commitment is the opposite: the wait ended and we
+// collected. Announcing a loss there would be the same false alarm arriving by
+// another route.
+func TestASweepOfOurOwnOutputIsNotALoss(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	channelID := h.channelWithDelays(ptr(144), ptr(5000))
+	spendID := h.commitmentAt(channelID, store.ShapeCommitmentOurs)
+
+	losses := h.bus.Subscribe("test", bus.KindDeadlineExpiredLoss)
+	h.run()
+	h.extendSQ(500, 600)
+	h.announceSpend(spendID, channelID, store.ShapeCommitmentOurs)
+	h.waitFor("the countdown", func() bool {
+		return len(h.deadlines(store.DeadlineCounting)) == 1
+	})
+
+	h.bus.Publish(bus.SecondOrderSpent{
+		SpendEventID: 99, SourceSpendEventID: spendID,
+		Role: string(store.RoleToLocal), Shape: string(store.ShapeDelayedSweep),
+	})
+
+	h.waitFor("the countdown to be settled", func() bool {
+		return len(h.deadlines(store.DeadlineResolved)) == 1
+	})
+	select {
+	case e := <-losses:
+		t.Errorf("collecting our own funds was announced as a loss: %+v", e)
+	default:
+	}
+}
+
+// Payments in flight have their own clocks, and a sweep of the commitment's
+// contested output says nothing about them.
+func TestASweepDoesNotSettleThePaymentsInFlight(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	channelID := h.channelWithDelays(ptr(144), ptr(5000))
+	if err := h.store.ReplaceHTLCSnapshot(ctx, channelID, 1, []store.HTLCSnapshot{
+		{Direction: "incoming", AmountMsat: 1000, CLTVExpiry: 900},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	spendID := h.commitmentAt(channelID, store.ShapeCommitmentUnknown)
+
+	h.run()
+	h.extendSQ(500, 600)
+	h.announceSpend(spendID, channelID, store.ShapeCommitmentUnknown)
+	h.waitFor("both countdowns", func() bool { return h.eng.Status().Counting == 2 })
+
 	h.bus.Publish(bus.SecondOrderSpent{
 		SpendEventID: 99, SourceSpendEventID: spendID,
 		Shape: string(store.ShapeDelayedSweep),
 	})
-	h.extendSQ(501, 600)
 
-	time.Sleep(50 * time.Millisecond) //nolint:forbidigo // proving an absence
-	if len(h.deadlines(store.DeadlineResolved)) != 0 {
-		t.Error("somebody sweeping after the delay was read as the countdown being answered")
+	h.waitFor("the commitment's clock to end", func() bool {
+		return len(h.deadlines(store.DeadlineExpired)) == 1
+	})
+	running := h.deadlines(store.DeadlineCounting)
+	if len(running) != 1 || running[0].Kind != store.DeadlineHTLCIncoming {
+		t.Errorf("the payment's own clock was settled too: %+v", running)
 	}
+}
+
+// A countdown started from a floor must not stay on that floor for ever. The
+// rule that a missing delay produces a conservative deadline rather than none is
+// only half an answer; the other half is replacing the guess when the truth
+// arrives.
+func TestACountdownIsBroughtUpToDateWhenTheDelayBecomesKnown(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// A channel first seen while it was already closing carries almost nothing.
+	channelID := h.channelWithDelays(nil, nil)
+	spendID := h.commitmentAt(channelID, store.ShapeCommitmentUnknown)
+
+	h.run()
+	h.extendSQ(500, 600)
+	h.announceSpend(spendID, channelID, store.ShapeCommitmentUnknown)
+
+	h.waitFor("a countdown on the floor", func() bool { return h.eng.Status().Assumed == 1 })
+	if got := h.deadlines(store.DeadlineCounting)[0].DeadlineHeight; got != 500+144 {
+		t.Fatalf("the floor put the deadline at %d", got)
+	}
+
+	// The next full poll fills the delay in.
+	if _, _, err := h.store.UpsertChannel(ctx, store.Channel{
+		LNNodeID: "02node", FundingTxID: fundingA, FundingVout: 0,
+		CapacitySat: 1_000_000, ChanType: store.ChanAnchors,
+		CSVDelayLocal: ptr(144), CSVDelayRemote: ptr(2016), UpdatedAt: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.bus.Publish(bus.ChannelUpserted{Channel: bus.ChannelJSON{ID: channelID}})
+
+	h.waitFor("the countdown to be brought up to date", func() bool {
+		got := h.deadlines(store.DeadlineCounting)
+		return len(got) == 1 && got[0].DeadlineHeight == 500+2016
+	})
+	got := h.deadlines(store.DeadlineCounting)[0]
+	if got.Assumed {
+		t.Error("the countdown is still flagged as a guess")
+	}
+	// The tier already reached is not walked back: a warning the user has
+	// already had must not be un-said.
+	if got.Escalation < LevelDetected {
+		t.Errorf("the escalation tier was reset to %d", got.Escalation)
+	}
+	h.waitFor("the dashboard to stop reporting an assumption", func() bool {
+		return h.eng.Status().InputsKnown()
+	})
 }
 
 // A close that leaves the chain does not stop the clock at once. It may confirm
@@ -830,5 +956,123 @@ func TestTheWordingForADayAndForHours(t *testing.T) {
 	}
 	if got := HumanDuration(59 * time.Second); got != aboutAMinute {
 		t.Errorf("under a minute reads as %q", got)
+	}
+}
+
+// A channel nobody is counting anything for is not worth recomputing, and a
+// channel that does not exist is not a reason to fall over.
+func TestRecomputingWhatIsNotThereChangesNothing(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	channelID := h.channelWithDelays(ptr(144), ptr(1000))
+	spendID := h.commitmentAt(channelID, store.ShapeCommitmentUnknown)
+
+	h.run()
+	h.extendSQ(500, 600)
+	h.announceSpend(spendID, channelID, store.ShapeCommitmentUnknown)
+	h.waitFor("the countdown", func() bool { return h.eng.Status().Counting == 1 })
+	before := h.deadlines(store.DeadlineCounting)[0]
+
+	// A channel with no id at all, one that does not exist, and one that has no
+	// countdowns of its own.
+	h.bus.Publish(bus.ChannelUpserted{Channel: bus.ChannelJSON{ID: 0}})
+	h.bus.Publish(bus.ChannelUpserted{Channel: bus.ChannelJSON{ID: 9999}})
+
+	time.Sleep(50 * time.Millisecond) //nolint:forbidigo // proving an absence
+	after := h.deadlines(store.DeadlineCounting)
+	if len(after) != 1 || after[0].DeadlineHeight != before.DeadlineHeight {
+		t.Errorf("a recompute for an unrelated channel moved a countdown: %+v", after)
+	}
+}
+
+// A sweep collecting from something no countdown is measuring is not an error,
+// and must not disturb an unrelated one.
+func TestASweepOfSomethingElseSettlesNothing(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	channelID := h.channelWithDelays(ptr(144), ptr(5000))
+	spendID := h.commitmentAt(channelID, store.ShapeCommitmentUnknown)
+
+	h.run()
+	h.extendSQ(500, 600)
+	h.announceSpend(spendID, channelID, store.ShapeCommitmentUnknown)
+	h.waitFor("the countdown", func() bool { return h.eng.Status().Counting == 1 })
+
+	h.bus.Publish(bus.SecondOrderSpent{
+		SpendEventID: 99, SourceSpendEventID: 4242,
+		Shape: string(store.ShapeDelayedSweep),
+	})
+	h.bus.Publish(bus.SecondOrderSpent{
+		SpendEventID: 99, SourceSpendEventID: 0,
+		Shape: string(store.ShapeDelayedSweep),
+	})
+
+	time.Sleep(50 * time.Millisecond) //nolint:forbidigo // proving an absence
+	if h.eng.Status().Counting != 1 {
+		t.Error("a sweep of something else ended an unrelated countdown")
+	}
+}
+
+// A shape that settles nothing settles nothing. An HTLC being claimed says
+// nothing about the commitment's own window.
+func TestAnUnrelatedSecondOrderShapeIsIgnored(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	channelID := h.channelWithDelays(ptr(144), ptr(5000))
+	spendID := h.commitmentAt(channelID, store.ShapeCommitmentUnknown)
+
+	h.run()
+	h.extendSQ(500, 600)
+	h.announceSpend(spendID, channelID, store.ShapeCommitmentUnknown)
+	h.waitFor("the countdown", func() bool { return h.eng.Status().Counting == 1 })
+
+	for _, shape := range []store.SpendShape{
+		store.ShapeHTLCClaim, store.ShapeUnknown, store.ShapeMutualClose,
+	} {
+		h.bus.Publish(bus.SecondOrderSpent{
+			SpendEventID: 99, SourceSpendEventID: spendID, Shape: string(shape),
+		})
+	}
+
+	time.Sleep(50 * time.Millisecond) //nolint:forbidigo // proving an absence
+	if h.eng.Status().Counting != 1 {
+		t.Error("a shape that settles nothing ended the countdown")
+	}
+}
+
+// The recompute path against a store that has gone must not panic.
+func TestRecomputingAgainstAClosedStoreIsSurvived(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	channelID := h.channelWithDelays(ptr(144), ptr(1000))
+	spendID := h.commitmentAt(channelID, store.ShapeCommitmentUnknown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.eng.Run(ctx) }()
+
+	h.extendSQ(500, 600)
+	h.announceSpend(spendID, channelID, store.ShapeCommitmentUnknown)
+	h.waitFor("the countdown", func() bool { return h.eng.Status().Counting == 1 })
+
+	if err := h.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	h.bus.Publish(bus.ChannelUpserted{Channel: bus.ChannelJSON{ID: channelID}})
+	h.bus.Publish(bus.SecondOrderSpent{
+		SpendEventID: 1, SourceSpendEventID: spendID,
+		Shape: string(store.ShapeDelayedSweep),
+	})
+	time.Sleep(50 * time.Millisecond) //nolint:forbidigo // letting it meet a dead store
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("shutting down reported an error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the engine did not stop after its store went away")
 	}
 }

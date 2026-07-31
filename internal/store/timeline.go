@@ -86,7 +86,13 @@ func (s *Store) ListTimeline(ctx context.Context, afterID int64, limit int) ([]T
 	return out, nil
 }
 
-// CountTimeline reports how many entries exist, for the rotation threshold.
+// CountTimeline reports how many entries exist.
+//
+// Not what decides a rotation — that is TimelineSizeBytes, because entries
+// differ in size by an order of magnitude and a count would seal away far too
+// much or far too little depending on what had happened lately. This is here for
+// diagnostics and for tests that need to know the timeline is being written to
+// at all.
 func (s *Store) CountTimeline(ctx context.Context) (int64, error) {
 	var n int64
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM timeline`).Scan(&n); err != nil {

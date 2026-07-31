@@ -499,6 +499,61 @@ function renderChannels(rows) {
 }
 
 // ---------------------------------------------------------------------------
+// Details.
+// ---------------------------------------------------------------------------
+
+// What the exposure table's rows point at. The table answers who, how much and
+// how long; this answers "what actually happened", for a reader who has asked.
+//
+// It has to exist, and that is not a stylistic point: a status telling somebody
+// to open Details when there is no Details is worse than saying nothing, because
+// they will go looking and conclude the page is broken.
+function renderDetails(spends, deadlines) {
+  const spendList = el('details-spends');
+  const deadlineList = el('details-deadlines');
+  clear(spendList);
+  clear(deadlineList);
+
+  const events = spends || [];
+  const clocks = deadlines || [];
+  show(el('details-empty'), events.length === 0 && clocks.length === 0);
+
+  for (const spend of events) {
+    const display = spend.display || {};
+    const row = make('li');
+    row.appendChild(make('span', 'what', display.what || ''));
+    // Everything a reader opened this for: where, which transaction, which
+    // block, and whether it is a fact about the chain or only a sighting.
+    const facts = [display.where, display.short_txid];
+    if (spend.block_height) {
+      facts.push('block ' + spend.block_height);
+    }
+    if (!display.confirmed) {
+      facts.push('not yet in a block');
+    }
+    row.appendChild(make('span', 'facts', facts.filter(Boolean).join(' · ')));
+    spendList.appendChild(row);
+  }
+
+  for (const clock of clocks) {
+    const display = clock.display || {};
+    const row = make('li');
+    row.appendChild(make('span', 'what', display.what || ''));
+    const facts = [];
+    if (display.time_left) {
+      facts.push((display.time_left_is_estimate ? '~' : '') + display.time_left);
+    }
+    facts.push(clock.remaining_blocks + ' blocks left');
+    facts.push('at block ' + clock.deadline_height);
+    row.appendChild(make('span', 'facts', facts.join(' · ')));
+    if (display.note) {
+      row.appendChild(make('p', 'why', display.note));
+    }
+    deadlineList.appendChild(row);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Watching, and asking for a second look.
 // ---------------------------------------------------------------------------
 
@@ -547,6 +602,10 @@ async function refresh() {
 
     const channels = await api('GET', '/api/v1/channels');
     renderChannels(channels);
+
+    const spends = await api('GET', '/api/v1/spends');
+    const deadlines = await api('GET', '/api/v1/deadlines');
+    renderDetails(spends, deadlines);
 
     const alerts = await api('GET', '/api/v1/alerts');
     renderAlerts(alerts);
@@ -601,7 +660,7 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined' && window.d
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderHeadline, renderReadiness, renderAlerts, renderTimeline, renderAdvanced,
-    renderChannels, renderStandDown, formatSats,
+    renderChannels, renderDetails, renderStandDown, formatSats,
     describeTestResults, formatDuration, formatPercent, setText, KNOWN_STATES,
     refresh, api,
   };

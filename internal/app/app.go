@@ -118,6 +118,13 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 	}
 	log.Info("storage ready", slog.String("path", st.Path()))
 
+	// Said once, at startup. A setting somebody switched on that does nothing is
+	// exactly the sort of quiet the rest of this daemon is built to avoid.
+	for _, unused := range cfg.UnusedSettings() {
+		log.Warn("a setting in your configuration does nothing yet",
+			slog.String("note", unused))
+	}
+
 	a.bus = bus.New(log)
 
 	if a.sf, err = a.buildView(deps.SF, cfg.SF, "sf", log); err != nil {

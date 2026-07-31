@@ -459,3 +459,78 @@ test('a page from a version without the check shows no banner', () => {
   assert.ok(byID['stood-down'].className.includes('hidden'),
     'an empty readiness list was treated as watching being off');
 });
+
+// ---------------------------------------------------------------------------
+// Details.
+// ---------------------------------------------------------------------------
+
+test('the Details the rows point at actually shows what happened', () => {
+  app.renderDetails(
+    [{
+      block_height: 961753,
+      display: {
+        what: 'Somebody closed this channel \u2014 Forktower cannot tell whether it was fair.',
+        where: 'the other chain',
+        short_txid: 'deadbeef\u2026cafe1234',
+        confirmed: true,
+      },
+    }],
+    [{
+      remaining_blocks: 847,
+      deadline_height: 962600,
+      display: {
+        what: 'How long you have to respond to a channel close on the other chain',
+        time_left: 'about 18 days',
+        time_left_is_estimate: true,
+      },
+    }],
+  );
+
+  const shown = textOf(byID['details-spends']) + ' ' + textOf(byID['details-deadlines']);
+  assert.ok(shown.includes('cannot tell whether it was fair'),
+    'the explanation is missing');
+  // A reader who opened Details asked for these.
+  assert.ok(shown.includes('deadbeef'), 'the transaction is missing');
+  assert.ok(shown.includes('961753'), 'the block height is missing');
+  assert.ok(shown.includes('847 blocks left'), 'the block count is missing');
+  assert.ok(shown.includes('about 18 days'), 'the time is missing');
+  assert.ok(byID['details-empty'].className.includes('hidden'),
+    '"nothing has happened" was shown alongside things that happened');
+});
+
+test('an unconfirmed sighting says so in Details', () => {
+  app.renderDetails([{
+    display: { what: 'A close is on its way.', where: 'the other chain',
+      short_txid: 'aa\u2026bb', confirmed: false },
+  }], []);
+
+  assert.ok(textOf(byID['details-spends']).includes('not yet in a block'),
+    'a sighting was shown as though it were confirmed');
+});
+
+test('a countdown resting on a guess says so in Details', () => {
+  app.renderDetails([], [{
+    remaining_blocks: 100, deadline_height: 600,
+    display: {
+      what: 'How long you have to respond to a channel close on the other chain',
+      note: 'Your Lightning node did not say how long this window is.',
+    },
+  }]);
+
+  assert.ok(textOf(byID['details-deadlines']).includes('did not say how long'),
+    'a countdown built on a floor was shown as though it were known');
+});
+
+test('with nothing to show, Details says so rather than sitting empty', () => {
+  app.renderDetails([], []);
+
+  assert.ok(!byID['details-empty'].className.includes('hidden'),
+    'an empty Details gave the reader nothing at all');
+  assert.strictEqual(byID['details-spends'].children.length, 0, 'rows were left behind');
+});
+
+test('Details renders nothing at all from a response with no display block', () => {
+  // A field renamed on the daemon's side must not throw and blank the page.
+  app.renderDetails([{}], [{}]);
+  assert.strictEqual(byID['details-spends'].children.length, 1, 'the row was dropped');
+});
