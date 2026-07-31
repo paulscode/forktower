@@ -257,3 +257,159 @@ func TestTheDaemonWatchesTheOtherChain(t *testing.T) {
 		return err == nil && got != ""
 	})
 }
+
+// The manual rescan exists because the daemon cannot always know it missed
+// something. This is the case it was built for: the record of what happened on
+// the other chain is gone, and asking for a re-read brings it back.
+func TestARescanRediscoversWhatWasWipedFromTheRecord(t *testing.T) {
+	t.Parallel()
+
+	h := newHarnessWith(t, nil, func(d *app.Deps) {
+		d.LNSources = []registry.Source{}
+	})
+	h.start(t)
+
+	// Watching has to have got somewhere before there is anything behind it.
+	waitFor(t, "the watcher to record where it has got to", func() bool {
+		return watcherHeight(t, h) > 0
+	})
+
+	// A separation point, so there is somewhere to sweep back to.
+	st := openDaemonStore(t, h)
+	if err := st.SaveSplitState(context.Background(), store.Split{
+		State: store.StateSplit, ForkHeight: 1, ForkHash: "aa", DetectedAt: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Close()
+
+	resp := postJSON(t, h, "/api/v1/rescan", "{}")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("asking for a rescan returned %d", resp.StatusCode)
+	}
+}
+
+// Standing down is refused while a countdown is running, and that refusal is the
+// whole reason it is a separate endpoint from confirming a split is over.
+func TestStandingDownIsRefusedWhileACountdownRuns(t *testing.T) {
+	t.Parallel()
+
+	h := newHarnessWith(t, nil, func(d *app.Deps) {
+		d.LNSources = []registry.Source{}
+	})
+	h.start(t)
+	waitFor(t, "the daemon to settle", func() bool { return watcherHeight(t, h) > 0 })
+
+	st := openDaemonStore(t, h)
+	ctx := context.Background()
+	if err := st.UpsertLNNode(ctx, store.LNNode{
+		ID: "02node", Impl: store.ImplLND, LastSeenAt: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	channelID, _, err := st.UpsertChannel(ctx, store.Channel{
+		LNNodeID: "02node", FundingTxID: stubFunding, FundingVout: 0,
+		CapacitySat: 1000, ChanType: store.ChanAnchors, UpdatedAt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spendID, _, err := st.RecordSpend(ctx, store.Spend{
+		Branch: store.BranchSQ, ChannelID: channelID,
+		OutpointTxID: stubFunding, OutpointVout: 0,
+		SpendTxID: stubFunding, SpendTxHex: "00", BlockHash: "aa", BlockHeight: 5,
+		Shape: store.ShapeCommitmentUnknown, Status: store.SpendConfirmed,
+		FirstSeenAt: 1, UpdatedAt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.UpsertDeadline(ctx, store.Deadline{
+		SpendEventID: spendID, Kind: store.DeadlineCSV, DeadlineHeight: 500,
+		State: store.DeadlineCounting, UpdatedAt: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Close()
+
+	resp := postJSON(t, h, "/api/v1/watch/stand-down", "")
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("standing down mid-countdown returned %d, want a refusal", resp.StatusCode)
+	}
+}
+
+// Turning watching off, and back on, through the daemon as it really runs.
+func TestWatchingCanBeTurnedOffAndBackOn(t *testing.T) {
+	t.Parallel()
+
+	h := newHarnessWith(t, nil, func(d *app.Deps) {
+		d.LNSources = []registry.Source{}
+	})
+	h.start(t)
+	waitFor(t, "the daemon to settle", func() bool { return watcherHeight(t, h) > 0 })
+
+	if resp := postJSON(t, h, "/api/v1/watch/stand-down", ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("standing down returned %d", resp.StatusCode)
+	}
+	if active := watchingActive(t, h); active {
+		t.Error("the dashboard still says watching is on")
+	}
+
+	if resp := postJSON(t, h, "/api/v1/watch/resume", ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("resuming returned %d", resp.StatusCode)
+	}
+	if active := watchingActive(t, h); !active {
+		t.Error("the dashboard still says watching is off")
+	}
+}
+
+// openDaemonStore reads the running daemon's database through a second handle.
+func openDaemonStore(t *testing.T, h *harness) *store.Store {
+	t.Helper()
+	st, err := store.Open(context.Background(), h.cfg.Store.Path)
+	if err != nil {
+		t.Fatalf("reopening the database: %v", err)
+	}
+	return st
+}
+
+func watcherHeight(t *testing.T, h *harness) int32 {
+	t.Helper()
+	for _, item := range readinessItems(t, h) {
+		if item["id"] == "watcher_progressing" {
+			if ok, _ := item["ok"].(bool); ok {
+				return 1
+			}
+		}
+	}
+	return 0
+}
+
+func watchingActive(t *testing.T, h *harness) bool {
+	t.Helper()
+	for _, item := range readinessItems(t, h) {
+		if item["id"] == "watching_active" {
+			ok, _ := item["ok"].(bool)
+			return ok
+		}
+	}
+	t.Fatal("the readiness list does not say whether watching is on")
+	return false
+}
+
+func postJSON(t *testing.T, h *harness, path, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		h.base+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", h.base)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}

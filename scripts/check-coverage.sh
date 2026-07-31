@@ -53,6 +53,10 @@ declare -A MIN=(
   # read, and which requests are refused. The handlers are exercised end to end
   # over httptest, so there is no container excuse for a gap here either.
   [internal/api]=90
+  # One persisted flag and the reading of it. No I/O beyond a single meta key,
+  # and the failure mode that matters — a switch that flips in memory and does
+  # not reach disk — is reachable from a test.
+  [internal/standdown]=95
   # The words the program says to a person, and the check that stops its own
   # names reaching them. Pure string handling with no I/O and every branch
   # reachable from a test; a gap here is a gap in the one thing it does.

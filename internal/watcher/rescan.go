@@ -34,8 +34,21 @@ func (s sweep) pending() bool { return s.Target > 0 && s.Next <= s.Target }
 // Lightning node, or who has reason to think something was missed, should be
 // able to ask rather than wait. Never blocks — the sweep happens on the
 // watcher's own goroutine, in slices, between blocks.
-func (w *Watcher) Rescan(ctx context.Context, from int32) {
-	w.queueSweep(ctx, from, "you asked for it")
+//
+// Reports the range it queued, so the caller can say what is about to happen
+// rather than only that something was asked for. `queued` is false when there
+// was nothing behind the current position to sweep.
+func (w *Watcher) Rescan(ctx context.Context, from int32) (queuedFrom, queuedTo int32, queued bool) {
+	return w.queueSweep(ctx, from, "you asked for it")
+}
+
+// RescanFromFork sweeps everything since the chains separated, on request.
+//
+// The same thing the daemon does for itself when a split is found, offered to a
+// user who has reason to want it done again. Reports false when there is no
+// separation point to sweep back to.
+func (w *Watcher) RescanFromFork(ctx context.Context) (queuedFrom, queuedTo int32, queued bool) {
+	return w.rescanFromFork(ctx, "you asked for it")
 }
 
 // rescanFromFork sweeps everything since the chains separated.
@@ -44,21 +57,21 @@ func (w *Watcher) Rescan(ctx context.Context, from int32) {
 // split has a high-water mark at the current tip and knows nothing about the
 // blocks between the separation and now — which is exactly the window in which a
 // channel would have been attacked on the chain nobody was watching.
-func (w *Watcher) rescanFromFork(ctx context.Context, why string) {
+func (w *Watcher) rescanFromFork(ctx context.Context, why string) (from, to int32, queued bool) {
 	split, err := w.store.GetSplitState(ctx)
 	if err != nil {
 		w.log.Warn("could not read where the chains separated, so no catch-up scan "+
 			"was started", slog.String("error", err.Error()))
-		return
+		return 0, 0, false
 	}
 	if !split.ForkKnown() || split.ForkHeight <= 0 {
 		// Nothing to sweep back to. Before a split there is no separation point,
 		// and the live loop has been following the chain all along.
-		return
+		return 0, 0, false
 	}
 	// The fork block itself is shared by both chains, so the first block that can
 	// differ is the one after it.
-	w.queueSweep(ctx, split.ForkHeight+1, why)
+	return w.queueSweep(ctx, split.ForkHeight+1, why)
 }
 
 // queueSweep records a range to sweep, widening whatever was already queued.
@@ -67,7 +80,9 @@ func (w *Watcher) rescanFromFork(ctx context.Context, why string) {
 // covering both, and the wider of two overlapping ranges is always the safe
 // choice. A sweep that has already passed a height does not go back for it —
 // that pass recorded what it found, and recording is idempotent.
-func (w *Watcher) queueSweep(ctx context.Context, from int32, why string) {
+func (w *Watcher) queueSweep(
+	ctx context.Context, from int32, why string,
+) (queuedFrom, queuedTo int32, queued bool) {
 	if from < 1 {
 		from = 1
 	}
@@ -80,10 +95,10 @@ func (w *Watcher) queueSweep(ctx context.Context, from int32, why string) {
 	if target <= 0 {
 		// Nothing has been scanned live yet, so there is no "behind" to sweep. The
 		// live loop's own gap handling covers everything from here.
-		return
+		return 0, 0, false
 	}
 	if from > target {
-		return
+		return 0, 0, false
 	}
 
 	next := from
@@ -100,6 +115,7 @@ func (w *Watcher) queueSweep(ctx context.Context, from int32, why string) {
 		slog.Int("from_height", int(next)),
 		slog.Int("to_height", int(target)),
 		slog.String("reason", why))
+	return next, target, true
 }
 
 // setSweep records the sweep in memory and on disk, so a restart resumes rather

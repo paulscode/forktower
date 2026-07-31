@@ -19,6 +19,7 @@ import (
 	"github.com/paulscode/forktower/internal/registry"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
+	"github.com/paulscode/forktower/internal/watcher"
 )
 
 // fakeSentinel is a scriptable stand-in for the detection engine, so a handler
@@ -153,6 +154,8 @@ type harness struct {
 	alerter *fakeAlerter
 	ln      *fakeLightning
 	dl      *fakeDeadlines
+	wa      *fakeWatcher
+	sd      *fakeStandDown
 	clock   *atomic.Int64
 	ts      *httptest.Server
 }
@@ -195,6 +198,83 @@ func (f *fakeDeadlines) set(s deadline.Status) {
 	f.status = s
 }
 
+// fakeWatcher stands in for the engine that reads the other chain.
+type fakeWatcher struct {
+	mu       sync.Mutex
+	progress watcher.Progress
+	// queued records what a rescan was asked for, and refused says to refuse.
+	queuedFrom int32
+	refuse     bool
+	calls      int
+}
+
+func (f *fakeWatcher) Progress() watcher.Progress {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.progress
+}
+
+func (f *fakeWatcher) Rescan(
+	_ context.Context, from int32,
+) (queuedFrom, queuedTo int32, queued bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.queuedFrom = from
+	if f.refuse {
+		return 0, 0, false
+	}
+	return from, from + 100, true
+}
+
+func (f *fakeWatcher) RescanFromFork(
+	context.Context,
+) (queuedFrom, queuedTo int32, queued bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.queuedFrom = -1
+	if f.refuse {
+		return 0, 0, false
+	}
+	return 500, 600, true
+}
+
+func (f *fakeWatcher) set(mutate func(*fakeWatcher)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	mutate(f)
+}
+
+func (f *fakeWatcher) read() fakeWatcher {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return fakeWatcher{queuedFrom: f.queuedFrom, calls: f.calls}
+}
+
+// fakeStandDown stands in for the switch.
+type fakeStandDown struct {
+	mu   sync.Mutex
+	down bool
+	fail error
+}
+
+func (f *fakeStandDown) Active() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.down
+}
+
+func (f *fakeStandDown) Set(_ context.Context, down bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	f.down = down
+	return nil
+}
+
 func newHarness(t *testing.T, mutate func(*Config)) *harness {
 	t.Helper()
 	ctx := context.Background()
@@ -212,6 +292,8 @@ func newHarness(t *testing.T, mutate func(*Config)) *harness {
 	al := newFakeAlerter("my-phone")
 	ln := &fakeLightning{}
 	dl := &fakeDeadlines{}
+	wa := &fakeWatcher{progress: watcher.Progress{Height: 900}}
+	sd := &fakeStandDown{}
 
 	// A self-test on record by default, so the transport check reports a real
 	// outcome rather than "not tested yet" in every unrelated test.
@@ -224,7 +306,7 @@ func newHarness(t *testing.T, mutate func(*Config)) *harness {
 		mutate(&cfg)
 	}
 
-	srv, err := New(st, sen, al, ln, dl, cfg, nil, func() time.Time {
+	srv, err := New(st, sen, al, ln, dl, wa, sd, cfg, nil, func() time.Time {
 		return time.Unix(clock.Load(), 0)
 	})
 	if err != nil {
@@ -235,7 +317,7 @@ func newHarness(t *testing.T, mutate func(*Config)) *harness {
 	t.Cleanup(ts.Close)
 
 	return &harness{srv: srv, store: st, sen: sen, alerter: al, ln: ln, dl: dl,
-		clock: clock, ts: ts}
+		wa: wa, sd: sd, clock: clock, ts: ts}
 }
 
 // do sends a request with an Origin matching the server, which is what a browser

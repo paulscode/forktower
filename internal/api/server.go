@@ -20,6 +20,7 @@ import (
 	"github.com/paulscode/forktower/internal/registry"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
+	"github.com/paulscode/forktower/internal/watcher"
 )
 
 // Error codes. Stable strings: a caller branches on these, not on the message,
@@ -32,6 +33,18 @@ const (
 	CodeWrongState   = "wrong_state"
 	CodeRateLimited  = "rate_limited"
 	CodeInternal     = "internal"
+	// CodeDeadlinesCounting refuses to wind watching down while a clock is
+	// running against the user.
+	CodeDeadlinesCounting = "deadlines_counting"
+)
+
+// The routes the dashboard is told to call. Named because they appear both here
+// and in the action a readiness item offers, and a path spelled twice is a path
+// that can be spelled differently.
+const (
+	PathRescan    = "/api/v1/rescan"
+	PathStandDown = "/api/v1/watch/stand-down"
+	PathResume    = "/api/v1/watch/resume"
 )
 
 // Sentinel is what the API needs from the detection engine. An interface so the
@@ -63,6 +76,20 @@ type Lightning interface {
 	Health() []registry.SourceHealth
 }
 
+// Watcher is what the API needs from the engine that reads the other chain: how
+// far it has got, and the ability to be asked to read some of it again.
+type Watcher interface {
+	Progress() watcher.Progress
+	Rescan(ctx context.Context, from int32) (queuedFrom, queuedTo int32, queued bool)
+	RescanFromFork(ctx context.Context) (queuedFrom, queuedTo int32, queued bool)
+}
+
+// StandDown is the switch that turns watching off on purpose.
+type StandDown interface {
+	Active() bool
+	Set(ctx context.Context, down bool) error
+}
+
 // Deadlines is what the API needs from the countdown engine. Nil is allowed, and
 // means the countdowns are not being reported yet.
 type Deadlines interface {
@@ -90,6 +117,8 @@ type Server struct {
 	alerter   Alerter
 	ln        Lightning
 	deadlines Deadlines
+	watcher   Watcher
+	standDown StandDown
 	cfg       Config
 	now       func() time.Time
 	log       *slog.Logger
@@ -105,6 +134,8 @@ func New(
 	al Alerter,
 	ln Lightning,
 	dl Deadlines,
+	wa Watcher,
+	sd StandDown,
 	cfg Config,
 	log *slog.Logger,
 	now func() time.Time,
@@ -133,6 +164,7 @@ func New(
 
 	s := &Server{
 		store: st, sentinel: sen, alerter: al, ln: ln, deadlines: dl,
+		watcher: wa, standDown: sd,
 		cfg: cfg, now: now, log: log,
 		mux: http.NewServeMux(),
 	}
@@ -159,6 +191,9 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/alerts/{id}/ack", s.guard(s.handleAckAlert))
 	s.mux.Handle("POST /api/v1/alerts/test", s.guard(s.handleTestAlerts))
 	s.mux.Handle("POST /api/v1/split/confirm-resolution", s.guard(s.handleConfirmResolution))
+	s.mux.Handle("POST "+PathRescan, s.guard(s.handleRescan))
+	s.mux.Handle("POST "+PathStandDown, s.guard(s.handleStandDown))
+	s.mux.Handle("POST "+PathResume, s.guard(s.handleResume))
 }
 
 // Handler returns the server's routes with the response headers applied.

@@ -499,6 +499,38 @@ function renderChannels(rows) {
 }
 
 // ---------------------------------------------------------------------------
+// Watching, and asking for a second look.
+// ---------------------------------------------------------------------------
+
+// The message shown while watching has been turned off. Written out rather than
+// assembled, because it is the one line on this page that has to say "nothing is
+// being checked" without any hedging.
+const STOOD_DOWN =
+  'Watching the other chain is turned off. Nothing there is being checked.';
+
+function renderStandDown(items) {
+  const banner = el('stood-down');
+  const item = (items || []).find((entry) => entry.id === 'watching_active');
+  const off = Boolean(item) && !item.ok;
+
+  show(banner, off);
+  setText(banner, off ? STOOD_DOWN : '');
+}
+
+async function requestRescan() {
+  const result = el('rescan-result');
+  setText(result, 'Asking…');
+  try {
+    const queued = await api('POST', '/api/v1/rescan', {});
+    setText(result, queued.display || 'Re-reading the other chain.');
+  } catch (err) {
+    // The refusal this endpoint gives when there is nothing behind the current
+    // position is a real answer, not a failure, and is shown as such.
+    setText(result, err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Polling.
 // ---------------------------------------------------------------------------
 
@@ -509,6 +541,7 @@ async function refresh() {
 
     renderHeadline(status.headline);
     renderReadiness(status.readiness);
+    renderStandDown(status.readiness);
     renderAdvanced(status);
     setText(el('connection'), '');
 
@@ -549,6 +582,7 @@ async function signIn(event) {
 function start() {
   el('signin-form').addEventListener('submit', signIn);
   el('test-alerts').addEventListener('click', sendTestAlert);
+  el('rescan').addEventListener('click', requestRescan);
 
   refresh();
   pollTimer = window.setInterval(refresh, POLL_INTERVAL_MS);
@@ -567,7 +601,7 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined' && window.d
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderHeadline, renderReadiness, renderAlerts, renderTimeline, renderAdvanced,
-    renderChannels, formatSats,
+    renderChannels, renderStandDown, formatSats,
     describeTestResults, formatDuration, formatPercent, setText, KNOWN_STATES,
     refresh, api,
   };

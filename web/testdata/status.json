@@ -86,6 +86,22 @@
       "action": null
     },
     {
+      "id": "watching_active",
+      "ok": true,
+      "label": "Watching the other chain",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "watcher_progressing",
+      "ok": true,
+      "label": "Reading the other chain",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
       "id": "ln_connected",
       "ok": false,
       "label": "No Lightning node connected",

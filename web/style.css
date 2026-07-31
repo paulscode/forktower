@@ -197,3 +197,16 @@ footer { max-width: 46rem; margin: 0 auto; }
   font-size: 0.85rem;
   color: var(--muted);
 }
+
+/* The stand-down banner. Persistent and at the very top, because this is the one
+   condition where every other thing on the page can be green while nothing is
+   being watched — somebody who turned it off last month and forgot has to be
+   told without having to look for it. */
+.banner {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--warn, #b8860b);
+  background: var(--warn-bg, rgba(184, 134, 11, 0.12));
+  font-weight: 600;
+}

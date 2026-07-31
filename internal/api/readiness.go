@@ -21,6 +21,8 @@ const (
 	CheckSFEnforcing         = "sf_enforcing"
 	CheckAlertTransports     = "alert_transports"
 	CheckLNConnected         = "ln_connected"
+	CheckWatchingActive      = "watching_active"
+	CheckWatcherProgressing  = "watcher_progressing"
 	CheckChannelsInventoried = "channels_inventoried"
 	CheckDeadlineInputs      = "deadline_inputs_known"
 )
@@ -61,6 +63,8 @@ func (s *Server) Readiness(ctx context.Context) []ReadinessItem {
 		s.checkSQOnBranch(checks),
 		s.checkSFEnforcing(sfIdentity, sfView),
 		s.checkAlertTransports(ctx),
+		s.checkWatchingActive(),
+		s.checkWatcherProgressing(),
 		s.checkLNConnected(),
 		s.checkChannelsInventoried(ctx),
 		s.checkDeadlineInputs(),
@@ -321,6 +325,77 @@ func humanList(items []string) string {
 		return items[0] + " and " + items[1]
 	default:
 		return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
+	}
+}
+
+// checkWatchingActive reports whether the other chain is being watched at all.
+//
+// Listed first among the M2 checks and stated plainly, because standing down is
+// the one condition where everything else on this page can be green while
+// nothing is being watched. Somebody who stood down last month and forgot must
+// be able to see that from the top of the page rather than by noticing an
+// absence.
+func (s *Server) checkWatchingActive() ReadinessItem {
+	if s.standDown == nil || s.standDown.Active() {
+		return ReadinessItem{
+			ID: CheckWatchingActive, OK: true,
+			Label: "Watching the other chain",
+		}
+	}
+	return ReadinessItem{
+		ID: CheckWatchingActive, OK: false,
+		Label: "You have turned off watching the other chain",
+		Why: "Nothing on the other chain is being checked. Forktower is still " +
+			"running, so everything else here will look normal.",
+		Action: &Action{Label: "Start watching again", Endpoint: PathResume},
+	}
+}
+
+// checkWatcherProgressing reports whether reading the other chain is getting
+// anywhere.
+//
+// The failure this exists for is a quiet one. The mark that says how far has
+// been read only moves after a block has been fully processed, so a block that
+// fails every attempt freezes it — while the daemon stays up, the backend
+// answers, and every other indicator stays green. Nobody would notice, which is
+// exactly why it is worth a line of its own.
+func (s *Server) checkWatcherProgressing() ReadinessItem {
+	if s.watcher == nil {
+		return ReadinessItem{
+			ID: CheckWatcherProgressing, OK: false, informational: true,
+			Label: "Not reading the other chain yet",
+		}
+	}
+
+	progress := s.watcher.Progress()
+	switch {
+	case progress.Stalled:
+		return ReadinessItem{
+			ID: CheckWatcherProgressing, OK: false,
+			Label: "Stopped reading the other chain",
+			Why: "Forktower cannot get past a block on the other chain, so nothing " +
+				"new there is being checked. It is still running, which is why this " +
+				"needs saying.",
+			Detail: progress.Why,
+		}
+	case progress.Height == 0:
+		return ReadinessItem{
+			ID: CheckWatcherProgressing, OK: false, informational: true,
+			Label: "Has not read the other chain yet",
+			Why:   "Forktower is waiting for its first block from the other chain.",
+		}
+	case progress.Rescanning():
+		return ReadinessItem{
+			ID: CheckWatcherProgressing, OK: true,
+			Label: "Catching up on the other chain",
+			Why: "Forktower is re-reading earlier blocks. It is watching for new " +
+				"ones at the same time.",
+		}
+	default:
+		return ReadinessItem{
+			ID: CheckWatcherProgressing, OK: true,
+			Label: "Reading the other chain",
+		}
 	}
 }
 

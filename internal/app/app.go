@@ -25,6 +25,7 @@ import (
 	"github.com/paulscode/forktower/internal/registry/cln"
 	"github.com/paulscode/forktower/internal/registry/lnd"
 	"github.com/paulscode/forktower/internal/sentinel"
+	"github.com/paulscode/forktower/internal/standdown"
 	"github.com/paulscode/forktower/internal/store"
 	"github.com/paulscode/forktower/internal/watcher"
 )
@@ -48,18 +49,19 @@ type App struct {
 	cfg config.Config
 	log *slog.Logger
 
-	store    *store.Store
-	bus      *bus.Bus
-	sf, sq   chainview.ChainView
-	sentinel *sentinel.Sentinel
-	registry *registry.Registry
-	watcher  *watcher.Watcher
-	deadline *deadline.Engine
-	alerter  *alert.Alerter
-	timeline *store.TimelineSubscriber
-	api      *api.Server
-	server   *http.Server
-	listener net.Listener
+	store     *store.Store
+	bus       *bus.Bus
+	sf, sq    chainview.ChainView
+	sentinel  *sentinel.Sentinel
+	registry  *registry.Registry
+	watcher   *watcher.Watcher
+	deadline  *deadline.Engine
+	standDown *standdown.Switch
+	alerter   *alert.Alerter
+	timeline  *store.TimelineSubscriber
+	api       *api.Server
+	server    *http.Server
+	listener  net.Listener
 }
 
 // Deps lets a test substitute the parts that would otherwise need real nodes.
@@ -185,10 +187,25 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 		return nil, fmt.Errorf("setting up channel watching: %w", err)
 	}
 
-	// The sentinel is the guard: when it cannot be sure the second view is on the
-	// chain it should be, scanning stops. A clean report about the wrong chain is
-	// worse than no report, because the user is told they are covered.
-	a.watcher, err = watcher.New(st, a.bus, a.sq, store.BranchSQ, a.sentinel,
+	a.standDown, err = standdown.New(ctx, st)
+	if err != nil {
+		a.closeOnFailure()
+		return nil, fmt.Errorf("reading whether watching was stood down: %w", err)
+	}
+	if a.standDown.Down() {
+		// Said every time, because this is the one condition where everything else
+		// looks normal and nothing is being watched.
+		log.Warn("watching the other chain is stood down, because somebody turned " +
+			"it off — nothing there is being checked until it is turned back on")
+	}
+
+	// Two reasons to stop scanning, and they are different in kind. The sentinel
+	// pauses when it cannot be sure the second view is on the chain it should be,
+	// which is a fault. The switch is a person deciding they do not want it
+	// watched, which is not. Either one stops the reading; only the first is
+	// something to fix.
+	guard := watchGuard{sentinel: a.sentinel, standDown: a.standDown}
+	a.watcher, err = watcher.New(st, a.bus, a.sq, store.BranchSQ, guard,
 		watcher.Config{}, log.With(slog.String("component", "watcher")), now)
 	if err != nil {
 		a.closeOnFailure()
@@ -205,13 +222,14 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 		return nil, fmt.Errorf("setting up the countdowns: %w", err)
 	}
 
-	a.api, err = api.New(st, a.sentinel, a.alerter, a.registry, a.deadline, api.Config{
-		Auth:                  cfg.UI.Auth,
-		PasswordHash:          cfg.UI.PasswordHash,
-		AllowedOrigins:        cfg.UI.AllowedOrigins,
-		FrameAncestors:        cfg.UI.FrameAncestors,
-		PlatformNotifications: cfg.Alerts.PlatformNotifications,
-	}, log.With(slog.String("component", "api")), now)
+	a.api, err = api.New(st, a.sentinel, a.alerter, a.registry, a.deadline,
+		a.watcher, a.standDown, api.Config{
+			Auth:                  cfg.UI.Auth,
+			PasswordHash:          cfg.UI.PasswordHash,
+			AllowedOrigins:        cfg.UI.AllowedOrigins,
+			FrameAncestors:        cfg.UI.FrameAncestors,
+			PlatformNotifications: cfg.Alerts.PlatformNotifications,
+		}, log.With(slog.String("component", "api")), now)
 	if err != nil {
 		a.closeOnFailure()
 		return nil, fmt.Errorf("setting up the dashboard: %w", err)
@@ -245,6 +263,21 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 	}
 
 	return a, nil
+}
+
+// watchGuard is the two reasons scanning stops, in one answer.
+//
+// Kept as its own type rather than a closure so that the reasoning above has
+// somewhere to live: a fault and a decision both stop the reading, and only one
+// of them is a problem.
+type watchGuard struct {
+	sentinel  *sentinel.Sentinel
+	standDown *standdown.Switch
+}
+
+// Paused implements watcher.Guard.
+func (g watchGuard) Paused() bool {
+	return g.sentinel.Paused() || g.standDown.Down()
 }
 
 // buildView makes one chain view, or takes the one a test supplied.

@@ -237,7 +237,8 @@ func TestReadinessOrderIsStable(t *testing.T) {
 
 	want := []string{
 		CheckSQBackendDistinct, CheckSQSynced, CheckSQOnBranch,
-		CheckSFEnforcing, CheckAlertTransports, CheckLNConnected,
+		CheckSFEnforcing, CheckAlertTransports,
+		CheckWatchingActive, CheckWatcherProgressing, CheckLNConnected,
 		CheckChannelsInventoried, CheckDeadlineInputs,
 	}
 	got := h.srv.Readiness(context.Background())

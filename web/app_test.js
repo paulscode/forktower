@@ -21,6 +21,20 @@ const HOSTILE = '<img src=x onerror=alert(1)>';
 
 let failures = 0;
 
+// The summary is reported when the process exits rather than at the bottom of
+// this file, and that is not a style choice. Three tests were once appended
+// below an inline summary and were therefore never counted by it: they ran,
+// they could have failed, and the run would still have reported success. Hung
+// on the exit hook, a test added anywhere counts.
+process.on('exit', () => {
+  if (failures > 0) {
+    console.error(failures + ' rendering test(s) failed');
+    process.exitCode = 1;
+    return;
+  }
+  console.log('all rendering tests passed');
+});
+
 function test(name, fn) {
   try {
     fn();
@@ -412,8 +426,36 @@ test('a real exposure table from the daemon renders', () => {
   }
 });
 
-if (failures > 0) {
-  console.error(failures + ' rendering test(s) failed');
-  process.exit(1);
-}
-console.log('all rendering tests passed');
+// The one condition where every other thing on the page can be green while
+// nothing is being watched. Somebody who turned it off last month and forgot has
+// to be told without having to look for it.
+test('turning watching off puts a banner at the top of the page', () => {
+  app.renderStandDown([
+    { id: 'sq_synced', ok: true, label: 'Watching the other chain' },
+    { id: 'watching_active', ok: false, label: 'You have turned off watching' },
+  ]);
+
+  assert.ok(!byID['stood-down'].className.includes('hidden'),
+    'the banner is not shown while watching is off');
+  assert.ok(byID['stood-down'].textContent.includes('Nothing there is being checked'),
+    'the banner does not say what it means: ' + byID['stood-down'].textContent);
+});
+
+test('with watching on there is no banner', () => {
+  app.renderStandDown([{ id: 'watching_active', ok: true, label: 'Watching' }]);
+
+  assert.ok(byID['stood-down'].className.includes('hidden'),
+    'a banner was left on the page while watching was on');
+  assert.strictEqual(byID['stood-down'].textContent, '',
+    'the banner still has text in it');
+});
+
+test('a page from a version without the check shows no banner', () => {
+  app.renderStandDown([{ id: 'sq_synced', ok: true, label: 'Watching' }]);
+  assert.ok(byID['stood-down'].className.includes('hidden'),
+    'a missing check was treated as watching being off');
+
+  app.renderStandDown([]);
+  assert.ok(byID['stood-down'].className.includes('hidden'),
+    'an empty readiness list was treated as watching being off');
+});

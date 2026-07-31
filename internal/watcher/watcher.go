@@ -333,7 +333,7 @@ func (w *Watcher) onEvent(ctx context.Context, e bus.Event, open bool) {
 		// The moment the separation point is known, everything since it needs
 		// looking at — and until now there was no reason to have looked.
 		if store.SplitState(ev.New) == store.StateSplit {
-			w.rescanFromFork(ctx, "the chains separated")
+			_, _, _ = w.rescanFromFork(ctx, "the chains separated")
 		}
 
 	case bus.ChannelUpserted:
@@ -341,7 +341,7 @@ func (w *Watcher) onEvent(ctx context.Context, e bus.Event, open bool) {
 		// on first sighting: re-sweeping every time a counterparty changes its
 		// alias would be a lot of reading for no new information.
 		if ev.New {
-			w.rescanFromFork(ctx, "a channel Forktower had not seen before")
+			_, _, _ = w.rescanFromFork(ctx, "a channel Forktower had not seen before")
 		}
 	}
 }
