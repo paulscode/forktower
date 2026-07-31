@@ -158,3 +158,102 @@ func TestMigration0002AppliesOverAPopulatedDatabase(t *testing.T) {
 		t.Errorf("got %d channels after reopening, want the one that was there", len(channels))
 	}
 }
+
+// An M2 database with real state in it, upgraded to M3.
+//
+// The case that matters: a user running 0.2 who installs 0.5 mid-split. Their
+// channels, the spends recorded against them and the deadlines counting down
+// must all survive, because those are the record of what has already happened to
+// their money.
+func TestMigration0003AppliesOverAPopulatedDatabase(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "forktower.db")
+
+	first, err := openAtVersion(ctx, path, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := seedNode(t, first)
+	channelID, _, err := first.UpsertChannel(ctx, sampleChannel(node))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.SetChannelRelevance(ctx, channelID, Relevant,
+		"open across the fork point", 1_790_000_000); err != nil {
+		t.Fatal(err)
+	}
+	spendID, _, err := first.RecordSpend(ctx, Spend{
+		Branch: BranchSQ, ChannelID: channelID,
+		OutpointTxID: "aa" + strings.Repeat("0", 62), OutpointVout: 0,
+		SpendTxID: "dd" + strings.Repeat("0", 62), SpendTxHex: "0200000001",
+		Shape: ShapeCommitmentUnknown, Status: SpendConfirmed,
+		BlockHeight: 850_100, FirstSeenAt: 1_790_000_000, UpdatedAt: 1_790_000_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := first.UpsertDeadline(ctx, Deadline{
+		SpendEventID: spendID, Kind: DeadlineCSV, DeadlineHeight: 850_388,
+		State: DeadlineCounting, UpdatedAt: 1_790_000_000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("migrating a populated M2 database: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	version, err := s.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version < 3 {
+		t.Fatalf("schema version %d after upgrading, want at least 3", version)
+	}
+
+	// The record of what has already happened is intact.
+	channels, err := s.ListChannels(ctx, ChannelFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(channels) != 1 || channels[0].Relevance != Relevant {
+		t.Errorf("the channel and its classification did not survive: %+v", channels)
+	}
+	if channels[0].MirrorFundingOptIn {
+		t.Error("an existing channel came out of the upgrade opted in to funding mirroring")
+	}
+	spends, err := s.ListSpends(ctx, SpendFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spends) != 1 {
+		t.Errorf("got %d spends across the upgrade, want the one that was there", len(spends))
+	}
+	counting, err := s.ListDeadlines(ctx, DeadlineCounting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(counting) != 1 || counting[0].DeadlineHeight != 850_388 {
+		t.Errorf("a countdown was lost or moved across the upgrade: %+v", counting)
+	}
+
+	// And the new tables work against the state that was already there.
+	towerID := seedTower(t, s, TowerLND, testTowerPubkey)
+	if err := s.UpsertCoverage(ctx, Coverage{
+		ChannelID: channelID, TowerID: towerID, Coverable: true,
+		Reason: "anchor channel, tower accepts anchor sessions", CheckedAt: 1,
+	}); err != nil {
+		t.Errorf("the new schema is not usable after upgrading: %v", err)
+	}
+	if _, _, err := s.RecordMirrorDecision(ctx, sampleDecision(channelID)); err != nil {
+		t.Errorf("the new schema is not usable after upgrading: %v", err)
+	}
+}

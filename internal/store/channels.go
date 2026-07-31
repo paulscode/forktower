@@ -140,6 +140,12 @@ type Channel struct {
 	Relevance       Relevance
 	RelevanceReason string
 
+	// MirrorFundingOptIn is the one setting on a channel that adds exposure
+	// rather than reducing it: mirroring a funding transaction creates money on
+	// the other branch that was not there before. Off by default, set only by a
+	// deliberate user action, and never written by a poll.
+	MirrorFundingOptIn bool
+
 	UpdatedAt int64
 }
 
@@ -310,7 +316,7 @@ func (s *Store) ListChannels(ctx context.Context, f ChannelFilter) ([]Channel, e
 		       capacity_sat, chan_type, csv_delay_local, csv_delay_remote,
 		       peer_pubkey, peer_alias, open_height, scid,
 		       sf_close_state, sf_close_txid, sf_close_height,
-		       sq_relevance, sq_relevance_reason, updated_at
+		       sq_relevance, sq_relevance_reason, mirror_funding_opt_in, updated_at
 		  FROM channels
 		 WHERE (? = '' OR ln_node_id = ?)
 		   AND (? = '' OR sq_relevance = ?)
@@ -353,12 +359,13 @@ func scanChannel(rows *sql.Rows) (Channel, error) {
 		closeTxID   sql.NullString
 		closeHeight sql.NullInt64
 		reason      sql.NullString
+		optIn       int64
 	)
 	if err := rows.Scan(&c.ID, &c.LNNodeID, &c.FundingTxID, &c.FundingVout, &script,
 		&c.CapacitySat, &c.ChanType, &local, &remote,
 		&peerPubkey, &peerAlias, &openHeight, &scid,
 		&c.CloseState, &closeTxID, &closeHeight,
-		&c.Relevance, &reason, &c.UpdatedAt); err != nil {
+		&c.Relevance, &reason, &optIn, &c.UpdatedAt); err != nil {
 		return Channel{}, fmt.Errorf("scanning channel: %w", err)
 	}
 	c.FundingScriptHex = script.String
@@ -367,6 +374,7 @@ func scanChannel(rows *sql.Rows) (Channel, error) {
 	c.SCID = scid.String
 	c.CloseTxID = closeTxID.String
 	c.RelevanceReason = reason.String
+	c.MirrorFundingOptIn = optIn == 1
 	c.OpenHeight = heightFrom(openHeight)
 	c.CloseHeight = heightFrom(closeHeight)
 	if local.Valid {
@@ -397,6 +405,23 @@ func (s *Store) SetChannelCloseSF(
 		state, nullString(txid), nullInt32(height), at, id)
 	if err != nil {
 		return fmt.Errorf("recording the close of channel %d: %w", id, err)
+	}
+	return requireOneRow(res, "channel", id)
+}
+
+// SetChannelMirrorOptIn records the user's decision to mirror this channel's
+// funding transaction.
+//
+// The third of the three columns a registry poll must never write, and the only
+// one of them that increases exposure: mirroring a funding transaction puts the
+// user's money on a branch it was not on before. So it is per-channel, off by
+// default, and set from nowhere but a deliberate action.
+func (s *Store) SetChannelMirrorOptIn(ctx context.Context, id int64, optIn bool, at int64) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE channels SET mirror_funding_opt_in = ?, updated_at = ? WHERE id = ?`,
+		boolToInt(optIn), at, id)
+	if err != nil {
+		return fmt.Errorf("recording the mirror opt-in for channel %d: %w", id, err)
 	}
 	return requireOneRow(res, "channel", id)
 }
@@ -516,6 +541,17 @@ func heightFrom(v sql.NullInt64) int32 {
 	default:
 		return int32(v.Int64)
 	}
+}
+
+// optionalInt32From is the reciprocal of nullOptionalInt32: it reads a column
+// back while keeping "the source did not say" distinct from "the source said
+// zero". Clamped like heightFrom, for the same reason.
+func optionalInt32From(v sql.NullInt64) *int32 {
+	if !v.Valid {
+		return nil
+	}
+	clamped := heightFrom(v)
+	return &clamped
 }
 
 // nullOptionalInt32 distinguishes "the source did not say" from "the source said
