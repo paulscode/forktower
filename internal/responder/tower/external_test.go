@@ -81,6 +81,22 @@ func (h *scoutHarness) addChannel(chanType store.ChanType, txid string) int64 {
 	return id
 }
 
+// ourTowerIsRecorded files the tower this installation runs, the way the warden
+// would have.
+//
+// Through the store rather than through configuration, because that is how the
+// scout finds out: a tower's identity comes from the tower, so nothing could
+// have told the scout in advance.
+func (h *scoutHarness) ourTowerIsRecorded() {
+	h.t.Helper()
+	if _, _, err := h.store.UpsertTower(context.Background(), store.Tower{
+		Kind: store.TowerLND, Pubkey: ourTower, Managed: true,
+		FirstSeenAt: 1_790_000_000, UpdatedAt: 1_790_000_000,
+	}); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 func (h *scoutHarness) towers() []store.Tower {
 	h.t.Helper()
 	rows, err := h.store.ListTowers(context.Background(), store.TowerFilter{})
@@ -132,13 +148,21 @@ func TestATowerTheUserRegisteredWithIsFoundWithoutBeingConfigured(t *testing.T) 
 // would put it on the page twice.
 func TestOurOwnTowerIsNotRecordedAgain(t *testing.T) {
 	t.Parallel()
-	h := newScoutHarness(t, func(o *ScoutOptions) { o.ManagedPubkey = ourTower })
+	h := newScoutHarness(t)
 	h.addChannel(store.ChanAnchors, "aa"+strings.Repeat("0", 62))
+	h.ourTowerIsRecorded()
 
 	h.pass()
 
-	if rows := h.towers(); len(rows) != 0 {
-		t.Errorf("our own tower was recorded by the scout as well: %+v", rows)
+	rows := h.towers()
+	if len(rows) != 1 {
+		t.Fatalf("got %d towers, want only the managed one", len(rows))
+	}
+	// **And it is still ours.** Recording it as somebody else's would overwrite
+	// the flag the page uses to decide whether it can honestly offer to restart
+	// it.
+	if !rows[0].Managed {
+		t.Error("the scout demoted the tower this installation runs to somebody else's")
 	}
 }
 
@@ -238,8 +262,9 @@ func TestBeingProtectedOnlyBySomebodyElsesTowerIsSaidOnce(t *testing.T) {
 // With a tower of our own, this is not worth saying at all.
 func TestWithOurOwnTowerNothingIsSaidAboutExternalOnes(t *testing.T) {
 	t.Parallel()
-	h := newScoutHarness(t, func(o *ScoutOptions) { o.ManagedPubkey = ourTower })
+	h := newScoutHarness(t)
 	h.addChannel(store.ChanAnchors, "aa"+strings.Repeat("0", 62))
+	h.ourTowerIsRecorded()
 
 	h.pass()
 

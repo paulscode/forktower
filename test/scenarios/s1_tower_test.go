@@ -145,21 +145,16 @@ func TestS1AMissingTowerIsReportedAsUnprotected(t *testing.T) {
 	// the daemon started has told us no identity, and the stored row is keyed by
 	// that identity, so there is nothing to file and nothing to render. The alert
 	// path does not need a row, which is why it is the one checked.
+	// Asked for by kind rather than by prefix. Several things about towers are
+	// worth saying at once — that the node is using one Forktower does not run,
+	// for instance — and a test that took whichever arrived last would be
+	// asserting about whichever of them happened to be newest.
 	waitFor(t, "an alert saying the tower is not answering", func() bool {
-		for _, a := range alerts(t) {
-			if strings.HasPrefix(a.Kind, "tower_") {
-				return true
-			}
-		}
-		return false
+		_, found := alertOfKind(t, "tower_down")
+		return found
 	})
 
-	var raised alert
-	for _, a := range alerts(t) {
-		if strings.HasPrefix(a.Kind, "tower_") {
-			raised = a
-		}
-	}
+	raised, _ := alertOfKind(t, "tower_down")
 	if !strings.Contains(strings.ToLower(raised.Message), "would not be answered") {
 		t.Errorf("the alert does not say what is lost while the tower is down: %q",
 			raised.Message)

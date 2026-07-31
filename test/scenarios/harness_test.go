@@ -361,7 +361,8 @@ func towers(t *testing.T) []tower {
 	return get[towersPayload](t, "/api/v1/towers").Towers
 }
 
-func alerts(t *testing.T) []alert     { t.Helper(); return get[[]alert](t, "/api/v1/alerts") }
+func alerts(t *testing.T) []alert { t.Helper(); return get[[]alert](t, "/api/v1/alerts") }
+
 func channels(t *testing.T) []channel { t.Helper(); return get[[]channel](t, "/api/v1/channels") }
 func spends(t *testing.T) []spend     { t.Helper(); return get[[]spend](t, "/api/v1/spends") }
 

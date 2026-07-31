@@ -35,15 +35,12 @@ const ConcernExternalOnly ConcernKind = "tower.external_only"
 // limitation is also the honest framing — "is my protection working" is a better
 // question than "is that machine up", and only the node can answer it.
 type Scout struct {
-	store  ScoutStore
-	client ClientReader
-	bus    *bus.Bus
-	log    *slog.Logger
-	// managedPubkey is the tower this installation runs, if any. Everything else
-	// the node reports is somebody else's.
-	managedPubkey string
-	interval      time.Duration
-	now           func() time.Time
+	store    ScoutStore
+	client   ClientReader
+	bus      *bus.Bus
+	log      *slog.Logger
+	interval time.Duration
+	now      func() time.Time
 
 	// announced remembers what has been said, so a standing state is not repeated
 	// every pass.
@@ -64,16 +61,12 @@ type ScoutStore interface {
 
 // ScoutOptions configures a Scout.
 type ScoutOptions struct {
-	Store  ScoutStore
-	Client ClientReader
-	Bus    *bus.Bus
-	Log    *slog.Logger
-	// ManagedPubkey is the tower this installation runs, so it is not recorded
-	// twice. Empty when there is no local tower, which is a perfectly ordinary
-	// deployment.
-	ManagedPubkey string
-	Interval      time.Duration
-	Now           func() time.Time
+	Store    ScoutStore
+	Client   ClientReader
+	Bus      *bus.Bus
+	Log      *slog.Logger
+	Interval time.Duration
+	Now      func() time.Time
 }
 
 // NewScout builds a Scout.
@@ -95,7 +88,7 @@ func NewScout(opts ScoutOptions) (*Scout, error) {
 	}
 	return &Scout{
 		store: opts.Store, client: opts.Client, bus: opts.Bus, log: opts.Log,
-		managedPubkey: opts.ManagedPubkey, interval: opts.Interval, now: opts.Now,
+		interval: opts.Interval, now: opts.Now,
 		announced: map[string]store.TowerStatus{},
 		firstSeen: map[string]int64{},
 	}, nil
@@ -143,20 +136,51 @@ func (s *Scout) pass(ctx context.Context) {
 		return
 	}
 
+	// Which towers this installation runs, read fresh each pass rather than
+	// configured.
+	//
+	// **It cannot be known in advance.** A tower's identity comes from the tower,
+	// and it has not said one until it has answered — so a scout told a pubkey at
+	// construction would be told nothing useful. Read from storage, it is right as
+	// soon as the warden has recorded it, and stays right across a restart.
+	//
+	// Getting this wrong is not a cosmetic matter: recording our own tower as
+	// somebody else's would overwrite the flag the page uses to decide whether it
+	// can honestly offer to restart it.
+	ours, err := s.managed(ctx)
+	if err != nil {
+		s.log.Error("reading which watchtowers this installation runs",
+			slog.String("error", err.Error()))
+		return
+	}
+
 	now := s.now().Unix()
 	var external int
 	for i := range registered {
 		t := registered[i]
-		if t.Pubkey == "" || t.Pubkey == s.managedPubkey {
+		if t.Pubkey == "" || ours[t.Pubkey] {
 			continue
 		}
 		external++
 		s.record(ctx, t, channels, clientVersion, now)
 	}
 
-	if external > 0 && s.managedPubkey == "" {
+	if external > 0 && len(ours) == 0 {
 		s.announceExternalOnly(external)
 	}
+}
+
+// managed is the set of towers this installation runs.
+func (s *Scout) managed(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.store.ListTowers(ctx, store.TowerFilter{ManagedOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(rows))
+	for _, t := range rows {
+		out[t.Pubkey] = true
+	}
+	return out, nil
 }
 
 // record files one external tower and what it protects.
