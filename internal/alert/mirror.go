@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/paulscode/forktower/internal/bus"
 	"github.com/paulscode/forktower/internal/redact"
 	"github.com/paulscode/forktower/internal/store"
 	"github.com/paulscode/forktower/internal/words"
@@ -47,7 +48,7 @@ func (a *Alerter) mirrorSweep(ctx context.Context) {
 		if d.Attempts < triedEnough {
 			continue
 		}
-		a.raise(ctx, Candidate{
+		a.raiseIfAbsent(ctx, Candidate{
 			Tier: store.TierWarning, Kind: KindMirrorStuck,
 			DedupKey: fmt.Sprintf("%s:%s", KindMirrorStuck, d.TxID),
 			Subject:  "A transaction is not reaching " + words.OtherChain,
@@ -66,7 +67,7 @@ func (a *Alerter) mirrorSweep(ctx context.Context) {
 		return
 	}
 	for _, d := range abandoned {
-		a.raise(ctx, Candidate{
+		a.raiseIfAbsent(ctx, Candidate{
 			Tier: store.TierWarning, Kind: KindMirrorGaveUp,
 			DedupKey: fmt.Sprintf("%s:%s", KindMirrorGaveUp, d.TxID),
 			Subject:  "A transaction could not be copied to " + words.OtherChain,
@@ -122,8 +123,79 @@ func attemptCount(n int64) string {
 // stored form to read. What is covered here is what persists: a tower that is
 // not protecting anything, and a transaction that is not getting across.
 func (a *Alerter) reconcile(ctx context.Context) {
+	a.detectionSweep(ctx)
 	a.mirrorSweep(ctx)
 	a.towerSweep(ctx)
+}
+
+// detectionSweep re-derives the two conditions where a missed event costs most.
+//
+// These two above all others: a dropped funding-spend event is a missed breach,
+// and a dropped escalation is a countdown that never gets louder. Both leave a
+// mark in storage before they are announced — the
+// persist-then-publish rule means the row is written first — so both can be
+// re-derived from what is there.
+//
+// It re-raises rather than re-deciding. The tier and the wording come from the
+// same mapping the event would have used, so the two paths cannot drift into
+// saying different things about the same fact.
+func (a *Alerter) detectionSweep(ctx context.Context) {
+	spends, err := a.store.ListSpends(ctx, store.SpendFilter{
+		Branch: store.BranchSQ, Status: store.SpendConfirmed, Limit: store.MaxSpendLimit,
+	})
+	if err != nil {
+		a.log.Error("reading what has happened on the other chain",
+			slog.String("error", err.Error()))
+		return
+	}
+	for _, sp := range spends {
+		candidate, ok := MapEventToAlert(bus.FundingSpent{
+			SpendEventID: sp.ID, ChannelID: sp.ChannelID, Branch: string(sp.Branch),
+			SpendTxid: sp.SpendTxID, Shape: string(sp.Shape),
+			Status: string(sp.Status), Height: sp.BlockHeight,
+		})
+		if ok {
+			a.raiseIfAbsent(ctx, candidate)
+		}
+	}
+
+	counting, err := a.store.ListDeadlines(ctx, store.DeadlineCounting)
+	if err != nil {
+		a.log.Error("reading the countdowns", slog.String("error", err.Error()))
+		return
+	}
+	for _, d := range counting {
+		if d.Escalation <= 0 {
+			// Nothing has been announced about this one yet, and working out what
+			// *should* have been would mean re-deriving the tier from a chain tip
+			// this sweep does not have. The engine announces it on the next block.
+			continue
+		}
+		candidate, ok := MapEventToAlert(bus.DeadlineEscalated{
+			DeadlineID: d.ID,
+			ChannelID:  channelOfSpend(spends, d.SpendEventID),
+			Level:      int(d.Escalation),
+			// The blocks remaining are not re-derived. This sweep has no chain tip,
+			// and the alert being repaired is the one that was *already* decided —
+			// its dedup key and tier come from the level, which is stored. A user
+			// who wants the current number has it on the dashboard, live.
+			RemainingBlocks: d.DeadlineHeight,
+		})
+		if ok {
+			a.raiseIfAbsent(ctx, candidate)
+		}
+	}
+}
+
+// channelOfSpend finds which channel a spend belonged to, so a re-raised
+// countdown names the same channel the event would have.
+func channelOfSpend(spends []store.Spend, spendID int64) int64 {
+	for _, sp := range spends {
+		if sp.ID == spendID {
+			return sp.ChannelID
+		}
+	}
+	return 0
 }
 
 // towerSweep raises the tower conditions that stored state can prove.
@@ -136,7 +208,7 @@ func (a *Alerter) towerSweep(ctx context.Context) {
 
 	for _, t := range towers {
 		if t.Status == store.TowerUnreachable {
-			a.raise(ctx, Candidate{
+			a.raiseIfAbsent(ctx, Candidate{
 				Tier: store.TierWarning, Kind: KindTowerDown,
 				DedupKey: fmt.Sprintf("%s:%d", KindTowerDown, t.ID),
 				Subject:  "Your watchtower is not answering",
@@ -156,7 +228,7 @@ func (a *Alerter) towerSweep(ctx context.Context) {
 			continue
 		}
 		for _, c := range uncovered {
-			a.raise(ctx, Candidate{
+			a.raiseIfAbsent(ctx, Candidate{
 				Tier: store.TierWarning, Kind: KindTowerNotProtecting,
 				DedupKey: fmt.Sprintf("%s:channel:%d", KindTowerNotProtecting, c.ChannelID),
 				Subject:  "One of your channels is not protected by your watchtower",

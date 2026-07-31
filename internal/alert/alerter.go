@@ -209,6 +209,23 @@ func (a *Alerter) handle(ctx context.Context, e bus.Event) {
 
 // raise records an alert and, if it is news, announces and delivers it.
 func (a *Alerter) raise(ctx context.Context, candidate Candidate) {
+	a.put(ctx, candidate, false)
+}
+
+// raiseIfAbsent records a standing condition without disturbing what the user
+// has already done about it.
+//
+// Used only by the reconciler, and the distinction is the difference between a
+// safety net and a nuisance. The reconciler re-derives the same conditions from
+// stored state every time it runs, so going through the ordinary path would
+// clear an acknowledgement and notify again on every pass — turning "I have seen
+// this" into a notification every minute.
+func (a *Alerter) raiseIfAbsent(ctx context.Context, candidate Candidate) {
+	a.put(ctx, candidate, true)
+}
+
+// put is the shared body of both.
+func (a *Alerter) put(ctx context.Context, candidate Candidate, keepAck bool) {
 	now := a.now().Unix()
 	record := store.Alert{
 		Tier:         candidate.Tier,
@@ -226,7 +243,11 @@ func (a *Alerter) raise(ctx context.Context, candidate Candidate) {
 	wctx, cancel := writeCtx(ctx)
 	defer cancel()
 
-	up, err := a.store.UpsertAlert(wctx, record)
+	upsert := a.store.UpsertAlert
+	if keepAck {
+		upsert = a.store.ReconcileAlert
+	}
+	up, err := upsert(wctx, record)
 	if err != nil {
 		a.log.Error("could not record an alert",
 			slog.String("kind", candidate.Kind), slog.String("error", err.Error()))

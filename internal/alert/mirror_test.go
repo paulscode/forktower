@@ -192,3 +192,201 @@ func TestReconcilingAgainstAClosedStoreIsSurvived(t *testing.T) {
 	// Must not panic, and must not pretend it found nothing wrong.
 	h.al.reconcile(context.Background())
 }
+
+// **The trap that made the reconciler need its own path into the store.**
+//
+// A standing condition is re-derived on every sweep. Through the ordinary raise
+// that would clear the acknowledgement and notify again each time — so a user
+// who has seen a problem and decided to deal with it tomorrow would be told
+// about it every minute until they did. That is its own way of making an alarm
+// decorative, which is the failure this whole project is about.
+func TestAnAcknowledgedConditionStaysAcknowledgedAcrossSweeps(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil, nil)
+	ctx := context.Background()
+
+	queueMirror(t, h, "1a"+strings.Repeat("0", 62), store.MirrorRejected, 4,
+		"min relay fee not met")
+	h.al.reconcile(ctx)
+
+	alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	for _, a := range alerts {
+		if a.Kind == KindMirrorStuck {
+			id = a.ID
+		}
+	}
+	if id == 0 {
+		t.Fatalf("nothing was raised to acknowledge: %+v", alerts)
+	}
+
+	if _, err := h.store.AckAlert(ctx, id, 3); err != nil {
+		t.Fatal(err)
+	}
+
+	// The condition is still true, so the sweep raises it again — several times.
+	for range 5 {
+		h.al.reconcile(ctx)
+	}
+
+	got, err := h.store.GetAlert(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Acked() {
+		t.Error("five sweeps of a standing condition un-acknowledged it, so the " +
+			"user would be notified again every time it ran")
+	}
+	// And it is still the same single alert, with its last-seen time moving.
+	if got.LastRaisedAt <= 0 {
+		t.Error("the record of when it was last true did not move")
+	}
+}
+
+// An event-driven raise still reopens an acknowledged alert, because a condition
+// that comes back after being dismissed is news again. Only the reconciler is
+// quiet.
+func TestAnEventStillReopensSomethingAcknowledged(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil, nil)
+	ctx := context.Background()
+
+	h.al.raise(ctx, Candidate{
+		Tier: store.TierWarning, Kind: KindTowerDown, DedupKey: "tower_down:1",
+		Subject: "down", Message: "the tower is not answering.",
+	})
+	alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := alerts[0].ID
+	if _, err := h.store.AckAlert(ctx, id, 3); err != nil {
+		t.Fatal(err)
+	}
+
+	h.al.raise(ctx, Candidate{
+		Tier: store.TierWarning, Kind: KindTowerDown, DedupKey: "tower_down:1",
+		Subject: "down", Message: "the tower is not answering.",
+	})
+
+	got, err := h.store.GetAlert(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Acked() {
+		t.Error("a condition that recurred after being dismissed stayed dismissed, " +
+			"so it would be silent forever")
+	}
+}
+
+// **The worst condition to miss.** A dropped funding-spend event is a missed
+// breach — and with only an event path, an alert that never existed never will.
+func TestAConfirmedSpendGetsItsAlertFromStoredStateAlone(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil, nil)
+	ctx := context.Background()
+
+	channelID := h.seedChannel()
+	if _, _, err := h.store.RecordSpend(ctx, store.Spend{
+		Branch: store.BranchSQ, ChannelID: channelID,
+		OutpointTxID: "aa" + strings.Repeat("0", 62), OutpointVout: 0,
+		SpendTxID: "bb" + strings.Repeat("0", 62), SpendTxHex: "00",
+		Shape: store.ShapeCommitmentUnknown, Status: store.SpendConfirmed,
+		BlockHeight: 900_000, FirstSeenAt: 1, UpdatedAt: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// No event is ever published.
+	h.al.reconcile(ctx)
+
+	alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasKind(alerts, KindChannelSpent) {
+		t.Fatalf("a confirmed commitment on the other chain raised nothing: %+v", alerts)
+	}
+}
+
+// And a countdown that has already escalated: a dropped `deadline.escalated` is
+// a countdown that never gets louder.
+func TestAnEscalatedCountdownGetsItsAlertFromStoredStateAlone(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil, nil)
+	ctx := context.Background()
+
+	channelID := h.seedChannel()
+	spendID, _, err := h.store.RecordSpend(ctx, store.Spend{
+		Branch: store.BranchSQ, ChannelID: channelID,
+		OutpointTxID: "cc" + strings.Repeat("0", 62), OutpointVout: 0,
+		SpendTxID: "dd" + strings.Repeat("0", 62), SpendTxHex: "00",
+		Shape: store.ShapeCommitmentUnknown, Status: store.SpendConfirmed,
+		BlockHeight: 900_000, FirstSeenAt: 1, UpdatedAt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadlineID, _, err := h.store.UpsertDeadline(ctx, store.Deadline{
+		SpendEventID: spendID, Kind: store.DeadlineCSV,
+		DeadlineHeight: 900_144, State: store.DeadlineCounting, UpdatedAt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The engine wrote the tier before announcing it — persist then publish — so
+	// the record of the escalation survives an event nobody received.
+	if err := h.store.SetDeadlineEscalation(ctx, deadlineID, 2, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	h.al.reconcile(ctx)
+
+	alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasKind(alerts, KindDeadlineWarning) {
+		t.Fatalf("a countdown that had already escalated raised nothing: %+v", alerts)
+	}
+}
+
+// A countdown nothing has announced yet is left to the engine. Guessing the tier
+// would mean re-deriving it from a chain tip this sweep does not have.
+func TestACountdownNobodyHasAnnouncedIsLeftAlone(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil, nil)
+	ctx := context.Background()
+
+	channelID := h.seedChannel()
+	spendID, _, err := h.store.RecordSpend(ctx, store.Spend{
+		Branch: store.BranchSQ, ChannelID: channelID,
+		OutpointTxID: "ee" + strings.Repeat("0", 62), OutpointVout: 0,
+		SpendTxID: "ff" + strings.Repeat("0", 62), SpendTxHex: "00",
+		Shape: store.ShapeMutualClose, Status: store.SpendConfirmed,
+		BlockHeight: 900_000, FirstSeenAt: 1, UpdatedAt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.store.UpsertDeadline(ctx, store.Deadline{
+		SpendEventID: spendID, Kind: store.DeadlineCSV,
+		DeadlineHeight: 900_144, State: store.DeadlineCounting, UpdatedAt: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	h.al.reconcile(ctx)
+
+	alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasKind(alerts, KindDeadlineWarning) {
+		t.Error("a countdown with nothing announced about it was given a tier the " +
+			"sweep could not know")
+	}
+}

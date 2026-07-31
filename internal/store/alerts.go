@@ -74,6 +74,74 @@ type AlertUpsert struct {
 // looked at yet, and repeating it is the escalation policy's job, not this one's.
 func (u AlertUpsert) Notify() bool { return u.New || u.Reopened }
 
+// ReconcileAlert records an alert only if that condition is not already on the
+// user's list, and **never clears an acknowledgement**.
+//
+// The difference from UpsertAlert is the whole reason this exists. A reconciler
+// re-derives standing conditions from stored state on a timer, so it raises the
+// same thing over and over for as long as it is true. Going through UpsertAlert
+// would clear the acknowledgement each time and notify again — turning "I have
+// seen this, I will deal with it tomorrow" into a notification every minute,
+// which is its own way of making an alarm decorative.
+//
+// So an existing row has its last-raised time bumped and nothing else touched.
+// The user's acknowledgement is theirs to withdraw.
+func (s *Store) ReconcileAlert(ctx context.Context, a Alert) (AlertUpsert, error) {
+	if a.DedupKey == "" {
+		return AlertUpsert{}, errors.New("store: alert needs a dedup key")
+	}
+	if !a.Tier.Valid() {
+		return AlertUpsert{}, fmt.Errorf("store: alert tier %q is not a known severity", a.Tier)
+	}
+	if a.Kind == "" {
+		return AlertUpsert{}, errors.New("store: alert needs a kind")
+	}
+
+	var out AlertUpsert
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		var existing int64
+		scanErr := tx.QueryRowContext(ctx,
+			`SELECT id FROM alerts WHERE dedup_key = ?`, a.DedupKey).Scan(&existing)
+
+		switch {
+		case scanErr == nil:
+			// Already on the list. Acknowledged or not, it stays as the user left
+			// it; only the record of when it was last true moves.
+			if _, e := tx.ExecContext(ctx,
+				`UPDATE alerts SET last_raised_at = ? WHERE id = ?`,
+				a.LastRaisedAt, existing); e != nil {
+				return fmt.Errorf("bumping alert %q: %w", a.DedupKey, e)
+			}
+			out = AlertUpsert{ID: existing}
+			return nil
+
+		case errors.Is(scanErr, sql.ErrNoRows):
+			res, e := tx.ExecContext(ctx,
+				`INSERT INTO alerts (tier, kind, dedup_key, subject, message,
+				                     created_at, last_raised_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				a.Tier, a.Kind, a.DedupKey, nullString(a.Subject), a.Message,
+				a.CreatedAt, a.LastRaisedAt)
+			if e != nil {
+				return fmt.Errorf("recording alert %q: %w", a.DedupKey, e)
+			}
+			id, e := res.LastInsertId()
+			if e != nil {
+				return fmt.Errorf("reading new alert id: %w", e)
+			}
+			out = AlertUpsert{ID: id, New: true}
+			return nil
+
+		default:
+			return fmt.Errorf("looking up alert %q: %w", a.DedupKey, scanErr)
+		}
+	})
+	if err != nil {
+		return AlertUpsert{}, err
+	}
+	return out, nil
+}
+
 // UpsertAlert records an alert, or bumps the existing one with the same dedup
 // key.
 //
