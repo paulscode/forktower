@@ -139,6 +139,29 @@ linters:
             - pkg: github.com/paulscode/forktower/internal/bus
               desc: the deadline computation returns clocks, it does not publish them
 
+        # Which of the user's transactions get copied onto the other chain. The
+        # one decision in this program that can *create* exposure rather than
+        # observe it, so it is held to the same "no I/O" bar as the rest and
+        # allowed the store only for its vocabulary of shapes and branches.
+        pure-policy-mirror:
+          files:
+            - "**/internal/responder/mirror/policy.go"
+          deny:
+            - pkg: net
+              desc: the mirror policy must not perform I/O
+            - pkg: net/http
+              desc: the mirror policy must not perform I/O
+            - pkg: os
+              desc: the mirror policy must not touch the filesystem
+            - pkg: database/sql
+              desc: the mirror policy must not touch storage
+            - pkg: time
+              desc: >-
+                the mirror policy must not read a clock; the same transaction
+                must get the same answer whenever it is asked about
+            - pkg: github.com/paulscode/forktower/internal/bus
+              desc: the mirror policy returns a verdict, it does not publish one
+
         # Whether a tower covers a channel decides whether a user is told their
         # money is protected. Same "no I/O" bar as the scanner and the shape
         # classifier, with the store allowed for its vocabulary of channel types.

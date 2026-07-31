@@ -73,6 +73,9 @@ declare -A MIN=(
   # to keep the achievement. Floors ratchet.
   [internal/store]=75
   [internal/responder/tower]=90
+  # The one decision in this program that can create exposure rather than
+  # observe it. Held higher than anything else for that reason.
+  [internal/responder/mirror]=95
   # Lowered from 85 to 72 when the notification subsystem landed. The
   # request/response half reaches ~90% against a fake node over httptest, but the
   # notification path needs a peer that actually speaks the publish/subscribe wire
