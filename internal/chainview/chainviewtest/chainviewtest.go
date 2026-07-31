@@ -33,6 +33,15 @@ type View struct {
 	tips     []chainview.ChainTip
 	deploys  map[string]chainview.Deployment
 
+	// txs holds the transactions a block contains, for the tests that care what
+	// is *in* a block rather than only where it sits. Blocks without an entry
+	// come back empty, which is what most callers want.
+	txs map[chainhash.Hash][]*wire.MsgTx
+
+	// noMatches makes the filter gate say a block cannot contain anything of
+	// interest, which is the light client's answer for almost every block.
+	noMatches bool
+
 	// failures lets a test make a specific call fail, to exercise the paths that
 	// only happen when a node misbehaves.
 	failures map[string]error
@@ -293,12 +302,41 @@ func (v *View) Block(_ context.Context, h chainhash.Hash) (*wire.MsgBlock, error
 	if !ok {
 		return nil, fmt.Errorf("block %s: %w", h, chainview.ErrNotFound)
 	}
-	return &wire.MsgBlock{Header: wire.BlockHeader{Timestamp: meta.Time}}, nil
+	return &wire.MsgBlock{
+		Header:       wire.BlockHeader{Timestamp: meta.Time},
+		Transactions: v.txs[h],
+	}, nil
 }
 
-// MatchBlock always reports a possible match, as a full node does.
+// PutTransactions places transactions in a block, so a test can assert on what
+// a scan finds rather than only on which blocks it visited.
+func (v *View) PutTransactions(h chainhash.Hash, txs ...*wire.MsgTx) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.txs == nil {
+		v.txs = map[chainhash.Hash][]*wire.MsgTx{}
+	}
+	v.txs[h] = txs
+}
+
+// MatchBlock reports a possible match, as a full node does, unless a test has
+// said otherwise with SetMatches — which is how the light-client tier's filter
+// gate is exercised without a filter.
 func (v *View) MatchBlock(context.Context, chainhash.Hash, chainview.WatchSet) (bool, error) {
-	return true, nil
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if err := v.failure("MatchBlock"); err != nil {
+		return false, err
+	}
+	return !v.noMatches, nil
+}
+
+// SetMatches decides what MatchBlock says. False makes every block report that
+// it cannot contain anything of interest.
+func (v *View) SetMatches(matches bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.noMatches = !matches
 }
 
 // SubscribeTip delivers the tip on subscribing and after every change.

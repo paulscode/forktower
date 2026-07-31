@@ -117,6 +117,16 @@ func Summarize(e bus.Event) string {
 	case bus.ChannelClosedSF:
 		return summarizeChannelClose(ev)
 
+	case bus.FundingSpent:
+		return "One of your channels was closed on the other chain."
+
+	case bus.SecondOrderSpent:
+		return "Money from one of your closed channels was moved on the other chain."
+
+	case bus.SpendReorgedOut:
+		return "Something that had happened on the other chain was undone by a " +
+			"change to that chain."
+
 	default:
 		// An event kind this build does not know still belongs in the record.
 		return "Something happened that this version of Forktower cannot describe."

@@ -10,6 +10,10 @@ const (
 
 	KindChannelUpserted = "registry.channel_upserted"
 	KindChannelClosedSF = "registry.channel_closed_sf"
+
+	KindFundingSpent     = "watch.funding_spent"
+	KindSecondOrderSpent = "watch.second_order_spent"
+	KindSpendReorgedOut  = "watch.spend_reorged_out"
 )
 
 // BlockRefJSON identifies a block. Hashes are lowercase hex in the usual display
@@ -151,6 +155,58 @@ type ChannelClosedSF struct {
 // Kind implements Event.
 func (ChannelClosedSF) Kind() string { return KindChannelClosedSF }
 
+// FundingSpent reports that a channel's funding output was spent on one of the
+// chains — the event this daemon exists to notice.
+//
+// Shape is what the transaction looks like it was, and Status how firmly it has
+// happened. Both are carried because a subscriber deciding how loudly to react
+// needs them together: an unconfirmed sighting of something that might be a
+// cooperative close is a very different message from a confirmed commitment.
+type FundingSpent struct {
+	SpendEventID int64  `json:"spend_event_id"`
+	ChannelID    int64  `json:"channel_id"`
+	Branch       string `json:"branch"`
+	SpendTxid    string `json:"spend_txid"`
+	Shape        string `json:"shape"`
+	Status       string `json:"status"`
+	Height       int32  `json:"height"`
+}
+
+// Kind implements Event.
+func (FundingSpent) Kind() string { return KindFundingSpent }
+
+// SecondOrderSpent reports that an output of a commitment that had already
+// confirmed has itself been spent.
+//
+// This is how outcomes are learned rather than only threats: a sweep before the
+// delay expires is somebody's justice transaction landing, and one after it is a
+// loss. SourceSpendEventID points back at the commitment, which is what lets a
+// reorg that removes the commitment also remove what it created.
+type SecondOrderSpent struct {
+	SpendEventID       int64  `json:"spend_event_id"`
+	SourceSpendEventID int64  `json:"source_spend_event_id"`
+	Role               string `json:"role"`
+	Shape              string `json:"shape"`
+}
+
+// Kind implements Event.
+func (SecondOrderSpent) Kind() string { return KindSecondOrderSpent }
+
+// SpendReorgedOut reports that a spend we had recorded is no longer on the
+// chain.
+//
+// Alert-worthy in its own right, which is not obvious. A breach that disappears
+// has not necessarily gone away: the counterparty may be replacing it with a
+// higher fee, or miners may have reorganised it out and it may return. Treating
+// this as good news would be the wrong instinct.
+type SpendReorgedOut struct {
+	SpendEventID int64  `json:"spend_event_id"`
+	Branch       string `json:"branch"`
+}
+
+// Kind implements Event.
+func (SpendReorgedOut) Kind() string { return KindSpendReorgedOut }
+
 // AllKinds lists every event kind the bus carries, for diagnostics and for tests
 // that check nothing has been added without being registered here.
 func AllKinds() []string {
@@ -161,5 +217,8 @@ func AllKinds() []string {
 		KindAlertRaised,
 		KindChannelUpserted,
 		KindChannelClosedSF,
+		KindFundingSpent,
+		KindSecondOrderSpent,
+		KindSpendReorgedOut,
 	}
 }

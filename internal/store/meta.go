@@ -14,6 +14,10 @@ const (
 	// chain. It advances only after a block has been fully processed and
 	// committed, which is what makes a crash mid-scan safe to resume.
 	MetaLastScannedSQHeight = "last_scanned_sq_height"
+	// MetaLastScannedSQHash is the hash at that height. Kept alongside because a
+	// height alone cannot distinguish "the chain grew" from "the chain was
+	// replaced up to here", and those need opposite responses.
+	MetaLastScannedSQHash = "last_scanned_sq_hash"
 	// MetaSQBranchVerifiedAt records when the other chain's backend was last
 	// confirmed to be on the branch we think it is.
 	MetaSQBranchVerifiedAt = "sq_backend_branch_verified_at"

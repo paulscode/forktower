@@ -216,6 +216,34 @@ func (s *Store) UpdateSpendShape(ctx context.Context, id int64, shape SpendShape
 	return requireOneRow(res, "spend", id)
 }
 
+// GetSpend reads one spend by id.
+func (s *Store) GetSpend(ctx context.Context, id int64) (Spend, error) {
+	var (
+		sp          Spend
+		channelID   sql.NullInt64
+		blockHash   sql.NullString
+		blockHeight sql.NullInt64
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, branch, channel_id, outpoint_txid, outpoint_vout, spend_txid,
+		        spend_tx_hex, block_hash, block_height, shape, status,
+		        first_seen_at, updated_at
+		   FROM spend_events WHERE id = ?`, id).
+		Scan(&sp.ID, &sp.Branch, &channelID, &sp.OutpointTxID, &sp.OutpointVout,
+			&sp.SpendTxID, &sp.SpendTxHex, &blockHash, &blockHeight, &sp.Shape,
+			&sp.Status, &sp.FirstSeenAt, &sp.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Spend{}, fmt.Errorf("spend %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return Spend{}, fmt.Errorf("reading spend %d: %w", id, err)
+	}
+	sp.ChannelID = channelID.Int64
+	sp.BlockHash = blockHash.String
+	sp.BlockHeight = heightFrom(blockHeight)
+	return sp, nil
+}
+
 // SpendFilter narrows ListSpends.
 type SpendFilter struct {
 	Branch    Branch

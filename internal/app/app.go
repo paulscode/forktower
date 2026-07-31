@@ -25,6 +25,7 @@ import (
 	"github.com/paulscode/forktower/internal/registry/lnd"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
+	"github.com/paulscode/forktower/internal/watcher"
 )
 
 // Lifecycle bounds.
@@ -51,6 +52,7 @@ type App struct {
 	sf, sq   chainview.ChainView
 	sentinel *sentinel.Sentinel
 	registry *registry.Registry
+	watcher  *watcher.Watcher
 	alerter  *alert.Alerter
 	timeline *store.TimelineSubscriber
 	api      *api.Server
@@ -179,6 +181,16 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 	if err != nil {
 		a.closeOnFailure()
 		return nil, fmt.Errorf("setting up channel watching: %w", err)
+	}
+
+	// The sentinel is the guard: when it cannot be sure the second view is on the
+	// chain it should be, scanning stops. A clean report about the wrong chain is
+	// worse than no report, because the user is told they are covered.
+	a.watcher, err = watcher.New(st, a.bus, a.sq, store.BranchSQ, a.sentinel,
+		watcher.Config{}, log.With(slog.String("component", "watcher")), now)
+	if err != nil {
+		a.closeOnFailure()
+		return nil, fmt.Errorf("setting up spend watching: %w", err)
 	}
 
 	a.api, err = api.New(st, a.sentinel, a.alerter, a.registry, api.Config{
@@ -344,6 +356,7 @@ func (a *App) Run(ctx context.Context) error {
 	group.Go(func() error { return a.alerter.Run(groupCtx) })
 	group.Go(func() error { return a.sentinel.Run(groupCtx) })
 	group.Go(func() error { return a.registry.Run(groupCtx) })
+	group.Go(func() error { return a.watcher.Run(groupCtx) })
 
 	group.Go(func() error {
 		a.log.Info("Forktower is running")

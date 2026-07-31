@@ -236,3 +236,24 @@ func TestAMissingLightningCredentialStopsStartup(t *testing.T) {
 		t.Errorf("the error does not say which node could not be reached: %v", err)
 	}
 }
+
+// The watcher is started too, and it says how far it has got. Without this the
+// engine would be complete and never run — the same gap the registry had.
+func TestTheDaemonWatchesTheOtherChain(t *testing.T) {
+	t.Parallel()
+
+	h := newHarnessWith(t, nil, nil)
+	h.start(t)
+
+	// The high-water mark only appears once a block has been processed, which
+	// only happens once the watcher is running and following the second chain.
+	waitFor(t, "the watcher to record where it has got to", func() bool {
+		st, err := store.Open(context.Background(), h.cfg.Store.Path)
+		if err != nil {
+			return false
+		}
+		defer func() { _ = st.Close() }()
+		got, err := st.GetMeta(context.Background(), store.MetaLastScannedSQHash)
+		return err == nil && got != ""
+	})
+}

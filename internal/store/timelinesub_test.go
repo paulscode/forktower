@@ -72,6 +72,9 @@ func TestTheTimelineRecordsEveryKindOfEvent(t *testing.T) {
 		bus.AlertRaised{AlertID: 1, Tier: "warning", AlertKind: "x", Message: "something"},
 		bus.ChannelUpserted{New: true, Channel: bus.ChannelJSON{ID: 1, Relevance: "relevant"}},
 		bus.ChannelClosedSF{ChannelID: 1, State: "pending_close"},
+		bus.FundingSpent{SpendEventID: 1, ChannelID: 1, Branch: "sq", Height: 5},
+		bus.SecondOrderSpent{SpendEventID: 2, SourceSpendEventID: 1, Role: "to_local"},
+		bus.SpendReorgedOut{SpendEventID: 1, Branch: "sq"},
 	}
 	for _, e := range events {
 		b.Publish(e)

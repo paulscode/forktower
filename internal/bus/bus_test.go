@@ -429,6 +429,9 @@ func TestEventKindsMatchTheirConstants(t *testing.T) {
 		{AlertRaised{}, KindAlertRaised},
 		{ChannelUpserted{}, KindChannelUpserted},
 		{ChannelClosedSF{}, KindChannelClosedSF},
+		{FundingSpent{}, KindFundingSpent},
+		{SecondOrderSpent{}, KindSecondOrderSpent},
+		{SpendReorgedOut{}, KindSpendReorgedOut},
 	}
 	for _, tc := range cases {
 		if got := tc.event.Kind(); got != tc.want {
