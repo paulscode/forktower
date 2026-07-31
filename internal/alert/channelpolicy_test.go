@@ -7,6 +7,7 @@ import (
 
 	"github.com/paulscode/forktower/internal/bus"
 	"github.com/paulscode/forktower/internal/store"
+	"github.com/paulscode/forktower/internal/words"
 )
 
 // What the user is told about their own channels, and how urgently. One table,
@@ -268,6 +269,11 @@ func TestChannelAlertsNameNothingSpecific(t *testing.T) {
 			if strings.Contains(text, leak) {
 				t.Errorf("%T leaks %q: %q", e, leak, text)
 			}
+		}
+		// And nothing this program calls things among itself, from the one list
+		// the dashboard and the timeline also check against.
+		if leak := words.FindInternal(text); leak != "" {
+			t.Errorf("%T puts the internal name %q in front of a user: %q", e, leak, text)
 		}
 		if found := longNumber.FindString(text); found != "" {
 			t.Errorf("%T carries the number %q, which belongs on the dashboard: %q",

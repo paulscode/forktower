@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/paulscode/forktower/internal/store"
+	"github.com/paulscode/forktower/internal/words"
 )
 
 // Spend is one transaction that spent something Forktower was watching.
@@ -124,23 +125,7 @@ func spendSentence(shape store.SpendShape) string {
 	}
 }
 
-// The two chains, in the words the documentation says to use. The internal names
-// mean nothing outside this codebase, and a user shown "sq" has been shown
-// nothing.
-const (
-	labelOwnChain     = "your node's chain"
-	labelOtherChain   = "the other chain"
-	labelUnknownChain = "a chain Forktower does not recognise"
-)
-
-// branchPhrase names a chain the way the rest of the page does.
+// branchPhrase names a chain the way everything else does.
 func branchPhrase(b store.Branch) string {
-	switch b {
-	case store.BranchSF:
-		return labelOwnChain
-	case store.BranchSQ:
-		return labelOtherChain
-	default:
-		return labelUnknownChain
-	}
+	return words.Chain(string(b))
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/paulscode/forktower/internal/bus"
+	"github.com/paulscode/forktower/internal/words"
 )
 
 // TimelineSubscriberName identifies this consumer in the bus's drop diagnostics.
@@ -225,12 +226,6 @@ func summarizeViewHealth(ev bus.ViewHealthChanged) string {
 	}
 }
 
-// The two chains, in the words the documentation says to use.
-const (
-	labelOwnChain   = "your node's chain"
-	labelOtherChain = "the other chain"
-)
-
 // asSentence terminates a line that ends up carrying text from elsewhere. The
 // timeline reads as prose, and one entry stopping mid-air makes the whole column
 // look broken.
@@ -249,12 +244,5 @@ func asSentence(s string) string {
 
 // branchPhrase is the words a user reads for one of the two chains.
 func branchPhrase(branch string) string {
-	switch Branch(branch) {
-	case BranchSF:
-		return labelOwnChain
-	case BranchSQ:
-		return labelOtherChain
-	default:
-		return "one of the chains"
-	}
+	return words.Chain(branch)
 }

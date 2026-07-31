@@ -7,6 +7,7 @@ import (
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/config"
 	"github.com/paulscode/forktower/internal/store"
+	"github.com/paulscode/forktower/internal/words"
 )
 
 // Alert kinds. Stable machine-readable strings: they are part of every payload,
@@ -475,23 +476,7 @@ func ClosedOnlyOnYourChain(channelID int64) Candidate {
 	}
 }
 
-// The phrases a user sees for the two chains. The internal names mean nothing
-// outside this codebase, and doc-level consistency here is what keeps the
-// dashboard, the notifications and the documentation using one vocabulary.
-const (
-	labelSF      = "your node's chain"
-	labelSQ      = "the other chain"
-	labelUnknown = "one of the chains"
-)
-
 // viewLabel is the phrase a user sees for one of the two chains.
 func viewLabel(b chainview.Branch) string {
-	switch b {
-	case chainview.BranchSF:
-		return labelSF
-	case chainview.BranchSQ:
-		return labelSQ
-	default:
-		return labelUnknown
-	}
+	return words.Chain(string(b))
 }

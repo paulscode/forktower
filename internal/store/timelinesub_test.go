@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/paulscode/forktower/internal/bus"
+	"github.com/paulscode/forktower/internal/words"
 )
 
 func startTimeline(t *testing.T, s *Store, clock *atomic.Int64) *bus.Bus {
@@ -231,5 +232,70 @@ func TestARecordSurvivesShutdown(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("recorded %d entries, want the event to have survived shutdown", len(entries))
+	}
+}
+
+// The timeline is the third place this program puts words in front of a person,
+// and it is checked against the same list as the dashboard and the
+// notifications — which is the point of there being one list.
+func TestNoInternalNameReachesTheTimeline(t *testing.T) {
+	t.Parallel()
+
+	for _, e := range everyEventKind() {
+		summary := Summarize(e)
+		if summary == "" {
+			t.Errorf("%T produced nothing to read", e)
+			continue
+		}
+		if leak := words.FindInternal(summary); leak != "" {
+			t.Errorf("%T puts the internal name %q in the timeline: %q", e, leak, summary)
+		}
+	}
+}
+
+// everyEventKind is one of each, populated with the values that would leak if
+// anything passed them through. Held to the bus's own list, so an event kind
+// added without a line here is a failure rather than a gap.
+func everyEventKind() []bus.Event {
+	return []bus.Event{
+		bus.SplitStateChanged{Old: "ARMED", New: "SPLIT"},
+		bus.SplitStateChanged{Old: "SPLIT", New: "RESOLVING"},
+		bus.SplitStateChanged{Old: "ARMED", New: "UNARMED"},
+		bus.SplitStateChanged{Old: "ARMED", New: "RESOLVED_SF_WON"},
+		bus.SplitBranchExtended{Branch: "sq", Block: bus.BlockMetaJSON{Height: 961753}},
+		bus.SplitBranchExtended{Branch: "sf"},
+		bus.SplitBranchExtended{Branch: "elsewhere"},
+		bus.ViewHealthChanged{View: "sq", Old: "OK", New: "WRONG_BRANCH"},
+		bus.ViewHealthChanged{View: "sf", Old: "DEGRADED", New: "OK"},
+		bus.ViewHealthChanged{View: "sq", New: "ECLIPSE_SUSPECT"},
+		bus.AlertRaised{Tier: "critical", AlertKind: "channel_spent", Message: "something"},
+		bus.ChannelUpserted{New: true, Channel: bus.ChannelJSON{Relevance: "relevant"}},
+		bus.ChannelUpserted{New: false, Channel: bus.ChannelJSON{Relevance: "irrelevant"}},
+		bus.ChannelClosedSF{State: "pending_close"},
+		bus.ChannelClosedSF{State: "coop_closed"},
+		bus.FundingSpent{Branch: "sq", Shape: "commitment_unknown", Status: "confirmed"},
+		bus.SecondOrderSpent{Role: "to_local", Shape: "justice"},
+		bus.SpendReorgedOut{Branch: "sq"},
+		bus.MempoolSighting{Branch: "sq", Shape: "commitment_unknown"},
+		bus.DeadlineEscalated{Level: 2, RemainingBlocks: 40, EstWallClock: "about 4 days"},
+		bus.DeadlineEscalated{Level: 3, RemainingBlocks: 4},
+		bus.DeadlineResolved{ByTxid: "deadbeef"},
+		bus.DeadlineResolved{},
+		bus.DeadlineExpiredLoss{AmountSat: 2100000},
+	}
+}
+
+// A kind with no example above would be a kind nobody checked.
+func TestEveryEventKindHasAnExampleToCheck(t *testing.T) {
+	t.Parallel()
+
+	covered := map[string]bool{}
+	for _, e := range everyEventKind() {
+		covered[e.Kind()] = true
+	}
+	for _, kind := range bus.AllKinds() {
+		if !covered[kind] {
+			t.Errorf("%s has no example, so nothing checks what it says to a user", kind)
+		}
 	}
 }

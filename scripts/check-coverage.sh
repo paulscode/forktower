@@ -53,6 +53,10 @@ declare -A MIN=(
   # read, and which requests are refused. The handlers are exercised end to end
   # over httptest, so there is no container excuse for a gap here either.
   [internal/api]=90
+  # The words the program says to a person, and the check that stops its own
+  # names reaching them. Pure string handling with no I/O and every branch
+  # reachable from a test; a gap here is a gap in the one thing it does.
+  [internal/words]=95
   # Pure string handling on a security boundary: nothing to excuse a gap, and a
   # miss here puts a working credential in a file people email to strangers.
   [internal/redact]=95

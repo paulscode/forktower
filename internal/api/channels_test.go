@@ -11,6 +11,7 @@ import (
 
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/store"
+	"github.com/paulscode/forktower/internal/words"
 )
 
 const (
@@ -177,14 +178,6 @@ func TestNothingOnScreenIsAnInternalName(t *testing.T) {
 		store.Relevant, store.Irrelevant, store.RelevanceUnknown,
 	}
 
-	// Every word this program uses internally, which must never be shown.
-	forbidden := []string{
-		"commitment_unknown", "commitment_ours", "commitment_revoked",
-		"mutual_close", "delayed_sweep", "htlc_claim", "reorged_out",
-		"csv", "htlc_incoming", "htlc_outgoing", "sq", "sf",
-		"pending_close", "coop_closed", "force_closed", "breach_closed",
-		"static_remote", "anchors", "taproot",
-	}
 	longNumber := regexp.MustCompile(`\d{5,}`)
 
 	for _, shape := range shapes {
@@ -208,12 +201,11 @@ func TestNothingOnScreenIsAnInternalName(t *testing.T) {
 				for _, row := range channels(t, sub) {
 					text := row.Display.Partner + " " + row.Display.Status + " " +
 						row.Display.StatusAction + " " + row.Display.TimeLeft
-					lower := strings.ToLower(text)
-					for _, word := range forbidden {
-						if strings.Contains(lower, word) {
-							t.Fatalf("shape %q status %q put %q on the screen: %q",
-								shape, status, word, text)
-						}
+					// One list, in one place, shared with the notification and
+					// timeline checks — see internal/words.
+					if leak := words.FindInternal(text); leak != "" {
+						t.Fatalf("shape %q status %q put %q on the screen: %q",
+							shape, status, leak, text)
 					}
 					if found := longNumber.FindString(text); found != "" {
 						t.Fatalf("shape %q put the number %q on the screen: %q",
