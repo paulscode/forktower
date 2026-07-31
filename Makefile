@@ -26,7 +26,8 @@ GOLANGCI   ?= golangci-lint
 .PHONY: build test lint fmt integration run-dev cover-html icons icons-check \
         forkbench-up forkbench-split forkbench-status forkbench-down \
         forkbench-ln-up forkbench-ln-status forkbench-fixtures demo-s1-detect \
-        check check-boundary check-artifacts cover-check cover tidy-check vuln tidy clean help
+        check check-boundary check-artifacts cover-check cover tidy-check vuln tidy clean help \
+        vendor-teos teos-image
 
 ## check: everything that must pass before a commit — the only gate there is
 #
@@ -195,6 +196,14 @@ forkbench-fixtures: build
 	$(BIN_DIR)/forkbench pay -times 2
 	$(BIN_DIR)/forkbench coop-close -fixtures $(FIXTURES)
 	@printf '\n  fixtures rebuilt in %s\n' "$(FIXTURES)"
+
+## vendor-teos: fetch the pinned rust-teos into vendor/, if it is not already there
+vendor-teos:
+	@./scripts/vendor-teos.sh
+
+## teos-image: build the Core Lightning watchtower image from the vendored source
+teos-image: vendor-teos
+	docker build -f deploy/teos/Dockerfile -t forktower/teos:local .
 
 ## icons: regenerate the shipped icons from the source art
 #

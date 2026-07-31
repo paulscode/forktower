@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "teos",
+    "teos-common",
+    "watchtower-plugin"
+]

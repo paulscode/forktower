@@ -1,0 +1,82 @@
+name: Continuous Integration Checks
+
+on: 
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ ubuntu-latest, macos-latest, windows-latest ]
+        toolchain: [ stable ]
+        include:
+           - platform: windows-latest
+             arguments: --workspace --exclude watchtower-plugin
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Install Rust ${{ matrix.toolchain }} toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build on Rust ${{ matrix.toolchain }}
+        run: |
+          cargo build ${{ matrix.arguments }} --verbose --color always
+      - name: Test on Rust ${{ matrix.toolchain }}
+        run: |
+          cargo test ${{ matrix.arguments }} --verbose --color always
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run rustfmt
+        run: |
+          cargo fmt --verbose --check -- --color always
+      - name: Run clippy
+        run: |
+          cargo clippy --all-features --all-targets --color always -- --deny warnings
+          
+  python-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Run black
+        uses: psf/black@stable
+        with:
+          src: "./watchtower-plugin/tests"
+          options: "--check -l 120"
+
+  check-flake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Check Nix flake inputs
+        uses: DeterminateSystems/flake-checker-action@v12
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+      - name: Check flake
+        run: nix flake check
+

@@ -1,0 +1,50 @@
+syntax = "proto3";
+package teos.v2;
+
+import "appointment.proto";
+import "user.proto";
+import "common/teos/v2/appointment.proto";
+import "common/teos/v2/user.proto";
+import "google/protobuf/empty.proto";
+
+message NetworkAddress {
+  // Tower public API endpoint.
+  enum AddressType {
+    IpV4 = 0;
+    TorV3 = 1;
+  }
+  AddressType address_type = 1;
+  string address = 2;
+  uint32 port = 3;
+
+}
+
+message GetTowerInfoResponse {
+  // Response with information about the tower.
+  bytes tower_id = 1;
+  uint32 n_registered_users = 2;
+  uint32 n_watcher_appointments = 3;
+  uint32 n_responder_trackers = 4;
+  bool bitcoind_reachable = 5;
+  repeated NetworkAddress addresses = 6;
+}
+
+service PublicTowerServices {
+  // Public tower services, only reachable from the public API.
+
+  rpc register(common.teos.v2.RegisterRequest) returns (common.teos.v2.RegisterResponse) {}
+  rpc add_appointment(common.teos.v2.AddAppointmentRequest) returns (common.teos.v2.AddAppointmentResponse) {}
+  rpc get_appointment(common.teos.v2.GetAppointmentRequest) returns (common.teos.v2.GetAppointmentResponse) {}
+  rpc get_subscription_info(common.teos.v2.GetSubscriptionInfoRequest) returns (common.teos.v2.GetSubscriptionInfoResponse) {}
+}
+
+service PrivateTowerServices {
+  // Private tower services, only reachable from the private API.
+
+  rpc get_all_appointments(google.protobuf.Empty) returns (GetAllAppointmentsResponse) {}
+  rpc get_appointments(GetAppointmentsRequest) returns (GetAppointmentsResponse) {}
+  rpc get_tower_info(google.protobuf.Empty) returns (GetTowerInfoResponse) {}
+  rpc get_users(google.protobuf.Empty) returns (GetUsersResponse) {}
+  rpc get_user(GetUserRequest) returns (GetUserResponse) {}
+  rpc stop(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+}

@@ -1,0 +1,54 @@
+[package]
+name = "teos"
+version = "0.2.0"
+authors = ["Sergi Delgado Segura <sergi.delgado.s@gmail.com>"]
+license = "MIT"
+edition = "2021"
+default-run="teosd"
+
+[[bin]]
+name = "teos-cli"
+path = "src/cli.rs"
+
+[[bin]]
+name = "teosd"
+path = "src/main.rs"
+
+[dependencies]
+# General
+hex = { version = "0.4.3", features = [ "serde" ] }
+home = "0.5.3"
+log = "0.4"
+prost = "0.12"
+rcgen = { version = "0.13.1", features = ["pem", "x509-parser"] }
+rusqlite = { version = "0.26.0", features = [ "bundled", "limits" ] }
+serde = "1.0.130"
+serde_json = "1.0"
+simple_logger = "2.1.0"
+structopt = "0.3"
+toml = "0.5"
+tonic = { version = "0.11", features = [ "tls", "transport" ] }
+tokio = { version = "1.5", features = [ "rt-multi-thread" ] }
+triggered = "0.1.2"
+warp = "0.3.5"
+torut = "0.2.1"
+base64 = "0.22.1"
+
+# Bitcoin and Lightning
+bitcoin = { version = "0.32.0" }
+bitcoincore-rpc = "0.19.0"
+lightning = "0.1.0"
+lightning-net-tokio = "0.1.0"
+lightning-block-sync = { version = "0.1.0", features = [ "rpc-client" ] }
+
+# Local
+teos-common = { path = "../teos-common" }
+
+[build-dependencies]
+tonic-build = "0.11"
+
+[dev-dependencies]
+jsonrpc-http-server = "17.1.0"
+rand = "0.8.4"
+tempdir = "0.3.7"
+tokio-stream = { version = "0.1.5", features = [ "net" ] }

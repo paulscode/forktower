@@ -1,0 +1,6 @@
+# Written by scripts/vendor-teos.sh. Do not edit.
+#
+# Anything under this directory is somebody else's work, vendored
+# unmodified. See deploy/teos/README.md.
+repo=https://github.com/talaia-labs/rust-teos.git
+commit=be344ecc5286dd9436bf343d30954135da8ad4ac
