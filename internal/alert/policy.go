@@ -167,6 +167,10 @@ func MapEventToAlert(e bus.Event) (Candidate, bool) {
 		return mapDeadlineResolved(ev)
 	case bus.DeadlineExpiredLoss:
 		return mapExpiredLoss(ev)
+	case bus.TowerHealthChanged:
+		return mapTowerHealth(ev)
+	case bus.TowerConcern:
+		return mapTowerConcern(ev)
 	default:
 		return Candidate{}, false
 	}

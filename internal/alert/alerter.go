@@ -143,7 +143,8 @@ func New(
 			bus.KindSplitStateChanged, bus.KindViewHealthChanged,
 			bus.KindFundingSpent, bus.KindMempoolSighting, bus.KindSpendReorgedOut,
 			bus.KindDeadlineEscalated, bus.KindDeadlineResolved,
-			bus.KindDeadlineExpiredLoss),
+			bus.KindDeadlineExpiredLoss,
+			bus.KindTowerHealthChanged, bus.KindTowerConcern),
 		sends: make(chan store.Alert, sendQueue),
 	}
 	if len(routes) == 0 {

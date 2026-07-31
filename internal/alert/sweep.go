@@ -10,11 +10,17 @@ import (
 
 // sweepLoop looks for the conditions nothing announces.
 //
-// Every other alert in this daemon is raised by something happening. This one is
-// raised by something *not* happening — a channel closed on the user's own chain
-// whose close has still not reached the other one — and an absence has no event
-// to attach to. It also picks up anything that changed while the daemon was
-// stopped, which no event ever will.
+// Two jobs on one timer. The first is the condition that has no event at all: a
+// channel closed on the user's own chain whose close has still not reached the
+// other one, which is an *absence* and so has nothing to attach to.
+//
+// The second is [Alerter.reconcile], which re-derives from stored state the
+// alerts that do have events — because an event is delivered once, and an alert
+// that can be missed permanently is the wrong shape for a program whose whole
+// purpose is to be the thing that notices.
+//
+// Both also pick up anything that changed while the daemon was stopped, which no
+// event ever will.
 func (a *Alerter) sweepLoop(ctx context.Context) error {
 	ticker := time.NewTicker(a.cfg.SweepInterval)
 	defer ticker.Stop()
@@ -22,6 +28,7 @@ func (a *Alerter) sweepLoop(ctx context.Context) error {
 	// Once at startup, because the most likely reason a channel is in this state
 	// is that it got there while nobody was running.
 	a.sweep(ctx)
+	a.reconcile(ctx)
 
 	for {
 		select {
@@ -29,6 +36,9 @@ func (a *Alerter) sweepLoop(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			a.sweep(ctx)
+			// Everything that can be re-derived from what is stored, so that an
+			// event nobody received is not an alert nobody ever gets.
+			a.reconcile(ctx)
 		}
 	}
 }
