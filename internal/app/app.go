@@ -24,6 +24,7 @@ import (
 	"github.com/paulscode/forktower/internal/registry"
 	"github.com/paulscode/forktower/internal/registry/cln"
 	"github.com/paulscode/forktower/internal/registry/lnd"
+	"github.com/paulscode/forktower/internal/responder/tower"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/standdown"
 	"github.com/paulscode/forktower/internal/store"
@@ -59,6 +60,7 @@ type App struct {
 	registry  *registry.Registry
 	watcher   *watcher.Watcher
 	deadline  *deadline.Engine
+	wardens   []*tower.Warden
 	standDown *standdown.Switch
 	alerter   *alert.Alerter
 	timeline  *store.TimelineSubscriber
@@ -231,6 +233,14 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 	if err != nil {
 		a.closeOnFailure()
 		return nil, fmt.Errorf("setting up the countdowns: %w", err)
+	}
+
+	// The companion towers, if any are configured. Built after the deadline
+	// engine because nothing subscribes here — a warden only publishes — so its
+	// place in the order is a matter of reading rather than of correctness.
+	if err := a.buildWardens(cfg, log, now); err != nil {
+		a.closeOnFailure()
+		return nil, err
 	}
 
 	a.api, err = api.New(st, a.sentinel, a.alerter, a.registry, a.deadline,
@@ -414,6 +424,9 @@ func (a *App) Run(ctx context.Context) error {
 	group.Go(func() error { return a.registry.Run(groupCtx) })
 	group.Go(func() error { return a.watcher.Run(groupCtx) })
 	group.Go(func() error { return a.deadline.Run(groupCtx) })
+	for _, w := range a.wardens {
+		group.Go(func() error { return w.Run(groupCtx) })
+	}
 
 	group.Go(func() error {
 		a.log.Info("Forktower is running")

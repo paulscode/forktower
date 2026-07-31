@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -525,5 +526,83 @@ func TestADaemonStartedAfterASplitStillFindsIt(t *testing.T) {
 	}
 	if height, _ := fork["height"].(float64); int32(height) != sharedHistory {
 		t.Errorf("separation point at height %v, want %d", fork["height"], sharedHistory)
+	}
+}
+
+// A companion watchtower is switched on, and the daemon builds a warden for it
+// without needing the tower to be running.
+//
+// The tower's own reachability is the warden's business and is tested there.
+// What matters here is that a configured tower is wired into the lifecycle at
+// all, and that a daemon starts and stops cleanly with one attached — an engine
+// that stops the daemon shutting down is a worse failure than a tower nobody is
+// watching.
+func TestADaemonWithAWatchtowerConfiguredStartsAndStops(t *testing.T) {
+	t.Parallel()
+
+	credentials := t.TempDir()
+	macaroon := filepath.Join(credentials, "readonly.macaroon")
+	if err := os.WriteFile(macaroon, []byte{0x02, 0x01, 0x03}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newHarness(t, func(cfg *config.Config, _, _ *chainviewtest.View) {
+		cfg.Tower.LND = config.TowerInstance{
+			Enabled:      true,
+			Listen:       "abcdef.onion:9911",
+			APIURL:       "http://127.0.0.1:1",
+			MacaroonPath: macaroon,
+			DataDir:      credentials,
+		}
+	})
+
+	h.start(t)
+
+	// Serving normally, with a tower configured that is not answering. A
+	// watchtower that cannot be reached is a thing to report, never a thing that
+	// stops the rest of the daemon working.
+	resp, err := http.Get(h.base + "/api/v1/healthz")
+	if err != nil {
+		t.Fatalf("the daemon stopped serving with a tower configured: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("health = %d with a tower configured", resp.StatusCode)
+	}
+}
+
+// A tower whose credential cannot be read is a configuration error worth
+// refusing over, because the alternative is a daemon that appears to be running
+// a watchtower and is not.
+func TestATowerWithAnUnreadableCredentialIsRefused(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	sf := chainviewtest.New("regtest")
+	sq := chainviewtest.New("regtest")
+
+	cfg := config.Default()
+	cfg.Store.Path = filepath.Join(t.TempDir(), "forktower.db")
+	cfg.UI.Auth = config.AuthNone
+	cfg.Tower.LND = config.TowerInstance{
+		Enabled:      true,
+		Listen:       "abcdef.onion:9911",
+		APIURL:       "http://127.0.0.1:1",
+		MacaroonPath: filepath.Join(t.TempDir(), "does-not-exist.macaroon"),
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	daemon, err := app.New(ctx, cfg, nil, app.Deps{SF: sf, SQ: sq, Listener: listener})
+	if err == nil {
+		_ = daemon.Close()
+		t.Fatal("a tower whose credential cannot be read was accepted")
+	}
+	if !strings.Contains(err.Error(), "watchtower") {
+		t.Errorf("the error does not say what could not be set up: %v", err)
 	}
 }

@@ -247,3 +247,56 @@ footer { max-width: 46rem; margin: 0 auto; }
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
+
+/* Watchtowers.
+   The state that needs to stand out is "not protecting", which covers both a
+   tower that is down and one that is up and holding nothing — the second looks
+   healthy everywhere else, so this is the only place it shows. */
+.towers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tower {
+  border-left: 3px solid var(--ok, #2e7d32);
+  padding: 0.35rem 0 0.35rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.tower.at-risk {
+  border-left-color: var(--bad, #c62828);
+}
+
+.tower-summary {
+  margin: 0 0 0.35rem;
+}
+
+.tower-gaps {
+  margin: 0 0 0.35rem;
+  padding-left: 1.1rem;
+}
+
+.tower-gaps li {
+  margin-bottom: 0.2rem;
+}
+
+.steps {
+  padding-left: 1.2rem;
+}
+
+.steps li {
+  margin-bottom: 0.6rem;
+}
+
+/* The line the user copies. Wraps rather than scrolls: an onion address that
+   runs off the edge of the box is one that gets pasted half-copied. */
+.command {
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  border-radius: 4px;
+  padding: 0.5rem 0.6rem;
+  margin: 0.35rem 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: 0.9em;
+}

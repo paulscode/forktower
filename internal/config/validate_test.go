@@ -173,20 +173,6 @@ func TestSettingsThatDoNothingAreReported(t *testing.T) {
 		want   string
 	}{
 		{
-			name: "a companion tower switched on",
-			mutate: func(c *Config) {
-				// Complete enough to be valid: a tower that is enabled has to
-				// say where it listens and where Forktower reads it. It is
-				// still not wired into the daemon, which is the separate thing
-				// UnusedSettings is reporting.
-				c.Tower.LND = TowerInstance{
-					Enabled: true, Listen: "abc.onion:9911",
-					APIURL: "https://tower-lnd:8080",
-				}
-			},
-			want: "tower.lnd.enabled",
-		},
-		{
 			name: "the other companion tower",
 			mutate: func(c *Config) {
 				c.Tower.TEOS = TowerInstance{
@@ -342,5 +328,24 @@ func TestTheDefaultTowerConfigurationIsValid(t *testing.T) {
 	cfg.Tower.LND.MaxDiskMB = 512
 	if got := cfg.Tower.LND.DiskLimitMB(); got != 512 {
 		t.Errorf("an explicit disk limit resolved to %d, want 512", got)
+	}
+}
+
+// The LND companion tower is built now, so switching it on does something and
+// must not be reported as inert.
+func TestTheLNDTowerIsNoLongerReportedAsDoingNothing(t *testing.T) {
+	t.Parallel()
+	cfg := minimalValid()
+	cfg.Tower.LND = TowerInstance{
+		Enabled: true, Listen: "abc.onion:9911", APIURL: "https://tower-lnd:8080",
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a complete tower configuration was refused: %v", err)
+	}
+	for _, note := range cfg.UnusedSettings() {
+		if strings.Contains(note, "tower.lnd") {
+			t.Errorf("the LND tower is wired in and was still reported as unused: %q", note)
+		}
 	}
 }

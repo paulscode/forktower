@@ -1,0 +1,386 @@
+package tower
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sync/atomic"
+	"time"
+
+	"github.com/paulscode/forktower/internal/bus"
+	"github.com/paulscode/forktower/internal/store"
+)
+
+// DefaultInterval is how often a tower is looked at.
+//
+// A minute, matching the registry's poll. A watchtower does not change quickly
+// and the useful signal is "this has been wrong for a while" rather than "this
+// was wrong for four seconds", so a faster loop would buy nothing and would
+// write to the database for no reason.
+const DefaultInterval = time.Minute
+
+// writeTimeout bounds the writes that record what a pass found.
+//
+// Detached from the caller's context on purpose: a shutdown arriving between
+// observing a tower and recording what was observed must not lose the
+// observation. Same rule the detection engines follow.
+const writeTimeout = 5 * time.Second
+
+// Warden keeps one tower's record up to date and says when something is wrong.
+//
+// The supervisor watches the tower itself and the monitor watches what the
+// user's node is actually backing up to it. Both are needed and neither is
+// enough: a tower can be perfectly healthy while nothing is being sent to it,
+// which looks like protection and is not.
+type Warden struct {
+	store      *store.Store
+	bus        *bus.Bus
+	log        *slog.Logger
+	supervisor *Supervisor
+	// client is the user's node, or nil when they have none configured. The
+	// coverage monitor is built from it on the first pass that learns the
+	// tower's own pubkey, because that is what the monitor needs to recognise
+	// itself among whatever else the user has registered.
+	client            ClientReader
+	monitor           *Monitor
+	lowFeeSatPerVByte uint32
+	kind              store.TowerKind
+	// managed is whether this installation runs the tower. It changes what may
+	// honestly be said about fixing it.
+	managed  bool
+	uri      string
+	interval time.Duration
+	now      func() time.Time
+
+	// towerID is filled on the first pass, once the tower has a row. Atomic
+	// because TowerID() is read from outside the goroutine running the loop.
+	towerID atomic.Int64
+	// lastStatus is what was last announced, so an unchanged tower is not
+	// announced every minute.
+	lastStatus store.TowerStatus
+	// lastConcerns is what was last said, so a standing problem is not repeated
+	// on every pass. A concern that goes away and comes back is said again.
+	lastConcerns map[string]bool
+	// previous is the coverage from the last pass, which is what makes a stalled
+	// backup count visible.
+	previous []store.Coverage
+	// firstSeen is when this tower was first recorded, which is what the grace
+	// period is measured from.
+	firstSeen int64
+}
+
+// WardenOptions configures a Warden.
+type WardenOptions struct {
+	Store      *store.Store
+	Bus        *bus.Bus
+	Log        *slog.Logger
+	Supervisor *Supervisor
+	// Client is the user's Lightning node, or nil when they have none. The tower
+	// is still watched without one — it is still running and still costing
+	// disk — but nothing can be said about what it protects.
+	Client ClientReader
+	// LowFeeSatPerVByte, when set, is the rate below which a session's baked-in
+	// justice fee is worth mentioning.
+	LowFeeSatPerVByte uint32
+	Kind              store.TowerKind
+	Managed           bool
+	URI               string
+	Interval          time.Duration
+	Now               func() time.Time
+}
+
+// NewWarden builds a Warden.
+func NewWarden(opts WardenOptions) (*Warden, error) {
+	if opts.Store == nil || opts.Bus == nil {
+		return nil, errors.New("tower: a warden needs storage and a bus")
+	}
+	if opts.Supervisor == nil {
+		return nil, errors.New("tower: a warden needs a supervisor")
+	}
+	if !opts.Kind.Valid() {
+		return nil, fmt.Errorf("tower: %q is not a watchtower kind", opts.Kind)
+	}
+	if opts.Log == nil {
+		opts.Log = slog.New(discardHandler{})
+	}
+	if opts.Interval <= 0 {
+		opts.Interval = DefaultInterval
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	return &Warden{
+		store: opts.Store, bus: opts.Bus, log: opts.Log,
+		supervisor: opts.Supervisor, client: opts.Client,
+		lowFeeSatPerVByte: opts.LowFeeSatPerVByte,
+		kind:              opts.Kind, managed: opts.Managed, uri: opts.URI,
+		interval: opts.Interval, now: opts.Now,
+		lastConcerns: map[string]bool{},
+	}, nil
+}
+
+// SubscriberName identifies this engine on the bus and in logs.
+const SubscriberName = "tower"
+
+// Run watches until the context is cancelled.
+func (w *Warden) Run(ctx context.Context) error {
+	// One pass immediately, because a user who has just started the daemon
+	// should not wait a minute to be told their tower is unreachable.
+	w.pass(ctx)
+
+	ticker := time.NewTicker(w.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			w.pass(ctx)
+		}
+	}
+}
+
+// pass is one round of looking.
+//
+// Never returns an error: a tower that cannot be read is the answer this engine
+// exists to produce, not a reason to stop producing answers.
+func (w *Warden) pass(ctx context.Context) {
+	obs := w.supervisor.Observe(ctx)
+	now := w.now().Unix()
+
+	if err := w.record(ctx, obs, now); err != nil {
+		w.log.Error("recording the tower's condition", slog.String("error", err.Error()))
+		return
+	}
+	w.announceHealth(obs)
+
+	var concerns []Concern
+	if obs.NearingDiskLimit() {
+		concerns = append(concerns, Concern{
+			Kind: ConcernDiskFilling, TowerID: w.towerID.Load(),
+			Message: fmt.Sprintf(
+				"the tower's storage is at %d MB of the %d MB Forktower allows it. "+
+					"A watchtower accepts a session from anyone who can reach it, so "+
+					"this is worth looking at rather than waiting on.",
+				obs.UsedBytes>>20, obs.LimitBytes>>20),
+		})
+	}
+	concerns = append(concerns, w.checkCoverage(ctx, obs, now)...)
+
+	for _, c := range concerns {
+		w.raise(c)
+	}
+	// Anything that was a problem last time and is not one now is forgotten, so
+	// that a problem which clears and comes back is said again. Without this a
+	// tower could go bad, be fixed, go bad again, and be announced only once.
+	w.forgetResolved(concerns)
+}
+
+// ConcernDiskFilling means the tower's storage is approaching the cap Forktower
+// imposes on it, because LND imposes none of its own.
+const ConcernDiskFilling ConcernKind = "tower.disk_filling"
+
+// record writes what was observed, so that a restart does not lose it.
+func (w *Warden) record(ctx context.Context, obs Observation, now int64) error {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+	defer cancel()
+
+	pubkey := obs.Identity.Pubkey
+	if pubkey == "" && w.towerID.Load() == 0 {
+		// A tower that has not answered yet has no identity to key on. Nothing to
+		// record, and not an error: it is the ordinary state while it starts up.
+		return nil
+	}
+	if w.towerID.Load() == 0 {
+		id, _, err := w.store.UpsertTower(writeCtx, store.Tower{
+			Kind: w.kind, Pubkey: pubkey, URI: w.uriOf(obs),
+			Managed: w.managed, FirstSeenAt: now, UpdatedAt: now,
+		})
+		if err != nil {
+			return err
+		}
+		w.towerID.Store(id)
+		// Read back when this tower was *first* seen, rather than assuming it was
+		// now. A tower already in the database has been known since long before
+		// this process started, and taking `now` would restart the registration
+		// grace period on every restart — suppressing real problems for ten
+		// minutes each time the daemon comes back, which is exactly when somebody
+		// is most likely to be watching.
+		w.firstSeen = w.firstSeenOf(writeCtx, id, now)
+	} else if pubkey != "" {
+		if _, _, err := w.store.UpsertTower(writeCtx, store.Tower{
+			Kind: w.kind, Pubkey: pubkey, URI: w.uriOf(obs),
+			Managed: w.managed, FirstSeenAt: w.firstSeen, UpdatedAt: now,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return w.store.SetTowerStatus(writeCtx, w.towerID.Load(), obs.Health, now)
+}
+
+// firstSeenOf reads back when this tower was first recorded, falling back to now
+// if it cannot be read — which errs towards patience rather than towards
+// complaining about a tower nobody has had a chance to register with.
+func (w *Warden) firstSeenOf(ctx context.Context, id, now int64) int64 {
+	rows, err := w.store.ListTowers(ctx, store.TowerFilter{})
+	if err != nil {
+		return now
+	}
+	for _, t := range rows {
+		if t.ID == id && t.FirstSeenAt > 0 {
+			return t.FirstSeenAt
+		}
+	}
+	return now
+}
+
+// uriOf prefers the address the tower reports over the one configured, because
+// the tower knows where it actually ended up and a Tor address is published by
+// the tower rather than written down in advance.
+func (w *Warden) uriOf(obs Observation) string {
+	if len(obs.Identity.URIs) > 0 {
+		return obs.Identity.URIs[0]
+	}
+	return w.uri
+}
+
+// announceHealth publishes a change, and only a change.
+func (w *Warden) announceHealth(obs Observation) {
+	if obs.Health.Status == w.lastStatus {
+		return
+	}
+	previous := w.lastStatus
+	w.lastStatus = obs.Health.Status
+	if previous == "" {
+		previous = store.TowerStatusUnknown
+	}
+	w.bus.Publish(bus.TowerHealthChanged{
+		TowerID: w.towerID.Load(), TowerKind: string(w.kind),
+		Pubkey: obs.Identity.Pubkey, Managed: w.managed,
+		Status: string(obs.Health.Status), Detail: obs.Health.Detail,
+		Previous: string(previous),
+	})
+}
+
+// checkCoverage works out what is protected and records it.
+func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) []Concern {
+	if w.client == nil || w.towerID.Load() == 0 {
+		return nil
+	}
+	// Built on the first pass that learns the tower's own identity, and rebuilt
+	// when the registration age moves. Not at construction: the pubkey and the
+	// version both come from the tower, and a monitor built before it answered
+	// would be one that could not recognise it.
+	if obs.Identity.Pubkey == "" {
+		return nil
+	}
+	monitor, err := NewMonitor(MonitorOptions{
+		Client: w.client, TowerID: w.towerID.Load(),
+		TowerPubkey:          obs.Identity.Pubkey,
+		TowerVersion:         ParseVersion(obs.Chain.Version),
+		RegisteredForSeconds: now - w.firstSeen,
+		LowFeeSatPerVByte:    w.lowFeeSatPerVByte,
+	})
+	if err != nil {
+		w.log.Error("setting up the coverage check", slog.String("error", err.Error()))
+		return nil
+	}
+	w.monitor = monitor
+
+	channels, listErr := w.store.ListChannels(ctx, store.ChannelFilter{OpenOnly: true})
+	if listErr != nil {
+		w.log.Error("reading channels to check their protection",
+			slog.String("error", listErr.Error()))
+		return nil
+	}
+	if len(channels) == 0 {
+		return nil
+	}
+
+	pass, err := w.monitor.Check(ctx, channels, w.previous, now)
+	if err != nil {
+		w.log.Error("reading what your node is backing up", slog.String("error", err.Error()))
+		return nil
+	}
+
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+	defer cancel()
+	for _, c := range pass.Coverage {
+		if err := w.store.UpsertCoverage(writeCtx, c); err != nil {
+			w.log.Error("recording what this tower protects",
+				slog.String("error", err.Error()))
+			return nil
+		}
+	}
+
+	pass.Concerns = append(pass.Concerns, w.monitor.StalledBackups(
+		pass.Coverage, w.previous, advancedSince(w.previous, pass.Coverage))...)
+	w.previous = pass.Coverage
+	return pass.Concerns
+}
+
+// advancedSince is which channels moved to a new state between two passes.
+//
+// Approximated from the coverage rows themselves rather than asked of the
+// registry: a channel whose last-backup time moved has plainly been active.
+// Deliberately conservative — it under-reports rather than over-reports, so a
+// stalled backup is only ever claimed about a channel we have positive evidence
+// was doing something.
+func advancedSince(previous, current []store.Coverage) map[int64]bool {
+	was := make(map[int64]store.Coverage, len(previous))
+	for _, c := range previous {
+		was[c.ChannelID] = c
+	}
+	out := map[int64]bool{}
+	for _, c := range current {
+		prior, ok := was[c.ChannelID]
+		if ok && c.LastBackupAt > prior.LastBackupAt {
+			out[c.ChannelID] = true
+		}
+	}
+	return out
+}
+
+// raise publishes a concern, unless it is the same one as last time.
+//
+// A standing problem said every minute is a problem nobody reads. It is said
+// again if it goes away and comes back, because that is news.
+func (w *Warden) raise(c Concern) {
+	key := fmt.Sprintf("%s:%d", c.Kind, c.ChannelID)
+	if w.lastConcerns[key] {
+		return
+	}
+	w.lastConcerns[key] = true
+	w.bus.Publish(bus.TowerConcern{
+		TowerID: w.towerID.Load(), Concern: string(c.Kind),
+		ChannelID: c.ChannelID, Message: c.Message,
+	})
+}
+
+// forgetResolved clears the memory of concerns that no longer apply, so that one
+// recurring is announced again.
+func (w *Warden) forgetResolved(current []Concern) {
+	still := make(map[string]bool, len(current))
+	for _, c := range current {
+		still[fmt.Sprintf("%s:%d", c.Kind, c.ChannelID)] = true
+	}
+	for key := range w.lastConcerns {
+		if !still[key] {
+			delete(w.lastConcerns, key)
+		}
+	}
+}
+
+// TowerID is the row this warden is keeping up to date. Zero until the tower has
+// answered once.
+func (w *Warden) TowerID() int64 { return w.towerID.Load() }
+
+// discardHandler drops log records, for a warden built without a logger.
+type discardHandler struct{ slog.Handler }
+
+func (discardHandler) Enabled(context.Context, slog.Level) bool  { return false }
+func (discardHandler) Handle(context.Context, slog.Record) error { return nil }
+func (d discardHandler) WithAttrs([]slog.Attr) slog.Handler      { return d }
+func (d discardHandler) WithGroup(string) slog.Handler           { return d }

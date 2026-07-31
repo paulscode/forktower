@@ -499,6 +499,96 @@ function renderChannels(rows) {
 }
 
 // ---------------------------------------------------------------------------
+// Watchtowers.
+// ---------------------------------------------------------------------------
+
+// The states a tower can be in, as the card colours them. "not protecting"
+// covers both a tower that is down and one that is perfectly healthy and
+// receiving nothing — because those are the same thing from the point of view
+// of whether the user's money is safe, even though the remedies differ.
+const TOWER_BAD = 'not protecting';
+
+// A tower's card: what it is doing, and per channel whether it actually covers
+// it.
+//
+// **A reachable tower and a protecting tower are not the same thing.** A
+// watchtower that is up, answering, and holding no sessions looks perfectly
+// healthy from every angle except the only one that matters. So the summary
+// leads with what is protected, not with whether the process is running.
+function renderTowers(payload) {
+  const card = el('towers-card');
+  const list = el('towers');
+  const towers = (payload && payload.towers) || [];
+
+  show(card, towers.length > 0);
+  show(el('towers-empty'), towers.length === 0);
+  clear(list);
+
+  let anyUri = '';
+  for (const tower of towers) {
+    const display = tower.display || {};
+    const item = make('li', display.state === TOWER_BAD ? 'tower at-risk' : 'tower');
+
+    item.appendChild(make('p', 'tower-summary', display.summary || ''));
+
+    // The uncovered channels first and by name. This is the failure that has no
+    // other symptom, so it does not go below a fold.
+    const uncovered = (tower.coverage || []).filter((c) => !c.coverable);
+    if (uncovered.length > 0) {
+      const reasons = make('ul', 'tower-gaps');
+      for (const gap of uncovered) {
+        reasons.appendChild(make('li', '', gap.reason || ''));
+      }
+      item.appendChild(reasons);
+    }
+
+    const fee = feeNote(tower.coverage || []);
+    if (fee) {
+      item.appendChild(make('p', 'quiet', fee));
+    }
+
+    if (tower.uri) {
+      anyUri = tower.uri;
+    }
+    list.appendChild(item);
+  }
+
+  renderTowerCommand(anyUri);
+}
+
+// feeNote says what a justice transaction would pay, and that nobody can change
+// it afterwards.
+//
+// Worth a line of its own because it is the one number here that is fixed
+// forever at the moment a session is negotiated: the transaction is signed then,
+// and the tower holds no keys with which to raise the fee later.
+function feeNote(coverage) {
+  const rates = coverage
+    .map((c) => c.sweep_fee_sat_per_vbyte)
+    .filter((r) => typeof r === 'number' && r > 0);
+  if (rates.length === 0) {
+    return '';
+  }
+  const lowest = Math.min(...rates);
+  return 'A justice transaction from this tower would pay ' + lowest +
+    ' sat/vB. That was fixed when the session was set up and cannot be raised ' +
+    'afterwards — re-registering starts a new session at your node\'s current rate.';
+}
+
+// renderTowerCommand fills in the copy-paste line in the wizard.
+//
+// The real address or nothing. A placeholder that looks like a command is worse
+// than an empty box: somebody will paste it.
+function renderTowerCommand(uri) {
+  const box = el('tower-command');
+  if (!box) {
+    return;
+  }
+  setText(box, uri ? 'lncli wtclient add ' + uri : '');
+  show(box, Boolean(uri));
+}
+
+// ---------------------------------------------------------------------------
 // Details.
 // ---------------------------------------------------------------------------
 
@@ -603,6 +693,9 @@ async function refresh() {
     const channels = await api('GET', '/api/v1/channels');
     renderChannels(channels);
 
+    const towers = await api('GET', '/api/v1/towers');
+    renderTowers(towers);
+
     const spends = await api('GET', '/api/v1/spends');
     const deadlines = await api('GET', '/api/v1/deadlines');
     renderDetails(spends, deadlines);
@@ -660,7 +753,7 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined' && window.d
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderHeadline, renderReadiness, renderAlerts, renderTimeline, renderAdvanced,
-    renderChannels, renderDetails, renderStandDown, formatSats,
+    renderChannels, renderDetails, renderTowers, renderStandDown, formatSats,
     describeTestResults, formatDuration, formatPercent, setText, KNOWN_STATES,
     refresh, api,
   };

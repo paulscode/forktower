@@ -16,6 +16,9 @@ const (
 	KindSpendReorgedOut  = "watch.spend_reorged_out"
 	KindMempoolSighting  = "watch.mempool_sighting"
 
+	KindTowerHealthChanged = "tower.health_changed"
+	KindTowerConcern       = "tower.concern"
+
 	KindDeadlineEscalated   = "deadline.escalated"
 	KindDeadlineResolved    = "deadline.resolved"
 	KindDeadlineExpiredLoss = "deadline.expired_loss"
@@ -292,8 +295,52 @@ func AllKinds() []string {
 		KindSecondOrderSpent,
 		KindSpendReorgedOut,
 		KindMempoolSighting,
+		KindTowerHealthChanged,
+		KindTowerConcern,
 		KindDeadlineEscalated,
 		KindDeadlineResolved,
 		KindDeadlineExpiredLoss,
 	}
 }
+
+// TowerHealthChanged reports that a watchtower's condition changed.
+//
+// Only on a change, like ViewHealthChanged and for the same reason: the tower is
+// polled continuously, and announcing "still fine" every minute would bury the
+// one time it was not.
+type TowerHealthChanged struct {
+	TowerID int64 `json:"tower_id"`
+	// TowerKind is `lnd` or `teos`. Named so rather than `Kind` because Kind()
+	// is how every event on this bus announces what it is.
+	TowerKind string `json:"tower_kind"`
+	Pubkey    string `json:"pubkey"`
+	// Managed distinguishes a tower this installation runs from one the user
+	// pointed us at. It changes what may honestly be promised about fixing it.
+	Managed bool   `json:"managed"`
+	Status  string `json:"status"`
+	Detail  string `json:"detail"`
+	// Previous is what it was before, so a subscriber can tell recovery from
+	// deterioration without keeping its own copy.
+	Previous string `json:"previous"`
+}
+
+// Kind implements Event.
+func (TowerHealthChanged) Kind() string { return KindTowerHealthChanged }
+
+// TowerConcern reports something worth telling the user about a tower or about
+// one channel's protection.
+//
+// Deliberately not one event per problem type. The concerns differ in what they
+// say and not in how they travel, and a subscriber that had to know about six
+// event types would be one that silently ignores the seventh.
+type TowerConcern struct {
+	TowerID int64  `json:"tower_id"`
+	Concern string `json:"concern"`
+	// ChannelID is set when the concern is about one channel, zero when it is
+	// about the tower as a whole.
+	ChannelID int64  `json:"channel_id,omitempty"`
+	Message   string `json:"message"`
+}
+
+// Kind implements Event.
+func (TowerConcern) Kind() string { return KindTowerConcern }

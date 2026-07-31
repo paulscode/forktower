@@ -534,3 +534,97 @@ test('Details renders nothing at all from a response with no display block', () 
   app.renderDetails([{}], [{}]);
   assert.strictEqual(byID['details-spends'].children.length, 1, 'the row was dropped');
 });
+
+// The failure this card exists for: a watchtower that is up, answering, and
+// holding nothing looks healthy from every angle except the one that matters.
+test('a tower protecting nothing is marked at risk', () => {
+  app.renderTowers({
+    towers: [{
+      uri: '03abc@abcdef.onion:9911',
+      display: {
+        state: 'not protecting',
+        summary: 'This tower is running, but none of your channels are backed up to it.',
+        covered: 0, uncovered: 2,
+      },
+      coverage: [
+        { coverable: false, reason: 'no anchor session has been negotiated' },
+        { coverable: false, reason: 'the tower is running v0.17.5, which accepts no taproot sessions' },
+      ],
+    }],
+  });
+
+  const list = byID['towers'];
+  assert.ok(textOf(list).includes('none of your channels are backed up'),
+    'the summary was not shown');
+  assert.ok(textOf(list).includes('v0.17.5'),
+    'the per-channel reasons were not shown');
+  assert.ok(list.children[0].className.includes('at-risk'),
+    'a tower protecting nothing was not marked at risk');
+});
+
+test('a tower covering everything is not marked at risk', () => {
+  app.renderTowers({
+    towers: [{
+      uri: '03abc@abcdef.onion:9911',
+      display: {
+        state: 'protecting',
+        summary: 'This tower is watching the other chain for a revoked commitment.',
+        covered: 3, uncovered: 0,
+      },
+      coverage: [{ coverable: true, reason: 'the node holds an anchor session' }],
+    }],
+  });
+
+  const list = byID['towers'];
+  assert.ok(!list.children[0].className.includes('at-risk'),
+    'a working tower was marked at risk');
+});
+
+// The line the user copies. A placeholder that looks like a command is worse
+// than an empty box, because somebody will paste it.
+test('the registration command carries the real address or nothing', () => {
+  app.renderTowers({
+    towers: [{ uri: '03abc@abcdef.onion:9911', display: { state: 'settling', summary: 'Ready.' }, coverage: [] }],
+  });
+  assert.ok(textOf(byID['tower-command']).includes('lncli wtclient add 03abc@abcdef.onion:9911'),
+    'the command did not carry the address');
+
+  app.renderTowers({ towers: [{ display: { state: 'unknown', summary: 'Not asked yet.' }, coverage: [] }] });
+  assert.strictEqual(textOf(byID['tower-command']), '',
+    'a tower with no address still produced a command to paste');
+});
+
+// The rate is fixed when the session is negotiated and nobody can raise it, so
+// saying the number without saying that would be half the truth.
+test('the fee note says the rate cannot be raised afterwards', () => {
+  app.renderTowers({
+    towers: [{
+      uri: '03abc@x.onion:9911',
+      display: { state: 'protecting', summary: 'Watching.', covered: 1, uncovered: 0 },
+      coverage: [{ coverable: true, reason: 'session held', sweep_fee_sat_per_vbyte: 10 }],
+    }],
+  });
+
+  const text = textOf(byID['towers']);
+  assert.ok(text.includes('10 sat/vB'), 'the rate was not shown');
+  assert.ok(text.includes('cannot be raised'), 'the note does not say the rate is fixed');
+});
+
+test('no towers hides the card rather than showing empty furniture', () => {
+  app.renderTowers({ towers: [] });
+  assert.ok(byID['towers-card'].className.includes('hidden'),
+    'the card was shown with no towers');
+  assert.ok(!byID['towers-empty'].className.includes('hidden'),
+    'the empty note was hidden');
+});
+
+test('a hostile reason from a tower stays literal text', () => {
+  app.renderTowers({
+    towers: [{
+      display: { state: 'not protecting', summary: 'Channel with ' + HOSTILE + ' is not covered.' },
+      coverage: [{ coverable: false, reason: HOSTILE }],
+    }],
+  });
+  assert.ok(textOf(byID['towers']).includes(HOSTILE),
+    'the hostile string was not rendered as text');
+});

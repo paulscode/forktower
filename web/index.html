@@ -77,6 +77,39 @@
     </details>
   </section>
 
+  <section class="card hidden" id="towers-card" aria-labelledby="towers-title">
+    <h2 id="towers-title">Your watchtower</h2>
+    <p id="towers-empty" class="quiet">No watchtower is set up.</p>
+    <ul id="towers" class="towers"></ul>
+
+    <details class="details" id="tower-wizard">
+      <summary>How to point your Lightning node at this tower</summary>
+      <p class="quiet">
+        Forktower cannot do this for you. Turning on your node's watchtower
+        client is a setting in your node's own configuration, and Forktower is
+        only ever allowed to read from your node — never to change it.
+      </p>
+      <ol class="steps">
+        <li>
+          In your Lightning node's advanced settings, switch on the watchtower
+          client (<code>wtclient.active</code>) and restart it.
+        </li>
+        <li>
+          Then run this, or paste the address into your node's watchtower
+          settings:
+          <pre id="tower-command" class="command"></pre>
+        </li>
+      </ol>
+      <p class="quiet" id="tower-limits">
+        Worth knowing before you rely on it: a watchtower can only punish states
+        that were backed up <em>after</em> you registered. Anything revoked
+        before then is not covered, which is why registering early matters. It
+        also does nothing about a channel you close yourself, or about
+        transactions that need copying between the two chains.
+      </p>
+    </details>
+  </section>
+
   <section class="card" aria-labelledby="alerts-title">
     <h2 id="alerts-title">Things worth knowing</h2>
     <p id="alerts-empty" class="quiet">Nothing to report.</p>

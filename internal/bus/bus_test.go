@@ -428,6 +428,8 @@ func TestEventKindsMatchTheirConstants(t *testing.T) {
 		{ViewHealthChanged{}, KindViewHealthChanged},
 		{AlertRaised{}, KindAlertRaised},
 		{ChannelUpserted{}, KindChannelUpserted},
+		{TowerHealthChanged{}, KindTowerHealthChanged},
+		{TowerConcern{}, KindTowerConcern},
 		{ChannelClosedSF{}, KindChannelClosedSF},
 		{FundingSpent{}, KindFundingSpent},
 		{SecondOrderSpent{}, KindSecondOrderSpent},

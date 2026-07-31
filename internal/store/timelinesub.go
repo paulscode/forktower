@@ -173,6 +173,12 @@ func Summarize(e bus.Event) string {
 		return "A transaction closing one of your channels was seen on the other " +
 			"chain, before any block had accepted it."
 
+	case bus.TowerHealthChanged:
+		return summarizeTowerHealth(ev)
+
+	case bus.TowerConcern:
+		return ev.Message
+
 	case bus.DeadlineEscalated:
 		return summarizeDeadline(ev)
 
@@ -192,6 +198,34 @@ func Summarize(e bus.Event) string {
 	default:
 		// An event kind this build does not know still belongs in the record.
 		return "Something happened that this version of Forktower cannot describe."
+	}
+}
+
+// summarizeTowerHealth says what changed about a watchtower.
+//
+// Recovery is worth recording as plainly as failure. Somebody reading their own
+// history afterwards wants to know how long the gap lasted, and a record that
+// only ever notes things going wrong cannot answer that.
+func summarizeTowerHealth(ev bus.TowerHealthChanged) string {
+	switch TowerStatus(ev.Status) {
+	case TowerReachable:
+		return "Your watchtower is answering again."
+	case TowerUnreachable:
+		if ev.Detail != "" {
+			return "Your watchtower stopped answering: " + ev.Detail
+		}
+		return "Your watchtower stopped answering."
+	case TowerTemporarilyUnreachable:
+		return "Your watchtower is not ready yet: " + ev.Detail
+	case TowerSubscriptionError:
+		return "Your watchtower stopped accepting backups because the " +
+			"subscription ran out."
+	case TowerMisbehaving:
+		return "Your watchtower returned a receipt that does not check out."
+	case TowerStatusUnknown:
+		return "Forktower has not been able to ask your watchtower how it is doing."
+	default:
+		return "Something changed about your watchtower."
 	}
 }
 
