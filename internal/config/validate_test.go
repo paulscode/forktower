@@ -173,14 +173,28 @@ func TestSettingsThatDoNothingAreReported(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "a companion tower switched on",
-			mutate: func(c *Config) { c.Tower.LND.Enabled = true },
-			want:   "tower.lnd.enabled",
+			name: "a companion tower switched on",
+			mutate: func(c *Config) {
+				// Complete enough to be valid: a tower that is enabled has to
+				// say where it listens and where Forktower reads it. It is
+				// still not wired into the daemon, which is the separate thing
+				// UnusedSettings is reporting.
+				c.Tower.LND = TowerInstance{
+					Enabled: true, Listen: "abc.onion:9911",
+					APIURL: "https://tower-lnd:8080",
+				}
+			},
+			want: "tower.lnd.enabled",
 		},
 		{
-			name:   "the other companion tower",
-			mutate: func(c *Config) { c.Tower.TEOS.Enabled = true },
-			want:   "tower.teos.enabled",
+			name: "the other companion tower",
+			mutate: func(c *Config) {
+				c.Tower.TEOS = TowerInstance{
+					Enabled: true, Listen: "abc.onion:9814",
+					APIURL: "http://tower-teos:9814",
+				}
+			},
+			want: "tower.teos.enabled",
 		},
 		{
 			name:   "an independent second opinion switched on",
@@ -214,5 +228,119 @@ func TestSettingsThatDoNothingAreReported(t *testing.T) {
 				t.Errorf("the note does not say why: %q", got[0])
 			}
 		})
+	}
+}
+
+// A wildcard listener is refused, not warned about.
+//
+// LND's watchtower accepts a session from anyone who completes the handshake:
+// no client allowlist, no session cap, no disk cap (R2). Where it listens is
+// therefore the only line of defence, and something a user can click past is not
+// a line of defence.
+func TestAWildcardTowerListenerIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, listen := range []string{
+		"0.0.0.0:9911", "0.0.0.0", "::", "[::]:9911", ":9911", "*:9911",
+	} {
+		cfg := minimalValid()
+		cfg.Tower.LND.Listen = listen
+
+		err := cfg.Validate()
+		if err == nil {
+			t.Errorf("%q was accepted as a tower listen address", listen)
+			continue
+		}
+		if !strings.Contains(err.Error(), "every interface") {
+			t.Errorf("%q was refused, but not for the right reason: %v", listen, err)
+		}
+	}
+}
+
+// Refused even when the tower is switched off: a wildcard sitting in the file is
+// one flag away from being live.
+func TestAWildcardIsRefusedEvenWhileTheTowerIsOff(t *testing.T) {
+	t.Parallel()
+	cfg := minimalValid()
+	cfg.Tower.LND.Enabled = false
+	cfg.Tower.LND.Listen = "0.0.0.0:9911"
+
+	if err := cfg.Validate(); err == nil {
+		t.Error("a wildcard listener was accepted because the tower was switched off")
+	}
+}
+
+// The whole point of the rule is that a deliberate address is fine. Refusing
+// those too would push people back to the wildcard.
+func TestADeliberateTowerAddressIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	for _, listen := range []string{
+		"xyzabc123.onion:9911", "192.168.1.50:9911", "127.0.0.1:9911",
+		"[fd00::1]:9911", "tower-lnd:9911",
+	} {
+		cfg := minimalValid()
+		cfg.Tower.LND = TowerInstance{
+			Enabled: true, Listen: listen, APIURL: "https://tower-lnd:8080",
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("%q was refused as a tower listen address: %v", listen, err)
+		}
+	}
+}
+
+// An enabled tower has to say enough about itself to be watched, because a tower
+// nobody is watching is the failure this whole arm exists to prevent.
+func TestAnEnabledTowerMustSayWhereItIs(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		tower TowerInstance
+		want  string
+	}{
+		{"no api url", TowerInstance{Enabled: true, Listen: "a.onion:9911"}, "api_url is required"},
+		{"no listen", TowerInstance{Enabled: true, APIURL: "https://t:8080"}, "listen is required"},
+		{
+			"an api url that is not one",
+			TowerInstance{Enabled: true, Listen: "a.onion:9911", APIURL: "not a url"},
+			"not a usable URL",
+		},
+		{
+			"a negative disk limit",
+			TowerInstance{
+				Enabled: true, Listen: "a.onion:9911",
+				APIURL: "https://t:8080", MaxDiskMB: -1,
+			},
+			"not a limit",
+		},
+	} {
+		cfg := minimalValid()
+		cfg.Tower.LND = tc.tower
+		err := cfg.Validate()
+		if err == nil {
+			t.Errorf("%s: accepted", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want it to mention %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+// A disabled tower with nothing filled in is the shipped default and must stay
+// valid.
+func TestTheDefaultTowerConfigurationIsValid(t *testing.T) {
+	t.Parallel()
+	cfg := minimalValid()
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("the default configuration was refused: %v", err)
+	}
+	if got := cfg.Tower.LND.DiskLimitMB(); got != DefaultTowerMaxDiskMB {
+		t.Errorf("unset disk limit resolved to %d, want %d", got, DefaultTowerMaxDiskMB)
+	}
+	cfg.Tower.LND.MaxDiskMB = 512
+	if got := cfg.Tower.LND.DiskLimitMB(); got != 512 {
+		t.Errorf("an explicit disk limit resolved to %d, want 512", got)
 	}
 }

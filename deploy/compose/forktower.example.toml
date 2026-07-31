@@ -98,15 +98,30 @@ critical_repeat_mins = 30             # keep repeating urgent alerts until ackno
 #                                     # how long you have. Your own dashboard
 #                                     # always shows the full picture.
 
-# ── Companion watchtowers (not used yet) ──────────────────────────────────────
+# ── Companion watchtowers ─────────────────────────────────────────────────────
+# A watchtower whose view of the chain is the *other* branch, so it can punish a
+# revoked commitment published there. It holds no money and has no channels.
 [tower.lnd]
 enabled = false
 listen = ""                           # a Tor address or a specific LAN address;
-                                      # never 0.0.0.0
+                                      # never 0.0.0.0 — Forktower refuses that
+                                      # rather than warning about it. A tower
+                                      # accepts a session from anyone who can
+                                      # reach it, and there is no allowlist.
+api_url = ""                          # where Forktower reads the tower's status,
+                                      # e.g. https://tower-lnd:8080. This is not
+                                      # the address clients connect to.
+macaroon_path = ""                    # the tower's own readonly.macaroon
+tls_cert_path = ""                    # the tower's own tls.cert
+data_dir = ""                         # the tower's storage, watched for growth
+max_disk_mb = 2048                    # a cap LND does not impose on itself
 
 [tower.teos]
 enabled = false
 listen = ""
+api_url = ""
+data_dir = ""
+max_disk_mb = 2048
 
 # ── Independent second opinions about the other chain (not used yet) ──────────
 [sq.witnesses]

@@ -307,16 +307,52 @@ func (t TransportConfig) EffectiveIncludeDetail() bool {
 	return t.Type.IsPlatformLocal()
 }
 
-// TowerConfig configures companion watchtowers. Parsed but not yet used.
+// TowerConfig configures companion watchtowers.
 type TowerConfig struct {
 	LND  TowerInstance `toml:"lnd"`
 	TEOS TowerInstance `toml:"teos"`
 }
 
+// DefaultTowerMaxDiskMB caps a companion tower's data directory.
+//
+// A limit exists at all because LND's watchtower has none of its own: R2
+// established that it accepts a session from anybody completing the handshake,
+// with no client allowlist, no session cap and no disk cap. Each session costs
+// disk on the same host as the Bitcoin node the user depends on, so an
+// unbounded tower is a resource-exhaustion path we opened ourselves. Two
+// gigabytes is generous for the sessions of one node's channels and small
+// enough to notice.
+const DefaultTowerMaxDiskMB = 2048
+
 // TowerInstance is one companion tower.
 type TowerInstance struct {
-	Enabled bool   `toml:"enabled"`
-	Listen  string `toml:"listen"`
+	Enabled bool `toml:"enabled"`
+	// Listen is where the tower accepts clients: a Tor onion address by
+	// default, or an explicit LAN address as a deliberate opt-in. Never a
+	// wildcard — see validateTowers.
+	Listen string `toml:"listen"`
+
+	// APIURL is where Forktower reads the tower's own status. Not the address
+	// clients connect to: that is Listen, and it speaks a different protocol.
+	APIURL string `toml:"api_url"`
+	// MacaroonPath and TLSCertPath are the read-only credentials for an LND
+	// tower's own API. Unused by teos, which has its own.
+	MacaroonPath string `toml:"macaroon_path"`
+	TLSCertPath  string `toml:"tls_cert_path"`
+
+	// DataDir is the tower's storage, watched against MaxDiskMB. Empty means
+	// Forktower cannot see it and will say so rather than assume it is fine.
+	DataDir string `toml:"data_dir"`
+	// MaxDiskMB caps that directory. Zero means DefaultTowerMaxDiskMB.
+	MaxDiskMB int64 `toml:"max_disk_mb"`
+}
+
+// DiskLimitMB is the cap to apply, resolving zero to the default.
+func (t TowerInstance) DiskLimitMB() int64 {
+	if t.MaxDiskMB <= 0 {
+		return DefaultTowerMaxDiskMB
+	}
+	return t.MaxDiskMB
 }
 
 // UIConfig configures the dashboard and HTTP API.

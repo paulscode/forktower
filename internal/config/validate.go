@@ -38,6 +38,7 @@ func (c Config) Validate() error {
 	p = append(p, c.validateSQ()...)
 	p = append(p, c.validateLN()...)
 	p = append(p, c.validateSentinel()...)
+	p = append(p, c.validateTowers()...)
 	p = append(p, c.validateAlerts()...)
 	p = append(p, c.validateUI()...)
 	p = append(p, c.validateStore()...)
@@ -113,6 +114,72 @@ func validateRPCURL(raw string) error {
 		return errors.New("no host")
 	}
 	return nil
+}
+
+// wildcardHosts are the addresses that mean "every interface on this machine".
+var wildcardHosts = map[string]bool{
+	"0.0.0.0": true, "::": true, "[::]": true, "*": true, "": true,
+}
+
+// validateTowers checks the companion watchtowers.
+//
+// **A wildcard listener is refused outright, not warned about.** LND's
+// watchtower has no client allowlist, no session cap and no disk cap: it accepts
+// a session from anybody who completes the handshake, and each one costs disk on
+// the same host as the Bitcoin node the user is depending on. Restricting where
+// it listens is therefore the *only* line of defence rather than the first of
+// several — and something a user can be warned about and carry on past is not a
+// line of defence.
+//
+// An explicit LAN address is allowed, because somebody running their own node
+// on their own network has made a real choice. `0.0.0.0` is not that choice —
+// it is what you write when you have not thought about it.
+func (c Config) validateTowers() []string {
+	var p []string
+	p = append(p, validateTower("tower.lnd", c.Tower.LND)...)
+	p = append(p, validateTower("tower.teos", c.Tower.TEOS)...)
+	return p
+}
+
+func validateTower(name string, t TowerInstance) []string {
+	var p []string
+
+	// Checked whether or not the tower is enabled. A wildcard sitting in the
+	// file is one flag away from being live, and the point of refusing is to
+	// stop it ever being written down.
+	if t.Listen != "" {
+		host := t.Listen
+		if h, _, err := net.SplitHostPort(t.Listen); err == nil {
+			host = h
+		}
+		if wildcardHosts[strings.TrimSpace(host)] {
+			p = append(p, fmt.Sprintf(
+				"%s.listen is %q, which listens on every interface. A watchtower "+
+					"accepts a session from anyone who can reach it and there is no "+
+					"allowlist to fall back on, so this is refused rather than "+
+					"warned about: use the Tor address, or an explicit LAN address "+
+					"if that is what you mean", name, t.Listen))
+		}
+	}
+
+	if !t.Enabled {
+		return p
+	}
+	if t.APIURL == "" {
+		p = append(p, name+".api_url is required when the tower is enabled "+
+			"(Forktower has to be able to ask it how it is doing)")
+	} else if err := validateRPCURL(t.APIURL); err != nil {
+		p = append(p, fmt.Sprintf("%s.api_url is not a usable URL: %v", name, err))
+	}
+	if t.Listen == "" {
+		p = append(p, name+".listen is required when the tower is enabled "+
+			"(a tower nobody can reach protects nothing)")
+	}
+	if t.MaxDiskMB < 0 {
+		p = append(p, fmt.Sprintf("%s.max_disk_mb is %d, which is not a limit",
+			name, t.MaxDiskMB))
+	}
+	return p
 }
 
 // UnusedSettings names configuration that was accepted and will do nothing.

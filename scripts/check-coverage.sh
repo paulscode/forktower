@@ -72,6 +72,7 @@ declare -A MIN=(
   # in-process SQLite database, which needs no container — so the floor moved up
   # to keep the achievement. Floors ratchet.
   [internal/store]=75
+  [internal/responder/tower]=90
   # Lowered from 85 to 72 when the notification subsystem landed. The
   # request/response half reaches ~90% against a fake node over httptest, but the
   # notification path needs a peer that actually speaks the publish/subscribe wire

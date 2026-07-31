@@ -64,6 +64,29 @@ func envBindings() []envBinding {
 			return nil
 		}}
 	}
+	// yesNo is deliberately strict. A platform that injects an empty string, or
+	// "on", meant something by it, and quietly reading that as false would
+	// switch a watchtower off without saying so.
+	yesNo := func(key string, set func(*Config, bool)) envBinding {
+		return envBinding{key: EnvPrefix + key, apply: func(c *Config, v string) error {
+			b, err := strconv.ParseBool(strings.TrimSpace(v))
+			if err != nil {
+				return fmt.Errorf("expected true or false, got %q", v)
+			}
+			set(c, b)
+			return nil
+		}}
+	}
+	num64 := func(key string, set func(*Config, int64)) envBinding {
+		return envBinding{key: EnvPrefix + key, apply: func(c *Config, v string) error {
+			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+			if err != nil {
+				return fmt.Errorf("expected a whole number, got %q", v)
+			}
+			set(c, n)
+			return nil
+		}}
+	}
 	numInt := func(key string, set func(*Config, int)) envBinding {
 		return envBinding{key: EnvPrefix + key, apply: func(c *Config, v string) error {
 			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 32)
@@ -118,6 +141,20 @@ func envBindings() []envBinding {
 		str("UI_LISTEN", func(c *Config, v string) { c.UI.Listen = v }),
 		str("UI_AUTH", func(c *Config, v string) { c.UI.Auth = AuthMode(v) }),
 		str("UI_PASSWORD_HASH", func(c *Config, v string) { c.UI.PasswordHash = v }),
+
+		yesNo("TOWER_LND_ENABLED", func(c *Config, b bool) { c.Tower.LND.Enabled = b }),
+		str("TOWER_LND_LISTEN", func(c *Config, v string) { c.Tower.LND.Listen = v }),
+		str("TOWER_LND_API_URL", func(c *Config, v string) { c.Tower.LND.APIURL = v }),
+		str("TOWER_LND_MACAROON_PATH", func(c *Config, v string) { c.Tower.LND.MacaroonPath = v }),
+		str("TOWER_LND_TLS_CERT_PATH", func(c *Config, v string) { c.Tower.LND.TLSCertPath = v }),
+		str("TOWER_LND_DATA_DIR", func(c *Config, v string) { c.Tower.LND.DataDir = v }),
+		num64("TOWER_LND_MAX_DISK_MB", func(c *Config, n int64) { c.Tower.LND.MaxDiskMB = n }),
+
+		yesNo("TOWER_TEOS_ENABLED", func(c *Config, b bool) { c.Tower.TEOS.Enabled = b }),
+		str("TOWER_TEOS_LISTEN", func(c *Config, v string) { c.Tower.TEOS.Listen = v }),
+		str("TOWER_TEOS_API_URL", func(c *Config, v string) { c.Tower.TEOS.APIURL = v }),
+		str("TOWER_TEOS_DATA_DIR", func(c *Config, v string) { c.Tower.TEOS.DataDir = v }),
+		num64("TOWER_TEOS_MAX_DISK_MB", func(c *Config, n int64) { c.Tower.TEOS.MaxDiskMB = n }),
 
 		str("STORE_PATH", func(c *Config, v string) { c.Store.Path = v }),
 		numInt("STORE_TIMELINE_MAX_MB", func(c *Config, n int) { c.Store.TimelineMaxMB = n }),

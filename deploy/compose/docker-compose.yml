@@ -9,6 +9,11 @@ name: forktower
 # platforms want one image — but here they are apart.
 #
 # Copy .env.example to .env and fill in your node's address first.
+#
+# A third service, the companion watchtower, is behind the `tower` profile and
+# does not start unless you ask for it:
+#
+#     docker compose --profile tower up -d
 
 services:
   forktower:
@@ -44,6 +49,15 @@ services:
       FORKTOWER_NTFY_TOKEN: ${FORKTOWER_NTFY_TOKEN:-}
       FORKTOWER_WEBHOOK_URL: ${FORKTOWER_WEBHOOK_URL:-}
 
+      # The companion tower. Off unless you started the `tower` profile.
+      FORKTOWER_TOWER_LND_ENABLED: ${FORKTOWER_TOWER_LND_ENABLED:-false}
+      FORKTOWER_TOWER_LND_API_URL: https://tower-lnd:8080
+      FORKTOWER_TOWER_LND_MACAROON_PATH: /mnt/tower/data/chain/bitcoin/mainnet/readonly.macaroon
+      FORKTOWER_TOWER_LND_TLS_CERT_PATH: /mnt/tower/tls.cert
+      FORKTOWER_TOWER_LND_DATA_DIR: /mnt/tower
+      FORKTOWER_TOWER_LND_LISTEN: ${FORKTOWER_TOWER_LISTEN:-127.0.0.1:9911}
+      FORKTOWER_TOWER_LND_MAX_DISK_MB: ${FORKTOWER_TOWER_MAX_DISK_MB:-2048}
+
       FORKTOWER_LOG_LEVEL: ${FORKTOWER_LOG_LEVEL:-info}
     ports:
       # This machine only, by default. Reaching the dashboard from elsewhere
@@ -54,6 +68,11 @@ services:
       # If your node uses a cookie file, mount it read-only and point
       # FORKTOWER_SF_RPC_COOKIE_PATH at it. Forktower never writes to your node.
       #- /path/to/.bitcoin:/mnt/bitcoin:ro
+      # The companion tower's own credentials and storage, read-only: Forktower
+      # asks the tower how it is doing and measures what it is using. Read-only
+      # because there is nothing here it has any business changing, and the
+      # macaroon it picks up is the tower's *read-only* one.
+      - tower-data:/mnt/tower:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/forktowerd", "--version"]
       interval: 30s
@@ -104,6 +123,62 @@ services:
       retries: 60
       start_period: 120s
 
+  # The companion watchtower: a dedicated LND that holds no money and has no
+  # channels, whose only job is to punish a revoked commitment on the *other*
+  # branch. Behind a profile, so it starts only when asked for.
+  #
+  # Version pinned deliberately. A tower at v0.18.0 or later covers legacy,
+  # anchor and taproot channels from one instance; below that, taproot channels
+  # are refused at session creation while everything else carries on working and
+  # the tower goes on reporting itself healthy — a silent gap in protection for
+  # exactly the channels it applies to.
+  tower-lnd:
+    image: lightninglabs/lnd:v0.18.5-beta
+    profiles: ["tower"]
+    restart: unless-stopped
+    depends_on:
+      sq-bitcoind:
+        condition: service_healthy
+    command:
+      - lnd
+      # No money is ever held here, so there is no seed worth writing down. The
+      # wallet exists only because LND requires one.
+      - --noseedbackup
+      - --bitcoin.active
+      - --bitcoin.mainnet
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=sq-bitcoind:8432
+      - --bitcoind.rpcuser=forktower
+      - --bitcoind.rpcpass=${FORKTOWER_SQ_RPC_PASSWORD:-forktower-local}
+      - --bitcoind.zmqpubrawblock=tcp://sq-bitcoind:28432
+      - --bitcoind.zmqpubrawtx=tcp://sq-bitcoind:28433
+      # Forktower reads this to report on the tower. Private network only.
+      - --restlisten=0.0.0.0:8080
+      - --rpclisten=0.0.0.0:10009
+      # No channels, so no reason to accept peer connections at all.
+      - --nolisten
+      - --tlsextradomain=tower-lnd
+      - --watchtower.active
+      # Where clients reach the tower.
+      #
+      # **Never 0.0.0.0.** LND's watchtower accepts a session from anyone who
+      # completes the handshake — there is no client allowlist, no session cap
+      # and no disk cap upstream (R2) — and every session costs disk on the same
+      # host as the Bitcoin node you are depending on. A Tor hidden service is
+      # the default; an explicit LAN address is a deliberate opt-in. Forktower
+      # refuses a wildcard here rather than warning about it.
+      - --watchtower.listen=${FORKTOWER_TOWER_LISTEN:-127.0.0.1:9911}
+      - --debuglevel=${FORKTOWER_TOWER_LOG_LEVEL:-info}
+    volumes:
+      - tower-data:/root/.lnd
+    healthcheck:
+      test: ["CMD-SHELL", "lncli --network=mainnet getinfo >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+
 volumes:
   forktower-data:
   sq-data:
+  tower-data:
