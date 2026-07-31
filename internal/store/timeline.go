@@ -13,14 +13,17 @@ import (
 // post-mortem reads to reconstruct what happened and when, so entries are never
 // edited or removed in place; when it grows too large the oldest are archived to
 // a file rather than deleted.
+// The JSON names are part of the archive format: a rotated timeline is written
+// to a file meant to be readable long after this program is gone, so the field
+// names in it are a promise rather than an implementation detail.
 type TimelineEntry struct {
-	ID      int64
-	At      int64
-	Kind    string
-	Summary string
+	ID      int64  `json:"id"`
+	At      int64  `json:"at"`
+	Kind    string `json:"kind"`
+	Summary string `json:"summary"`
 	// Data is the event's JSON payload, or empty. Held as text because this is a
 	// record for reading, not a structure to query.
-	Data string
+	Data string `json:"data,omitempty"`
 }
 
 // Timeline listing bounds.

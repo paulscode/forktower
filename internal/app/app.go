@@ -41,6 +41,9 @@ const (
 	ReadHeaderTimeout = 10 * time.Second
 	// startupTimeout bounds the checks that run before anything is watched.
 	startupTimeout = 60 * time.Second
+	// bytesPerMB converts the configured timeline limit, which is written in
+	// megabytes because that is the unit a person thinks about disk in.
+	bytesPerMB = 1024 * 1024
 )
 
 // App is the whole daemon: configuration, storage, the event bus, the engines,
@@ -142,6 +145,7 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 	log.Info("notifications ready", slog.Int("transports", len(routes)))
 
 	a.timeline = store.NewTimelineSubscriber(st, a.bus,
+		int64(cfg.Store.TimelineMaxMB)*bytesPerMB,
 		log.With(slog.String("component", "timeline")),
 		func() int64 { return now().Unix() })
 

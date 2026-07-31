@@ -21,33 +21,54 @@ const TimelineSubscriberName = "timeline"
 // happened, and the record a support bundle carries. It is append-only for that
 // reason: an audit trail that can be quietly trimmed is not an audit trail.
 type TimelineSubscriber struct {
-	store  *Store
-	bus    *bus.Bus
-	log    *slog.Logger
-	now    func() int64
-	events <-chan bus.Event
+	store *Store
+	bus   *bus.Bus
+	log   *slog.Logger
+	now   func() int64
+	// maxBytes is the size above which older history is sealed into a file
+	// beside the database. Zero leaves it to grow, which is what a test wants
+	// and what nobody running this should choose.
+	maxBytes int64
+	events   <-chan bus.Event
 }
+
+// rotationInterval is how often the timeline's size is checked.
+//
+// Hourly, not per event. Measuring the whole table on every write would be a
+// table scan per block, and what this guards against is weeks of continuous
+// writing rather than minutes of it.
+const rotationInterval = time.Hour
 
 // NewTimelineSubscriber subscribes immediately.
 //
 // Subscribed in the constructor rather than in Run: a goroutine that subscribes
 // when it happens to be scheduled leaves a window during startup where events are
 // published to nobody, and the timeline's whole job is to have missed nothing.
-func NewTimelineSubscriber(st *Store, b *bus.Bus, log *slog.Logger, now func() int64) *TimelineSubscriber {
+func NewTimelineSubscriber(
+	st *Store, b *bus.Bus, maxBytes int64, log *slog.Logger, now func() int64,
+) *TimelineSubscriber {
 	if log == nil {
 		log = slog.New(discardHandler{})
 	}
 	return &TimelineSubscriber{
-		store:  st,
-		bus:    b,
-		log:    log,
-		now:    now,
-		events: b.Subscribe(TimelineSubscriberName, bus.AllKinds()...),
+		store:    st,
+		bus:      b,
+		log:      log,
+		now:      now,
+		maxBytes: maxBytes,
+		events:   b.Subscribe(TimelineSubscriberName, bus.AllKinds()...),
 	}
 }
 
 // Run records events until the context ends.
 func (t *TimelineSubscriber) Run(ctx context.Context) error {
+	// Checked once at startup as well as on the tick, because the run that filled
+	// the timeline up is usually the one that just ended.
+	t.rotate(ctx)
+
+	ticker := time.NewTicker(rotationInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -57,7 +78,31 @@ func (t *TimelineSubscriber) Run(ctx context.Context) error {
 				return nil
 			}
 			t.record(ctx, e)
+		case <-ticker.C:
+			t.rotate(ctx)
 		}
+	}
+}
+
+// rotate seals the oldest history away if the timeline has outgrown its limit.
+//
+// On a schedule rather than after every write: measuring the whole table on each
+// event would be a table scan per block, and the thing being guarded against is
+// weeks of continuous writing, not minutes.
+func (t *TimelineSubscriber) rotate(ctx context.Context) {
+	if t.maxBytes <= 0 {
+		return
+	}
+	archived, path, err := t.store.RotateTimeline(ctx, t.maxBytes)
+	if err != nil {
+		t.log.Error("could not move older history out of the database",
+			slog.String("error", err.Error()))
+		return
+	}
+	if archived > 0 {
+		t.log.Info("moved older history into a file beside the database; nothing "+
+			"was deleted",
+			slog.Int64("entries", archived), slog.String("file", path))
 	}
 }
 

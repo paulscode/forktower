@@ -18,7 +18,7 @@ func startTimeline(t *testing.T, s *Store, clock *atomic.Int64) *bus.Bus {
 	b := bus.New(nil)
 	t.Cleanup(b.Close)
 
-	sub := NewTimelineSubscriber(s, b, nil, func() int64 { return clock.Load() })
+	sub := NewTimelineSubscriber(s, b, 0, nil, func() int64 { return clock.Load() })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -123,7 +123,7 @@ func TestEventsPublishedBeforeTheSubscriberRunsAreKept(t *testing.T) {
 
 	clock := &atomic.Int64{}
 	clock.Store(1_790_000_000)
-	sub := NewTimelineSubscriber(s, b, nil, func() int64 { return clock.Load() })
+	sub := NewTimelineSubscriber(s, b, 0, nil, func() int64 { return clock.Load() })
 
 	// Published before Run is ever called.
 	b.Publish(bus.SplitStateChanged{Old: "ARMED", New: "SPLIT"})
@@ -218,7 +218,7 @@ func TestARecordSurvivesShutdown(t *testing.T) {
 
 	clock := &atomic.Int64{}
 	clock.Store(1_790_000_000)
-	sub := NewTimelineSubscriber(s, b, nil, func() int64 { return clock.Load() })
+	sub := NewTimelineSubscriber(s, b, 0, nil, func() int64 { return clock.Load() })
 
 	// A context that is already finished, as it would be mid-shutdown.
 	ctx, cancel := context.WithCancel(context.Background())
