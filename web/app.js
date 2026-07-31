@@ -424,6 +424,81 @@ function formatPercent(fraction) {
 }
 
 // ---------------------------------------------------------------------------
+// The exposure table.
+// ---------------------------------------------------------------------------
+
+// The threat states that mean something is happening to a channel right now.
+const AT_RISK_STATES = ['mempool', 'confirmed', 'loss'];
+
+// formatSats says an amount the way the documentation says to: BTC for the
+// magnitude a person thinks in, satoshis for the number that is exact. Built
+// from integers throughout — an amount of money is not a floating-point
+// question, and the string is assembled by hand rather than divided.
+function formatSats(sats) {
+  const n = Number(sats) || 0;
+  if (n === 0) {
+    return '—';
+  }
+  const whole = Math.floor(n / 100000000);
+  const rest = String(n % 100000000).padStart(8, '0');
+  return whole + '.' + rest + ' BTC';
+}
+
+function renderChannels(rows) {
+  const card = el('channels-card');
+  const table = el('channels-table');
+  const body = el('channels');
+  const list = rows || [];
+
+  // Hidden entirely when there is nothing to show, rather than an empty table
+  // with headings: a page full of blank furniture reads as something broken.
+  show(card, list.length > 0);
+  show(el('channels-empty'), list.length === 0);
+  show(table, list.length > 0);
+  clear(body);
+
+  let estimates = 0;
+  for (const channel of list) {
+    const display = channel.display || {};
+    const threat = channel.threat || {};
+    const row = make('tr', AT_RISK_STATES.includes(threat.state) ? 'at-risk' : '');
+
+    // textContent throughout, via make(). The partner's name is chosen by the
+    // counterparty and is the one string on this page an attacker controls.
+    row.appendChild(make('td', 'partner', display.partner || ''));
+    row.appendChild(make('td', 'amount', formatSats(display.at_risk_sat)));
+
+    const time = make('td', 'time-left');
+    if (display.time_left) {
+      const value = make('span', display.time_left_is_estimate ? 'estimate' : '',
+        display.time_left);
+      time.appendChild(value);
+      if (display.time_left_is_estimate) {
+        estimates += 1;
+      }
+    } else {
+      setText(time, '—');
+    }
+    row.appendChild(time);
+
+    const status = make('td', 'status', display.status || '');
+    if (display.status_action) {
+      status.appendChild(make('span', 'row-action', display.status_action));
+    }
+    row.appendChild(status);
+
+    body.appendChild(row);
+  }
+
+  // Said once, under the table, rather than repeated in every cell. A time
+  // built from how fast a chain has recently been going is an estimate, and a
+  // countdown that looks precise is one somebody will plan around.
+  setText(el('channels-note'), estimates > 0
+    ? 'Times are estimates, worked out from how fast the other chain has been going.'
+    : '');
+}
+
+// ---------------------------------------------------------------------------
 // Polling.
 // ---------------------------------------------------------------------------
 
@@ -436,6 +511,9 @@ async function refresh() {
     renderReadiness(status.readiness);
     renderAdvanced(status);
     setText(el('connection'), '');
+
+    const channels = await api('GET', '/api/v1/channels');
+    renderChannels(channels);
 
     const alerts = await api('GET', '/api/v1/alerts');
     renderAlerts(alerts);
@@ -489,6 +567,7 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined' && window.d
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderHeadline, renderReadiness, renderAlerts, renderTimeline, renderAdvanced,
+    renderChannels, formatSats,
     describeTestResults, formatDuration, formatPercent, setText, KNOWN_STATES,
     refresh, api,
   };

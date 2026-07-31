@@ -1,0 +1,57 @@
+[
+  {
+    "id": 1,
+    "funding_txid": "1111111111111111111111111111111111111111111111111111111111111111",
+    "funding_vout": 0,
+    "capacity_sat": 2100000,
+    "chan_type": "anchors",
+    "peer_pubkey": "03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "peer_alias": "ACINQ",
+    "open_height": 960000,
+    "close_state": "open",
+    "relevance": "relevant",
+    "relevance_reason": "because",
+    "updated_at": 1,
+    "threat": {
+      "state": "confirmed",
+      "headline_deadline": {
+        "kind": "csv",
+        "deadline_height": 962600,
+        "remaining_blocks": 847,
+        "est_wallclock_secs": 1524600
+      }
+    },
+    "display": {
+      "partner": "ACINQ",
+      "at_risk_sat": 2100000,
+      "time_left": "about 18 days",
+      "time_left_is_estimate": true,
+      "status": "We are handling it"
+    }
+  },
+  {
+    "id": 2,
+    "funding_txid": "2222222222222222222222222222222222222222222222222222222222222222",
+    "funding_vout": 0,
+    "capacity_sat": 40000,
+    "chan_type": "anchors",
+    "peer_pubkey": "03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "peer_alias": "alice's node",
+    "open_height": 960100,
+    "close_state": "open",
+    "relevance": "relevant",
+    "relevance_reason": "because",
+    "updated_at": 1,
+    "threat": {
+      "state": "watch",
+      "headline_deadline": null
+    },
+    "display": {
+      "partner": "alice's node",
+      "at_risk_sat": 0,
+      "time_left": "",
+      "time_left_is_estimate": false,
+      "status": "Fine"
+    }
+  }
+]

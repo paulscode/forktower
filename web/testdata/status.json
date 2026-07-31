@@ -94,6 +94,14 @@
       "action": null
     },
     {
+      "id": "channels_inventoried",
+      "ok": false,
+      "label": "No channels found yet",
+      "why": "Forktower has not seen any channels to protect. If you have some, check that your Lightning node is connected.",
+      "detail": "",
+      "action": null
+    },
+    {
       "id": "deadline_inputs_known",
       "ok": true,
       "label": "No countdown is running",

@@ -15,13 +15,14 @@ import (
 // Readiness check ids. Machine-readable and stable; the label is what a user
 // sees, and it never contains one of these.
 const (
-	CheckSQBackendDistinct = "sq_backend_distinct"
-	CheckSQSynced          = "sq_synced"
-	CheckSQOnBranch        = "sq_on_branch"
-	CheckSFEnforcing       = "sf_enforcing"
-	CheckAlertTransports   = "alert_transports"
-	CheckLNConnected       = "ln_connected"
-	CheckDeadlineInputs    = "deadline_inputs_known"
+	CheckSQBackendDistinct   = "sq_backend_distinct"
+	CheckSQSynced            = "sq_synced"
+	CheckSQOnBranch          = "sq_on_branch"
+	CheckSFEnforcing         = "sf_enforcing"
+	CheckAlertTransports     = "alert_transports"
+	CheckLNConnected         = "ln_connected"
+	CheckChannelsInventoried = "channels_inventoried"
+	CheckDeadlineInputs      = "deadline_inputs_known"
 )
 
 // ReadinessItem is one thing that is or is not in place.
@@ -61,6 +62,7 @@ func (s *Server) Readiness(ctx context.Context) []ReadinessItem {
 		s.checkSFEnforcing(sfIdentity, sfView),
 		s.checkAlertTransports(ctx),
 		s.checkLNConnected(),
+		s.checkChannelsInventoried(ctx),
 		s.checkDeadlineInputs(),
 	}
 }
@@ -320,6 +322,66 @@ func humanList(items []string) string {
 	default:
 		return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
 	}
+}
+
+// checkChannelsInventoried reports whether Forktower knows which channels it is
+// protecting.
+//
+// Distinct from being able to reach the Lightning node, and the difference
+// matters: a node that answers but has been asked nothing yet, or one whose
+// channels all came back unreadable, leaves the watchset empty — and an empty
+// watchset scans every block cleanly and finds nothing, which looks exactly like
+// safety.
+func (s *Server) checkChannelsInventoried(ctx context.Context) ReadinessItem {
+	channels, err := s.store.ListChannels(ctx, store.ChannelFilter{})
+	if err != nil {
+		return ReadinessItem{
+			ID: CheckChannelsInventoried, OK: false,
+			Label: "Cannot tell which channels you have",
+			Why: "Forktower could not read its own record of your channels. " +
+				"Open Details for what it said.",
+			Detail: err.Error(),
+		}
+	}
+	if len(channels) == 0 {
+		// Not a fault. Someone may have no channels, or may not have connected a
+		// node — and the check above already says which.
+		return ReadinessItem{
+			ID: CheckChannelsInventoried, OK: false, informational: true,
+			Label: "No channels found yet",
+			Why: "Forktower has not seen any channels to protect. If you have some, " +
+				"check that your Lightning node is connected.",
+		}
+	}
+
+	var watched int
+	for _, c := range channels {
+		if c.Relevance != store.Irrelevant {
+			watched++
+		}
+	}
+	if watched == 0 {
+		return ReadinessItem{
+			ID: CheckChannelsInventoried, OK: true,
+			Label: "None of your channels are exposed",
+			Why: "Forktower knows about " + countPhrase(len(channels), "channel") +
+				", and none of them exist on the other chain.",
+		}
+	}
+	return ReadinessItem{
+		ID: CheckChannelsInventoried, OK: true,
+		Label: "Watching your channels",
+		Why: "Forktower is watching " + countPhrase(watched, "channel") +
+			" on the other chain.",
+	}
+}
+
+// countPhrase says a number of things in words a sentence can contain.
+func countPhrase(n int, noun string) string {
+	if n == 1 {
+		return "one " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // checkDeadlineInputs reports whether the countdowns are built on real numbers.

@@ -244,6 +244,174 @@ test('a real response from the daemon renders', () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// The exposure table.
+// ---------------------------------------------------------------------------
+
+// aChannel is one row of what the API sends, in the shape the page consumes.
+function aChannel(overrides) {
+  return Object.assign({
+    id: 1,
+    threat: { state: 'confirmed', headline_deadline: { remaining_blocks: 400 } },
+    display: {
+      partner: 'ACINQ',
+      at_risk_sat: 2100000,
+      time_left: 'about 3 days',
+      time_left_is_estimate: true,
+      status: 'We are handling it',
+      status_action: '',
+    },
+  }, overrides || {});
+}
+
+test('the partner name a counterparty chose stays literal text', () => {
+  app.renderChannels([aChannel({
+    display: {
+      partner: HOSTILE, at_risk_sat: 1000, time_left: '', status: 'Fine',
+    },
+  })]);
+
+  const cell = byID['channels'].find((n) => n.tagName === 'TR')
+    .find((n) => n.className === 'partner');
+  assert.strictEqual(cell.textContent, HOSTILE,
+    'the name was altered rather than shown as text');
+  assert.strictEqual(cell.children.length, 0,
+    'the counterparty got an element onto the page');
+});
+
+test('the table leads with who, how much and how long', () => {
+  app.renderChannels([aChannel()]);
+
+  const row = byID['channels'].find((n) => n.tagName === 'TR');
+  const cells = row.children.filter((n) => n.tagName === 'TD');
+  assert.strictEqual(cells.length, 4, 'wrong number of columns');
+  assert.ok(cells[0].textContent.includes('ACINQ'), 'the partner is not first');
+  assert.ok(cells[1].textContent.includes('0.02100000 BTC'),
+    'the amount is not second: ' + cells[1].textContent);
+  assert.ok(cells[2].textContent.includes('about 3 days'),
+    'the time is not third: ' + cells[2].textContent);
+  assert.ok(cells[3].textContent.includes('We are handling it'),
+    'the status is not fourth');
+});
+
+test('an estimated time is marked as an estimate', () => {
+  app.renderChannels([aChannel()]);
+
+  const row = byID['channels'].find((n) => n.tagName === 'TR');
+  const time = row.find((n) => n.className === 'time-left');
+  assert.ok(time.find((n) => n.className === 'estimate'),
+    'an estimated time was shown as though it were exact');
+  assert.ok(byID['channels-note'].textContent.includes('estimates'),
+    'nothing on the page says the times are estimates');
+});
+
+test('no countdown means no claim about time', () => {
+  app.renderChannels([aChannel({
+    threat: { state: 'watch', headline_deadline: null },
+    display: {
+      partner: 'alice', at_risk_sat: 0, time_left: '',
+      time_left_is_estimate: false, status: 'Fine',
+    },
+  })]);
+
+  const row = byID['channels'].find((n) => n.tagName === 'TR');
+  const time = row.find((n) => n.className === 'time-left');
+  assert.strictEqual(time.textContent, '\u2014',
+    'invented a time with nothing to go on: ' + time.textContent);
+  assert.strictEqual(byID['channels-note'].textContent, '',
+    'claimed times are estimates when none were shown');
+});
+
+test('amounts are built from integers, not divided', () => {
+  // The value that catches a float: 21 million BTC in satoshis, which cannot be
+  // divided by a hundred million in binary floating point without drifting.
+  assert.strictEqual(app.formatSats(2100000000000000), '21000000.00000000 BTC');
+  assert.strictEqual(app.formatSats(1), '0.00000001 BTC');
+  assert.strictEqual(app.formatSats(100000000), '1.00000000 BTC');
+  assert.strictEqual(app.formatSats(0), '\u2014');
+});
+
+test('a channel with something happening to it is marked as such', () => {
+  app.renderChannels([
+    aChannel({ id: 1, threat: { state: 'confirmed' } }),
+    aChannel({ id: 2, threat: { state: 'watch' } }),
+  ]);
+
+  const rows = byID['channels'].children.filter((n) => n.tagName === 'TR');
+  assert.strictEqual(rows[0].className, 'at-risk', 'a live threat is not marked');
+  assert.strictEqual(rows[1].className, '', 'a quiet channel was marked as at risk');
+});
+
+test('with no channels the table is not shown at all', () => {
+  app.renderChannels([]);
+
+  assert.strictEqual(byID['channels-card'].className.includes('hidden'), true,
+    'an empty table was left on the page');
+  assert.strictEqual(byID['channels'].children.length, 0, 'rows were left behind');
+});
+
+test('nothing in the table is an internal name', () => {
+  app.renderChannels([aChannel({
+    threat: { state: 'confirmed', headline_deadline: { remaining_blocks: 400 } },
+    display: {
+      partner: 'ACINQ', at_risk_sat: 2100000, time_left: 'about 3 days',
+      time_left_is_estimate: true,
+      status: 'A channel was closed on the other chain \u2014 checking whether it was fair',
+      status_action: 'Open Details to see what happened',
+    },
+  })]);
+
+  const shown = textOf(byID['channels']);
+  for (const leak of ['commitment_unknown', 'commitment_ours', 'mutual_close',
+    'csv', 'sq', 'sf', 'reorged_out']) {
+    assert.ok(!shown.toLowerCase().includes(leak),
+      'an internal name reached the table: ' + leak);
+  }
+  // The block count belongs in Details, not in the row.
+  assert.ok(!shown.includes('400'), 'a block count reached the table: ' + shown);
+});
+
+// The same contract as the status fixture, for the table a worried person reads
+// first: a field renamed on one side and not the other produces a blank column
+// rather than an error anyone would see.
+test('a real exposure table from the daemon renders', () => {
+  const channels = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'testdata', 'channels.json'), 'utf8'));
+
+  app.renderChannels(channels);
+
+  const rows = byID['channels'].children.filter((n) => n.tagName === 'TR');
+  assert.strictEqual(rows.length, channels.length,
+    'the table did not render every channel');
+
+  for (const channel of channels) {
+    const shown = textOf(byID['channels']);
+    assert.ok(shown.includes(channel.display.partner),
+      'a partner is missing from the table: ' + channel.display.partner);
+    assert.ok(shown.includes(channel.display.status),
+      'a status is missing from the table: ' + channel.display.status);
+    if (channel.display.time_left) {
+      assert.ok(shown.includes(channel.display.time_left),
+        'a time is missing from the table: ' + channel.display.time_left);
+    }
+  }
+
+  // And none of the machinery behind it reached the screen.
+  const shown = textOf(byID['channels']);
+  for (const channel of channels) {
+    assert.ok(!shown.includes(channel.funding_txid),
+      'a funding transaction id reached the table');
+    // Deliberately not asserting on the channel id: a one-digit id is
+    // indistinguishable from any digit in an amount, so the check could only
+    // produce false alarms. The transaction id and the block height below are
+    // the ones long enough to mean something.
+    if (channel.threat.headline_deadline) {
+      assert.ok(!shown.includes(String(channel.threat.headline_deadline.deadline_height)),
+        'a block height reached the table');
+    }
+  }
+});
+
 if (failures > 0) {
   console.error(failures + ' rendering test(s) failed');
   process.exit(1);

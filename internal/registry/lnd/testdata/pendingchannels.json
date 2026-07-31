@@ -1,0 +1,36 @@
+{
+  "total_limbo_balance": "490530",
+  "pending_open_channels": [],
+  "pending_force_closing_channels": [],
+  "waiting_close_channels": [
+    {
+      "channel": {
+        "remote_node_pub": "02785f080272b0c9823a53fa12612dcab6bb5c2031ec1a3c247512c998e1daed2b",
+        "channel_point": "c4520e0cb77e1ff6fb76a6eb0408ca45aa046aa7d4a7eeaf10ab8cf495a7f9b0:0",
+        "capacity": "1000000",
+        "local_balance": "490530",
+        "remote_balance": "506000",
+        "local_chan_reserve_sat": "10000",
+        "remote_chan_reserve_sat": "10000",
+        "initiator": "INITIATOR_LOCAL",
+        "commitment_type": "ANCHORS",
+        "num_forwarding_packages": "9",
+        "chan_status_flags": "ChanStatusBorked|ChanStatusCommitBroadcasted|ChanStatusLocalCloseInitiator",
+        "private": false,
+        "memo": "",
+        "custom_channel_data": ""
+      },
+      "limbo_balance": "490530",
+      "commitments": {
+        "local_txid": "8e26816947f47a10275804c317698f77d814d7d57dd8f1ced4a4146f524e6c41",
+        "remote_txid": "0ce5b0aad91865c85cbb9ee6969e035dac567c375d0b5fea12c737b998519a58",
+        "remote_pending_txid": "",
+        "local_commit_fee_sat": "2810",
+        "remote_commit_fee_sat": "2810",
+        "remote_pending_commit_fee_sat": "0"
+      },
+      "closing_txid": "8e26816947f47a10275804c317698f77d814d7d57dd8f1ced4a4146f524e6c41",
+      "closing_tx_hex": ""
+    }
+  ]
+}

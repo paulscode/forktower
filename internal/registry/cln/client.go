@@ -122,8 +122,15 @@ func pinnedTLS(certPath string) (*tls.Config, error) {
 // call performs one read. clnrest takes a POST per method, with the rune in a
 // header and any parameters as a JSON body.
 func (c *Client) call(ctx context.Context, method string, out any) error {
+	return c.callWith(ctx, method, "{}", out)
+}
+
+// callWith is the same, for the one method that needs an argument. The body is
+// built by this package and never from anything a node said, so there is no
+// path by which a response could shape a later request.
+func (c *Client) callWith(ctx context.Context, method, body string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/v1/"+method, bytes.NewReader([]byte(`{}`)))
+		c.baseURL+"/v1/"+method, bytes.NewReader([]byte(body)))
 	if err != nil {
 		return fmt.Errorf("building the request for %s: %w", method, err)
 	}
@@ -183,5 +190,61 @@ func (c *Client) Snapshot(ctx context.Context) (registry.Snapshot, error) {
 		}
 		snap.Channels = append(snap.Channels, rec)
 	}
+	c.nameCounterparties(ctx, snap.Channels)
 	return snap, nil
+}
+
+// nameCounterparties fills in who each channel is with.
+//
+// A separate call because the channel listing does not carry it: it reports a
+// sixty-six character key, and that is not an answer to "who is affected" —
+// which is the first column of the exposure table and the first question anyone
+// asks.
+//
+// Best-effort. A peer that never announced itself has no name to find, and the
+// shortened key is then the honest answer.
+func (c *Client) nameCounterparties(ctx context.Context, channels []registry.ChannelRecord) {
+	seen := map[string]string{}
+	for i := range channels {
+		pubkey := channels[i].PeerPubkey
+		if pubkey == "" {
+			continue
+		}
+		alias, known := seen[pubkey]
+		if !known {
+			alias = c.peerAlias(ctx, pubkey)
+			seen[pubkey] = alias
+		}
+		if alias != "" {
+			channels[i].PeerAlias = alias
+		}
+	}
+}
+
+// peerAlias asks the node graph what a peer calls itself.
+func (c *Client) peerAlias(ctx context.Context, pubkey string) string {
+	// The key comes from the node's own answer to listpeerchannels and is hex,
+	// but it is put through the JSON encoder rather than concatenated, so that
+	// remains true whatever a node sends.
+	body, err := json.Marshal(map[string]string{"id": pubkey})
+	if err != nil {
+		return ""
+	}
+
+	var out struct {
+		Nodes []struct {
+			Alias string `json:"alias"`
+		} `json:"nodes"`
+	}
+	if err := c.callWith(ctx, "listnodes", string(body), &out); err != nil {
+		// Not worth a warning: a peer missing from the graph is ordinary, and a
+		// line per poll per peer would be noise.
+		c.log.Debug("could not find a name for one of your counterparties",
+			slog.String("error", err.Error()))
+		return ""
+	}
+	if len(out.Nodes) == 0 {
+		return ""
+	}
+	return out.Nodes[0].Alias
 }

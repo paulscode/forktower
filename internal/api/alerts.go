@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
-	limit, ok := intParam(w, r, "limit", 0)
+	limit, ok := intParam(w, r, "limit")
 	if !ok {
 		return
 	}

@@ -139,3 +139,61 @@ input { font: inherit; padding: 0.5rem; border-radius: 7px; border: 1px solid va
         background: var(--bg); color: var(--text); }
 
 footer { max-width: 46rem; margin: 0 auto; }
+
+/* The exposure table. Who, how much, how long — in that order, because that is
+   the order the questions are asked in. */
+.exposure {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+}
+
+.exposure th {
+  text-align: left;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0.35rem 0.5rem 0.35rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.exposure td {
+  padding: 0.6rem 0.5rem 0.6rem 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+/* The partner's name is chosen by the counterparty, who is the adversary here.
+   It is inserted as text and never as markup; this only stops a long one from
+   pushing the columns that matter off the screen. */
+.exposure .partner {
+  max-width: 14rem;
+  overflow-wrap: anywhere;
+}
+
+.exposure .amount {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.exposure .time-left {
+  white-space: nowrap;
+}
+
+/* An estimate is marked as one everywhere it appears. A countdown that looks
+   precise is a countdown somebody will plan around. */
+.exposure .estimate::before {
+  content: "~";
+  color: var(--muted);
+}
+
+.exposure tr.at-risk td {
+  background: var(--danger-bg, rgba(200, 60, 60, 0.08));
+}
+
+.exposure .row-action {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}

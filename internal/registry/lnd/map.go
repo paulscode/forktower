@@ -59,6 +59,49 @@ type listChannelsJSON struct {
 	Channels []channelJSON `json:"channels"`
 }
 
+// pendingChannelJSON is a channel that is opening or closing.
+//
+// **Its own type, and that is the whole point.** LND's pending-channel response
+// is a different message from its open-channel one, and two of the fields with
+// the same meaning are spelled differently: the peer is `remote_node_pub` rather
+// than `remote_pubkey`, and `initiator` is an enum rendered as a string rather
+// than a boolean. Reusing the open-channel struct meant the whole response
+// failed to decode the moment a channel started closing — so every closing
+// channel was silently lost, which is precisely when a channel becomes most
+// interesting on the chain nobody is watching.
+//
+// Thinner than the open shape because LND sends less: no constraints, no
+// short-channel id, no payments in flight. What is missing stays missing rather
+// than being guessed at; the registry keeps what it already knew.
+type pendingChannelJSON struct {
+	ChannelPoint   string `json:"channel_point"`
+	RemoteNodePub  string `json:"remote_node_pub"`
+	Capacity       string `json:"capacity"`
+	CommitmentType string `json:"commitment_type"`
+	Initiator      string `json:"initiator"`
+}
+
+// mapPendingChannel turns one of LND's opening or closing channels into the
+// shape Forktower stores.
+func mapPendingChannel(ch pendingChannelJSON) (registry.ChannelRecord, error) {
+	txid, vout, err := splitChannelPoint(ch.ChannelPoint)
+	if err != nil {
+		return registry.ChannelRecord{}, err
+	}
+	capacity, err := parseInt64(ch.Capacity, "capacity")
+	if err != nil {
+		return registry.ChannelRecord{}, fmt.Errorf("channel %s: %w", ch.ChannelPoint, err)
+	}
+
+	return registry.ChannelRecord{
+		FundingTxID: txid,
+		FundingVout: vout,
+		CapacitySat: capacity,
+		ChanType:    mapCommitmentType(ch.CommitmentType),
+		PeerPubkey:  ch.RemoteNodePub,
+	}, nil
+}
+
 // mapChannel turns one of LND's channels into the shape Forktower stores.
 //
 // **The two CSV delays are the part worth reading twice.** Verified against

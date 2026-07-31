@@ -20,11 +20,11 @@ type TimelineEntry struct {
 }
 
 func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
-	afterID, ok := intParam(w, r, "after_id", 0)
+	afterID, ok := intParam(w, r, "after_id")
 	if !ok {
 		return
 	}
-	limit, ok := intParam(w, r, "limit", 0)
+	limit, ok := intParam(w, r, "limit")
 	if !ok {
 		return
 	}
@@ -60,10 +60,11 @@ func rawJSON(s string) json.RawMessage {
 // A value that is not a number is refused rather than silently treated as zero:
 // `limit=abc` returning the default would quietly show a caller something other
 // than what they asked for.
-func intParam(w http.ResponseWriter, r *http.Request, name string, def int64) (int64, bool) {
+func intParam(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
-		return def, true
+		// Absent means unset, which every caller of this treats as "no bound".
+		return 0, true
 	}
 	n, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || n < 0 {

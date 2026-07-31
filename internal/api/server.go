@@ -152,6 +152,9 @@ func (s *Server) routes() {
 
 	s.mux.Handle("GET /api/v1/status", s.guard(s.handleStatus))
 	s.mux.Handle("GET /api/v1/timeline", s.guard(s.handleTimeline))
+	s.mux.Handle("GET /api/v1/channels", s.guard(s.handleChannels))
+	s.mux.Handle("GET /api/v1/spends", s.guard(s.handleSpends))
+	s.mux.Handle("GET /api/v1/deadlines", s.guard(s.handleDeadlines))
 	s.mux.Handle("GET /api/v1/alerts", s.guard(s.handleAlerts))
 	s.mux.Handle("POST /api/v1/alerts/{id}/ack", s.guard(s.handleAckAlert))
 	s.mux.Handle("POST /api/v1/alerts/test", s.guard(s.handleTestAlerts))

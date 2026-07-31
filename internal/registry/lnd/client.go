@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -207,20 +208,67 @@ func (c *Client) Snapshot(ctx context.Context) (registry.Snapshot, error) {
 			slog.String("error", err.Error()))
 	}
 	snap.Channels = append(snap.Channels, pending...)
+	c.nameCounterparties(ctx, snap.Channels)
 
 	return snap, nil
 }
 
+// nameCounterparties fills in who each channel is with.
+//
+// A separate call because LND's channel listing does not carry it: it reports a
+// sixty-six character key and nothing else. That key is not an answer to "who is
+// affected", which is the first column of the exposure table and the first
+// question anyone asks, so it is worth one lookup per distinct peer to turn it
+// into a name.
+//
+// Best-effort throughout. A peer that never announced itself has no name to
+// find, and a private channel's counterparty may not be in the graph at all;
+// the shortened key is then the honest answer and the table falls back to it.
+func (c *Client) nameCounterparties(ctx context.Context, channels []registry.ChannelRecord) {
+	seen := map[string]string{}
+	for i := range channels {
+		pubkey := channels[i].PeerPubkey
+		if pubkey == "" {
+			continue
+		}
+		alias, known := seen[pubkey]
+		if !known {
+			alias = c.peerAlias(ctx, pubkey)
+			seen[pubkey] = alias
+		}
+		if alias != "" {
+			channels[i].PeerAlias = alias
+		}
+	}
+}
+
+// peerAlias asks the node graph what a peer calls itself.
+func (c *Client) peerAlias(ctx context.Context, pubkey string) string {
+	var out struct {
+		Node struct {
+			Alias string `json:"alias"`
+		} `json:"node"`
+	}
+	if err := c.get(ctx, "/v1/graph/node/"+url.PathEscape(pubkey), &out); err != nil {
+		// Not worth a warning: a peer missing from the graph is ordinary, and a
+		// line about it per poll per peer would be noise.
+		c.log.Debug("could not find a name for one of your counterparties",
+			slog.String("error", err.Error()))
+		return ""
+	}
+	return out.Node.Alias
+}
+
 type pendingJSON struct {
 	PendingOpen []struct {
-		Channel channelJSON `json:"channel"`
+		Channel pendingChannelJSON `json:"channel"`
 	} `json:"pending_open_channels"`
 	PendingForceClosing []struct {
-		Channel   channelJSON `json:"channel"`
-		ClosingTx string      `json:"closing_txid"`
+		Channel   pendingChannelJSON `json:"channel"`
+		ClosingTx string             `json:"closing_txid"`
 	} `json:"pending_force_closing_channels"`
 	WaitingClose []struct {
-		Channel channelJSON `json:"channel"`
+		Channel pendingChannelJSON `json:"channel"`
 	} `json:"waiting_close_channels"`
 }
 
@@ -232,8 +280,8 @@ func (c *Client) pending(ctx context.Context) ([]registry.ChannelRecord, error) 
 	}
 
 	var out []registry.ChannelRecord
-	add := func(ch channelJSON, state store.CloseState, txid string) {
-		rec, err := mapChannel(ch)
+	add := func(ch pendingChannelJSON, state store.CloseState, txid string) {
+		rec, err := mapPendingChannel(ch)
 		if err != nil {
 			c.log.Warn("could not read one of your closing channels",
 				slog.String("error", err.Error()))

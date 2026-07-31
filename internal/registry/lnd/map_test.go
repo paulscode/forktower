@@ -255,3 +255,73 @@ func TestAnImpossibleCsvDelayIsTreatedAsUnknown(t *testing.T) {
 		t.Errorf("the largest expressible delay was rejected: %v", got)
 	}
 }
+
+// LND's pending-channel response is a different message from its open-channel
+// one, and two fields with the same meaning are spelled differently. Reusing one
+// struct for both meant the whole response failed to decode the moment a channel
+// started closing — so every closing channel was silently lost, which is exactly
+// when a channel becomes most interesting on the chain nobody is watching.
+//
+// This fixture is a real response from a real node with a channel closing in it.
+func TestClosingChannelsAreReadFromWhatLNDActuallySends(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join("testdata", "pendingchannels.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got pendingJSON
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("a real pending-channels response did not decode: %v", err)
+	}
+
+	total := len(got.PendingOpen) + len(got.PendingForceClosing) + len(got.WaitingClose)
+	if total == 0 {
+		t.Fatal("the fixture has no channels in it, so it proves nothing")
+	}
+
+	for _, e := range got.WaitingClose {
+		rec, mapErr := mapPendingChannel(e.Channel)
+		if mapErr != nil {
+			t.Fatalf("mapping a closing channel: %v", mapErr)
+		}
+		// The peer is the point: it is named differently here, and losing it
+		// means the exposure table cannot say who is affected.
+		if rec.PeerPubkey == "" {
+			t.Error("a closing channel lost its counterparty")
+		}
+		if rec.FundingTxID == "" || rec.CapacitySat == 0 {
+			t.Errorf("a closing channel lost its identity or its size: %+v", rec)
+		}
+	}
+}
+
+// The two shapes must not be confused again: the open one carries a boolean
+// where the pending one carries a word.
+func TestTheOpenAndPendingShapesAreNotInterchangeable(t *testing.T) {
+	t.Parallel()
+
+	pending := []byte(`{"waiting_close_channels":[{"channel":{` +
+		`"remote_node_pub":"03abc","channel_point":"aa:0","capacity":"1000",` +
+		`"initiator":"INITIATOR_LOCAL"}}]}`)
+
+	var asPending pendingJSON
+	if err := json.Unmarshal(pending, &asPending); err != nil {
+		t.Fatalf("the pending shape does not decode its own response: %v", err)
+	}
+	if len(asPending.WaitingClose) != 1 {
+		t.Fatal("nothing decoded")
+	}
+
+	// And the open shape genuinely cannot read it, which is why they are
+	// separate types rather than one tolerant one.
+	var asOpen struct {
+		WaitingClose []struct {
+			Channel channelJSON `json:"channel"`
+		} `json:"waiting_close_channels"`
+	}
+	if err := json.Unmarshal(pending, &asOpen); err == nil {
+		t.Error("the open-channel shape silently accepted a pending response, which " +
+			"is how this went unnoticed the first time")
+	}
+}
