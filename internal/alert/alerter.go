@@ -33,6 +33,14 @@ const (
 	// subscriber that falls behind loses events, and the events this one is
 	// subscribed to are the ones that matter most.
 	sendQueue = 64
+	// DefaultSweepInterval is how often the stored state is re-read for the
+	// conditions no event announces.
+	//
+	// Daily, because the condition it looks for is an absence: a channel closed on
+	// the user's own chain whose close has still not reached the other one.
+	// Nothing happens to trigger it, which is exactly what makes it dangerous, so
+	// something has to go looking.
+	DefaultSweepInterval = 24 * time.Hour
 	// writeTimeout bounds a storage write that outlives its trigger.
 	writeTimeout = 5 * time.Second
 )
@@ -50,6 +58,9 @@ type Config struct {
 	// SelfTestInterval is how often a synthetic alert is pushed through every
 	// transport. Zero uses DefaultSelfTestInterval.
 	SelfTestInterval time.Duration
+	// SweepInterval is how often the stored state is re-read for conditions
+	// nothing announces. Zero uses DefaultSweepInterval. Tests set it small.
+	SweepInterval time.Duration
 }
 
 func (c Config) withDefaults() Config {
@@ -64,6 +75,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.SelfTestInterval <= 0 {
 		c.SelfTestInterval = DefaultSelfTestInterval
+	}
+	if c.SweepInterval <= 0 {
+		c.SweepInterval = DefaultSweepInterval
 	}
 	return c
 }
@@ -125,8 +139,12 @@ func New(
 		cfg:    cfg.withDefaults(),
 		now:    now,
 		log:    log,
-		events: b.Subscribe(SubscriberName, bus.KindSplitStateChanged, bus.KindViewHealthChanged),
-		sends:  make(chan store.Alert, sendQueue),
+		events: b.Subscribe(SubscriberName,
+			bus.KindSplitStateChanged, bus.KindViewHealthChanged,
+			bus.KindFundingSpent, bus.KindMempoolSighting, bus.KindSpendReorgedOut,
+			bus.KindDeadlineEscalated, bus.KindDeadlineResolved,
+			bus.KindDeadlineExpiredLoss),
+		sends: make(chan store.Alert, sendQueue),
 	}
 	if len(routes) == 0 {
 		// Not an error: a user may be watching the dashboard and nothing else. But
@@ -140,8 +158,9 @@ func New(
 
 // Run consumes events and delivers alerts until the context ends.
 //
-// Three goroutines: one reads the bus and writes to storage, one delivers, and
-// one runs the notification self-test on its schedule. The first two are separate
+// Four goroutines: one reads the bus and writes to storage, one delivers, one
+// runs the notification self-test on its schedule, and one sweeps the stored
+// state for the conditions no event announces. The first two are separate
 // because delivery is network I/O and the reader must never wait on it — a
 // subscriber that falls behind loses events, and a lost "the chains have
 // separated" is the one failure this software exists to prevent.
@@ -150,6 +169,7 @@ func (a *Alerter) Run(ctx context.Context) error {
 	g.Go(func() error { return a.consume(ctx, a.events) })
 	g.Go(func() error { return a.deliverQueued(ctx) })
 	g.Go(func() error { return a.selfTestLoop(ctx) })
+	g.Go(func() error { return a.sweepLoop(ctx) })
 	return g.Wait()
 }
 

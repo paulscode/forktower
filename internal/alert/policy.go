@@ -21,6 +21,14 @@ const (
 	KindViewDegraded    = "view_degraded"
 	KindViewWrongBranch = "view_wrong_branch"
 	KindViewRecovered   = "view_recovered"
+
+	KindChannelSpent      = "channel_spent"
+	KindChannelSpentSoon  = "channel_spent_unconfirmed"
+	KindSpendDisappeared  = "spend_disappeared"
+	KindDeadlineWarning   = "deadline_warning"
+	KindDeadlineResolved  = "deadline_resolved"
+	KindLoss              = "loss"
+	KindClosedOnlyOnYours = "closed_only_on_your_chain"
 )
 
 // Candidate is an alert the mapping decided to raise.
@@ -146,6 +154,18 @@ func MapEventToAlert(e bus.Event) (Candidate, bool) {
 		return mapSplitState(ev)
 	case bus.ViewHealthChanged:
 		return mapViewHealth(ev)
+	case bus.FundingSpent:
+		return mapFundingSpent(ev)
+	case bus.MempoolSighting:
+		return mapMempoolSighting(ev)
+	case bus.SpendReorgedOut:
+		return mapSpendReorgedOut(ev)
+	case bus.DeadlineEscalated:
+		return mapDeadlineEscalated(ev)
+	case bus.DeadlineResolved:
+		return mapDeadlineResolved(ev)
+	case bus.DeadlineExpiredLoss:
+		return mapExpiredLoss(ev)
 	default:
 		return Candidate{}, false
 	}
@@ -252,6 +272,206 @@ func mapViewHealth(ev bus.ViewHealthChanged) (Candidate, bool) {
 
 	default:
 		return Candidate{}, false
+	}
+}
+
+// mapFundingSpent is the event this whole product exists to deliver.
+//
+// Nothing about the channel is in the words — not which one, not how much, not
+// how long. The message says what happened and where to look, because these
+// alerts travel through services whose operators would otherwise be told that
+// this user is under attack and roughly what it is worth, which is precisely an
+// attacker's ideal input. The dashboard, on the user's own machine, says
+// everything.
+func mapFundingSpent(ev bus.FundingSpent) (Candidate, bool) {
+	if store.SpendStatus(ev.Status) != store.SpendConfirmed {
+		// The unconfirmed sighting has its own mapping and its own wording.
+		return Candidate{}, false
+	}
+
+	switch store.SpendShape(ev.Shape) {
+	case store.ShapeMutualClose:
+		// A close both sides agreed to. Worth recording, not worth waking anyone.
+		return Candidate{
+			Tier:     store.TierInfo,
+			Kind:     KindChannelSpent,
+			DedupKey: fmt.Sprintf("%s:%d", KindChannelSpent, ev.ChannelID),
+			Subject:  "A channel was closed on the other chain",
+			Message: "One of your channels was closed by agreement on the other chain. " +
+				"Nothing needs doing.",
+		}, true
+
+	case store.ShapeCommitmentOurs:
+		return Candidate{
+			Tier:     store.TierWarning,
+			Kind:     KindChannelSpent,
+			DedupKey: fmt.Sprintf("%s:%d", KindChannelSpent, ev.ChannelID),
+			Subject:  "Your own channel close reached the other chain",
+			Message: "A channel close your own node made has confirmed on the other " +
+				"chain too. Open Forktower to see when those funds can be claimed.",
+		}, true
+
+	case store.ShapeCommitmentUnknown, store.ShapeCommitmentRevoked:
+		return Candidate{
+			Tier:     store.TierCritical,
+			Kind:     KindChannelSpent,
+			DedupKey: fmt.Sprintf("%s:%d", KindChannelSpent, ev.ChannelID),
+			Subject:  "One of your channels is being closed on the other chain",
+			Message: "Somebody has published a channel close on the chain your node " +
+				"does not follow, and Forktower cannot tell whether it is an old one. " +
+				"There is a time limit on responding. Open Forktower now.",
+		}, true
+
+	case store.ShapeJustice, store.ShapeDelayedSweep, store.ShapeHTLCClaim,
+		store.ShapeUnknown:
+		// Something spent the funding output and it fits none of the shapes.
+		// Never silently ignored: an unrecognised spend of a channel is exactly
+		// the thing that must not pass quietly.
+		return Candidate{
+			Tier:     store.TierCritical,
+			Kind:     KindChannelSpent,
+			DedupKey: fmt.Sprintf("%s:%d", KindChannelSpent, ev.ChannelID),
+			Subject:  "One of your channels was closed on the other chain",
+			Message: "One of your channels was closed on the chain your node does not " +
+				"follow, in a way Forktower does not recognise. Open Forktower now.",
+		}, true
+
+	default:
+		return Candidate{}, false
+	}
+}
+
+// mapMempoolSighting is the early warning, and it is worth as much as the
+// confirmation.
+//
+// Raised at critical even though nothing has confirmed: a commitment seen before
+// it is mined buys the user a block of notice, and on a chain producing blocks
+// slowly that can be a great deal of time. Told about it afterwards, they would
+// have had less.
+func mapMempoolSighting(ev bus.MempoolSighting) (Candidate, bool) {
+	if store.SpendShape(ev.Shape) == store.ShapeMutualClose {
+		// A cooperative close on its way is not an emergency.
+		return Candidate{}, false
+	}
+	return Candidate{
+		Tier:     store.TierCritical,
+		Kind:     KindChannelSpentSoon,
+		DedupKey: fmt.Sprintf("%s:%d", KindChannelSpentSoon, ev.ChannelID),
+		Subject:  "A channel close is about to land on the other chain",
+		Message: "Forktower has seen a channel close waiting to be mined on the chain " +
+			"your node does not follow. It has not confirmed yet, which means you have " +
+			"a little more time than you otherwise would. Open Forktower now.",
+	}, true
+}
+
+// mapSpendReorgedOut says a close has left the chain, and takes care not to
+// sound like good news.
+//
+// It is not. A counterparty replacing their transaction with a higher fee looks
+// exactly like this, and so does a reorganisation that will put it straight
+// back. Reading it as relief is the wrong instinct, so the words do not offer
+// it.
+func mapSpendReorgedOut(ev bus.SpendReorgedOut) (Candidate, bool) {
+	return Candidate{
+		Tier:     store.TierWarning,
+		Kind:     KindSpendDisappeared,
+		DedupKey: fmt.Sprintf("%s:%d", KindSpendDisappeared, ev.SpendEventID),
+		Subject:  "A channel close has left the other chain",
+		Message: "A close Forktower was watching is not in a block on the other chain " +
+			"any more. That does not mean the danger has passed — it may be replaced " +
+			"by another, or come back. Forktower is still watching. Open it to see " +
+			"where things stand.",
+	}, true
+}
+
+// mapDeadlineEscalated is the countdown getting louder.
+//
+// Deduplicated per level rather than per deadline, so each tier is a fresh alert
+// the user has to acknowledge on its own. One row per countdown would mean the
+// second and third warnings quietly updating a message the user had already
+// dismissed — which is the same as not sending them.
+func mapDeadlineEscalated(ev bus.DeadlineEscalated) (Candidate, bool) {
+	key := fmt.Sprintf("%s:%d:%d", KindDeadlineWarning, ev.DeadlineID, ev.Level)
+
+	// The time estimate is the part a person can act on. A block count on its own
+	// invites them to assume ten minutes a block, and on the chain this is
+	// counting that assumption can be wrong by a factor of four.
+	timing := fmt.Sprintf("%d blocks left", ev.RemainingBlocks)
+	if ev.EstWallClock != "" {
+		timing = fmt.Sprintf("%d blocks left, which is %s at the rate that chain is "+
+			"currently going", ev.RemainingBlocks, ev.EstWallClock)
+	}
+
+	subject := "Time is running out on one of your channels"
+	message := "Forktower is counting down on a channel close on the other chain: " +
+		timing + ". Open Forktower now."
+	if ev.RemainingBlocks == 0 {
+		subject = "The time on one of your channels has run out"
+		message = "The window to respond to a channel close on the other chain has " +
+			"closed. Open Forktower."
+	}
+
+	return Candidate{
+		Tier:     store.TierCritical,
+		Kind:     KindDeadlineWarning,
+		DedupKey: key,
+		Subject:  subject,
+		Message:  message,
+	}, true
+}
+
+// mapDeadlineResolved is the one piece of unambiguously good news this software
+// has to give.
+func mapDeadlineResolved(ev bus.DeadlineResolved) (Candidate, bool) {
+	message := "A countdown on one of your channels has stopped: what started it is " +
+		"no longer on the other chain."
+	if ev.ByTxid != "" {
+		message = "A countdown on one of your channels was answered before it ran out. " +
+			"Open Forktower to see what happened."
+	}
+	return Candidate{
+		Tier:     store.TierResolved,
+		Kind:     KindDeadlineResolved,
+		DedupKey: fmt.Sprintf("%s:%d", KindDeadlineResolved, ev.DeadlineID),
+		Subject:  "A countdown has stopped",
+		Message:  message,
+	}, true
+}
+
+// mapExpiredLoss is the worst message this software sends, and the one it exists
+// to make rare.
+//
+// The amount stays out of the words for the same reason everything else does:
+// these travel through other people's servers. It is on the dashboard.
+func mapExpiredLoss(ev bus.DeadlineExpiredLoss) (Candidate, bool) {
+	return Candidate{
+		Tier:     store.TierLoss,
+		Kind:     KindLoss,
+		DedupKey: fmt.Sprintf("%s:%d", KindLoss, ev.DeadlineID),
+		Subject:  "A channel was lost on the other chain",
+		Message: "The window to respond to a channel close on the other chain has " +
+			"passed with nothing having answered it. Open Forktower for the details, " +
+			"which you will want if you are reporting this to anyone.",
+	}, true
+}
+
+// ClosedOnlyOnYourChain is the slow-burn warning for the exposure people do not
+// expect.
+//
+// A channel that closed on the user's own chain feels finished. On the chain
+// nobody is watching it is not: the close has not happened there, so the old
+// commitments the counterparty still holds remain spendable. This is not raised
+// by an event, because nothing happens — the danger is precisely that nothing
+// happens, for as long as it takes somebody to notice the opportunity.
+func ClosedOnlyOnYourChain(channelID int64) Candidate {
+	return Candidate{
+		Tier:     store.TierWarning,
+		Kind:     KindClosedOnlyOnYours,
+		DedupKey: fmt.Sprintf("%s:%d", KindClosedOnlyOnYours, channelID),
+		Subject:  "A closed channel is still open on the other chain",
+		Message: "One of your channels is closed on your own chain, but that close has " +
+			"not happened on the other one — so the old commitments your counterparty " +
+			"holds can still be spent there. Open Forktower to see what can be done.",
 	}
 }
 
