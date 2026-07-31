@@ -856,3 +856,249 @@ func TestWithNothingToWatchBlocksStillGoPast(t *testing.T) {
 		t.Error("something was being watched with no channels configured")
 	}
 }
+
+// commitmentSpending builds a transaction with the marks a commitment cannot
+// avoid leaving, spending the given outpoint.
+func commitmentSpending(prevout wire.OutPoint) *wire.MsgTx {
+	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: prevout,
+		Witness:          fundingSpendWitness(),
+		Sequence:         0x80_ab_cd_ef,
+	})
+	tx.AddTxOut(wire.NewTxOut(500_000, p2wsh))
+	tx.AddTxOut(wire.NewTxOut(AnchorValueSat, p2wsh))
+	tx.LockTime = 0x20_12_34_56
+	return tx
+}
+
+// justiceSpending builds a transaction taking the revocation branch of a
+// contested output, which is what answering a breach looks like on the chain.
+func justiceSpending(prevout wire.OutPoint) *wire.MsgTx {
+	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: prevout,
+		Witness:          wire.TxWitness{{0x30, 0x44}, {0x01}, {0x63, 0x21}},
+		Sequence:         wire.MaxTxInSequenceNum,
+	})
+	tx.AddTxOut(wire.NewTxOut(490_000, p2wpkh))
+	return tx
+}
+
+// The whole point of the second-order half: a commitment appears, and Forktower
+// then reports how it ended rather than only that it happened.
+func TestACommitmentIsFollowedByWhatBecomesOfIt(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	addChannel(t, h.store, fundingA, store.Relevant)
+	h.run()
+	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
+
+	commitment := commitmentSpending(fundingOutpoint(t, fundingA, 1))
+	first := h.view.Extend("commitment", 1)
+	h.view.PutTransactions(first.Hash, coinbase(), commitment)
+
+	h.waitFor("the commitment to be recorded", func() bool { return len(h.spends()) == 1 })
+	if got := h.spends()[0].Shape; got != store.ShapeCommitmentUnknown {
+		t.Errorf("the commitment was recorded as %q", got)
+	}
+
+	// Its outputs are now watched in their own right, which is what makes the
+	// outcome observable at all.
+	h.waitFor("the commitment's outputs to be watched", func() bool {
+		return h.w.WatchSet().Len() == 3 // the funding output plus two commitment outputs
+	})
+	watched, err := h.store.ListWatchOutpoints(context.Background(), store.BranchSQ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(watched) != 2 {
+		t.Fatalf("recorded %d outputs to watch, want 2", len(watched))
+	}
+	for _, o := range watched {
+		if o.SourceSpendEventID != h.spends()[0].ID {
+			t.Error("a watched output does not point back at the commitment that made it")
+		}
+	}
+
+	// And the answer to it, in a later block.
+	justice := justiceSpending(wire.OutPoint{Hash: commitment.TxHash(), Index: 0})
+	second := h.view.Extend("justice", 1)
+	h.view.PutTransactions(second.Hash, coinbase(), justice)
+
+	h.waitFor("the justice transaction", func() bool { return len(h.spends()) == 2 })
+	var found bool
+	for _, sp := range h.spends() {
+		if sp.SpendTxID == justice.TxHash().String() {
+			found = true
+			if sp.Shape != store.ShapeJustice {
+				t.Errorf("the justice transaction was recorded as %q", sp.Shape)
+			}
+		}
+	}
+	if !found {
+		t.Error("the spend of the commitment's output was not recorded")
+	}
+}
+
+// The case a single scan cannot answer on its own: a sweep in the
+// very same block as the commitment it sweeps. The first pass cannot find it,
+// because the output did not exist until the commitment was read. The second
+// pass can, and this is what proves the loop makes one.
+func TestASweepInTheSameBlockAsItsCommitmentIsFound(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	addChannel(t, h.store, fundingA, store.Relevant)
+	h.run()
+	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
+
+	commitment := commitmentSpending(fundingOutpoint(t, fundingA, 1))
+	justice := justiceSpending(wire.OutPoint{Hash: commitment.TxHash(), Index: 0})
+
+	meta := h.view.Extend("both-at-once", 1)
+	h.view.PutTransactions(meta.Hash, coinbase(), commitment, justice)
+
+	h.waitFor("both the commitment and its answer", func() bool { return len(h.spends()) == 2 })
+
+	shapes := map[store.SpendShape]bool{}
+	for _, sp := range h.spends() {
+		shapes[sp.Shape] = true
+		if sp.BlockHeight != meta.Height {
+			t.Errorf("a spend was recorded at height %d, want %d", sp.BlockHeight, meta.Height)
+		}
+	}
+	if !shapes[store.ShapeCommitmentUnknown] || !shapes[store.ShapeJustice] {
+		t.Errorf("found %v, want a commitment and the justice answering it", shapes)
+	}
+}
+
+// A commitment the user's own node says it broadcast is theirs, and must not be
+// reported as a stranger force-closing their channel.
+func TestOurOwnForceCloseIsNotReportedAsAnAttack(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	ctx := context.Background()
+
+	id := addChannel(t, h.store, fundingA, store.Relevant)
+	commitment := commitmentSpending(fundingOutpoint(t, fundingA, 1))
+	if err := h.store.SetChannelCloseSF(ctx, id, store.ClosePending,
+		commitment.TxHash().String(), 0, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	h.run()
+	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
+
+	meta := h.view.Extend("our-force-close", 1)
+	h.view.PutTransactions(meta.Hash, coinbase(), commitment)
+
+	h.waitFor("the commitment", func() bool { return len(h.spends()) == 1 })
+	if got := h.spends()[0].Shape; got != store.ShapeCommitmentOurs {
+		t.Errorf("our own force close was recorded as %q", got)
+	}
+}
+
+// A cooperative close is recorded as one, so the user is not told a channel
+// they closed on purpose was attacked.
+func TestACooperativeCloseIsRecognised(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	addChannel(t, h.store, fundingA, store.Relevant)
+	h.run()
+	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
+
+	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: fundingOutpoint(t, fundingA, 1),
+		Witness:          fundingSpendWitness(),
+		Sequence:         wire.MaxTxInSequenceNum,
+	})
+	tx.AddTxOut(wire.NewTxOut(500_000, p2wpkh))
+	tx.AddTxOut(wire.NewTxOut(400_000, p2wpkh))
+
+	meta := h.view.Extend("coop", 1)
+	h.view.PutTransactions(meta.Hash, coinbase(), tx)
+
+	h.waitFor("the close", func() bool { return len(h.spends()) == 1 })
+	if got := h.spends()[0].Shape; got != store.ShapeMutualClose {
+		t.Errorf("a cooperative close was recorded as %q", got)
+	}
+	// Nothing to follow: a cooperative close pays people directly and leaves no
+	// contested output behind.
+	watched, err := h.store.ListWatchOutpoints(context.Background(), store.BranchSQ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(watched) != 0 {
+		t.Errorf("a cooperative close left %d outputs being watched", len(watched))
+	}
+}
+
+// A justice transaction is proof of what the commitment it answered was. That
+// is the one time "whose commitment was that" gets a real answer after the fact,
+// and it is the difference between telling a user something worrying happened
+// and telling them what it was.
+func TestAJusticeTransactionSettlesWhatTheCommitmentWas(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	addChannel(t, h.store, fundingA, store.Relevant)
+	h.run()
+	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
+
+	commitment := commitmentSpending(fundingOutpoint(t, fundingA, 1))
+	first := h.view.Extend("commitment", 1)
+	h.view.PutTransactions(first.Hash, coinbase(), commitment)
+	h.waitFor("the commitment", func() bool { return len(h.spends()) == 1 })
+
+	if got := h.spends()[0].Shape; got != store.ShapeCommitmentUnknown {
+		t.Fatalf("the commitment was recorded as %q", got)
+	}
+
+	justice := justiceSpending(wire.OutPoint{Hash: commitment.TxHash(), Index: 0})
+	second := h.view.Extend("justice", 1)
+	h.view.PutTransactions(second.Hash, coinbase(), justice)
+
+	h.waitFor("the commitment to be settled as a revoked one", func() bool {
+		for _, sp := range h.spends() {
+			if sp.SpendTxID == commitment.TxHash().String() {
+				return sp.Shape == store.ShapeCommitmentRevoked
+			}
+		}
+		return false
+	})
+}
+
+// A commitment the user's own node said it broadcast keeps that label even when
+// it turns out to have been revoked: "we published a revoked commitment" is a
+// different and more useful thing to know than "it was revoked".
+func TestOurOwnCommitmentKeepsItsLabelEvenWhenAnswered(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	ctx := context.Background()
+
+	id := addChannel(t, h.store, fundingA, store.Relevant)
+	commitment := commitmentSpending(fundingOutpoint(t, fundingA, 1))
+	if err := h.store.SetChannelCloseSF(ctx, id, store.ClosePending,
+		commitment.TxHash().String(), 0, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	h.run()
+	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
+
+	first := h.view.Extend("our-commitment", 1)
+	h.view.PutTransactions(first.Hash, coinbase(), commitment)
+	h.waitFor("the commitment", func() bool { return len(h.spends()) == 1 })
+
+	justice := justiceSpending(wire.OutPoint{Hash: commitment.TxHash(), Index: 0})
+	second := h.view.Extend("justice", 1)
+	h.view.PutTransactions(second.Hash, coinbase(), justice)
+	h.waitFor("the justice transaction", func() bool { return len(h.spends()) == 2 })
+
+	for _, sp := range h.spends() {
+		if sp.SpendTxID == commitment.TxHash().String() &&
+			sp.Shape != store.ShapeCommitmentOurs {
+			t.Errorf("our own commitment was relabelled %q", sp.Shape)
+		}
+	}
+}

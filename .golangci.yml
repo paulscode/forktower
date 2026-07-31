@@ -100,6 +100,27 @@ linters:
             - pkg: github.com/paulscode/forktower/internal/bus
               desc: the block scanner returns what it found, it does not publish it
 
+        # The shape classifier decides what a transaction on the other chain was:
+        # a cooperative close, somebody's commitment, or a justice transaction
+        # landing. Same "no I/O" bar as the scanner, with the store allowed for
+        # its vocabulary of shapes and roles — denying it would force a parallel
+        # copy of both enums whose only purpose would be to be converted back,
+        # which is a second place to forget a case.
+        pure-shape:
+          files:
+            - "**/internal/watcher/classify.go"
+          deny:
+            - pkg: net
+              desc: the shape classifier must not perform I/O
+            - pkg: net/http
+              desc: the shape classifier must not perform I/O
+            - pkg: os
+              desc: the shape classifier must not touch the filesystem
+            - pkg: database/sql
+              desc: the shape classifier must not touch storage
+            - pkg: github.com/paulscode/forktower/internal/bus
+              desc: the shape classifier returns a verdict, it does not publish one
+
         # The alerting policy is held to the same "no I/O" bar, but with a
         # narrower deny list. It maps bus events onto the store's alert
         # vocabulary, so denying those two packages would force a parallel copy

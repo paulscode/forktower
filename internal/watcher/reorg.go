@@ -234,6 +234,12 @@ func (w *Watcher) recordMatches(
 			continue
 		}
 
+		// Classified before it is written, not after. A row that exists for even a
+		// moment with a placeholder shape is a row a reader can see, and the
+		// difference between "unknown" and "somebody's commitment" is the whole
+		// difference between routine and urgent.
+		shape := w.shapeOf(ctx, m, meta)
+
 		wctx, cancel := writeCtx(ctx)
 		id, existed, err := w.store.RecordSpend(wctx, store.Spend{
 			Branch:       w.branch,
@@ -244,7 +250,7 @@ func (w *Watcher) recordMatches(
 			SpendTxHex:   rawTx(m.Tx),
 			BlockHash:    meta.Hash.String(),
 			BlockHeight:  meta.Height,
-			Shape:        store.ShapeUnknown,
+			Shape:        shape,
 			Status:       store.SpendConfirmed,
 			FirstSeenAt:  w.now().Unix(),
 			UpdatedAt:    w.now().Unix(),
@@ -255,17 +261,84 @@ func (w *Watcher) recordMatches(
 		}
 
 		if existed {
-			// Seen before. Its status may still need moving on — a spend first seen
-			// unconfirmed, now in a block — but it is not news.
-			if err := w.confirmIfPending(ctx, id, m, meta); err != nil {
+			// Seen before. Its status may still need moving on — a spend that was
+			// reorganised out and has landed again — but it is not news.
+			if err := w.confirmIfPending(ctx, id, m, meta, shape); err != nil {
 				return fresh, err
 			}
 			continue
 		}
+
+		w.followCommitment(ctx, id, m, shape)
+		w.resolveSource(ctx, m, shape)
 		fresh++
-		w.announce(m, id, meta)
+		w.announce(m, id, meta, shape)
 	}
 	return fresh, nil
+}
+
+// shapeOf works out what a spend appears to be.
+//
+// Two different questions with two different answers. A spend of a funding
+// output is a channel closing, and the only thing worth deciding is what kind of
+// close. A spend of one of a commitment's own outputs is the *outcome*, and
+// there the spending witness says plainly which branch of the script was taken.
+func (w *Watcher) shapeOf(ctx context.Context, m Match, meta chainview.BlockMeta) store.SpendShape {
+	if m.Target.Kind == KindFunding {
+		return ClassifyShape(ShapeFacts{
+			Tx:           m.Tx,
+			TxID:         m.TxID.String(),
+			OurCloseTxID: w.ourCloseTxID(ctx, m.Target.ChannelID),
+		})
+	}
+	return ClassifySweep(SweepFacts{
+		Tx:          m.Tx,
+		InputIndex:  m.InputIndex,
+		Role:        m.Target.Role,
+		SpendHeight: meta.Height,
+		// The deadline is the deadline engine's to compute and does not exist yet
+		// at this point in the block. Left unset on purpose: the witness is the
+		// stronger evidence anyway, and timing is only its fallback.
+		DeadlineHeight: 0,
+	})
+}
+
+// ourCloseTxID is what the user's own Lightning node said it broadcast, if
+// anything. The one piece of information that can tell our commitment from
+// theirs, since a commitment reveals nothing about which side holds it.
+func (w *Watcher) ourCloseTxID(ctx context.Context, channelID int64) string {
+	if channelID == 0 {
+		return ""
+	}
+	channels, err := w.store.ListChannels(ctx, store.ChannelFilter{})
+	if err != nil {
+		w.log.Warn("could not check whether a channel close was one of yours",
+			slog.String("error", err.Error()))
+		return ""
+	}
+	for _, c := range channels {
+		if c.ID == channelID {
+			return c.CloseTxID
+		}
+	}
+	return ""
+}
+
+// followCommitment starts watching what a commitment created.
+//
+// A commitment on the chain nobody is watching is the beginning of the story,
+// not the end: its outputs are what say how it finished. Anything else — a
+// cooperative close, a sweep, something unrecognised — creates nothing worth
+// following, because it pays people directly and leaves no contested output.
+func (w *Watcher) followCommitment(
+	ctx context.Context, id int64, m Match, shape store.SpendShape,
+) {
+	switch shape {
+	case store.ShapeCommitmentOurs, store.ShapeCommitmentUnknown, store.ShapeCommitmentRevoked:
+		w.watchCommitmentOutputs(ctx, m, id)
+	case store.ShapeMutualClose, store.ShapeJustice, store.ShapeDelayedSweep,
+		store.ShapeHTLCClaim, store.ShapeUnknown:
+	}
 }
 
 // confirmIfPending moves a spend already recorded into this block.
@@ -276,7 +349,7 @@ func (w *Watcher) recordMatches(
 // announced again, because a subscriber told the spend had gone needs telling it
 // is back.
 func (w *Watcher) confirmIfPending(
-	ctx context.Context, id int64, m Match, meta chainview.BlockMeta,
+	ctx context.Context, id int64, m Match, meta chainview.BlockMeta, shape store.SpendShape,
 ) error {
 	wctx, cancel := writeCtx(ctx)
 	defer cancel()
@@ -297,19 +370,61 @@ func (w *Watcher) confirmIfPending(
 		w.log.Info("a spend that had been dropped from the other chain is back in a block",
 			slog.Int64("spend_id", id), slog.Int("height", int(meta.Height)))
 	}
-	w.announce(m, id, meta)
+	w.announce(m, id, meta, shape)
 	return nil
 }
 
+// resolveSource settles what a commitment was, after the fact.
+//
+// A justice transaction is proof: only the holder of a revocation secret can
+// take that branch, and revocation secrets exist only for commitments that were
+// revoked. So a commitment we could only call "somebody's" becomes definitely a
+// revoked one — the single case where "whose commitment was that" gets a real
+// answer later, and the difference between telling a user something worrying
+// happened and telling them what it was.
+//
+// Only ever from `commitment_unknown`. A commitment the user's own node said it
+// broadcast keeps that label even if it turns out to have been revoked, because
+// "we published a revoked commitment" is a different and more useful thing to
+// know than "it was revoked".
+func (w *Watcher) resolveSource(ctx context.Context, m Match, shape store.SpendShape) {
+	if shape != store.ShapeJustice || m.Target.SourceSpendEventID == 0 {
+		return
+	}
+
+	wctx, cancel := writeCtx(ctx)
+	defer cancel()
+
+	source, err := w.store.GetSpend(wctx, m.Target.SourceSpendEventID)
+	if err != nil {
+		w.log.Warn("could not look up the close a justice transaction answered",
+			slog.String("error", err.Error()))
+		return
+	}
+	if source.Shape != store.ShapeCommitmentUnknown {
+		return
+	}
+	if err := w.store.UpdateSpendShape(wctx, source.ID,
+		store.ShapeCommitmentRevoked, w.now().Unix()); err != nil {
+		w.log.Error("could not record that a close was of a revoked commitment",
+			slog.Int64("spend_id", source.ID), slog.String("error", err.Error()))
+		return
+	}
+	w.log.Info("a close on the other chain is now known to have been a revoked one, "+
+		"because it was answered", slog.Int64("spend_id", source.ID))
+}
+
 // announce publishes what was found, in the shape the rest of the daemon reads.
-func (w *Watcher) announce(m Match, id int64, meta chainview.BlockMeta) {
+func (w *Watcher) announce(
+	m Match, id int64, meta chainview.BlockMeta, shape store.SpendShape,
+) {
 	if m.Target.Kind == KindFunding {
 		w.bus.Publish(bus.FundingSpent{
 			SpendEventID: id,
 			ChannelID:    m.Target.ChannelID,
 			Branch:       string(w.branch),
 			SpendTxid:    m.TxID.String(),
-			Shape:        string(store.ShapeUnknown),
+			Shape:        string(shape),
 			Status:       string(store.SpendConfirmed),
 			Height:       meta.Height,
 		})
@@ -319,7 +434,7 @@ func (w *Watcher) announce(m Match, id int64, meta chainview.BlockMeta) {
 		SpendEventID:       id,
 		SourceSpendEventID: m.Target.SourceSpendEventID,
 		Role:               string(m.Target.Role),
-		Shape:              string(store.ShapeUnknown),
+		Shape:              string(shape),
 	})
 }
 
