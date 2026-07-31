@@ -166,6 +166,18 @@ func mapTowerConcern(ev bus.TowerConcern) (Candidate, bool) {
 			Message:  ev.Message,
 		}, true
 
+	case tower.ConcernExternalOnly:
+		// A description of the deployment rather than a fault with it. Worth
+		// saying once because it changes what can be done when a tower stops —
+		// there is no process here to restart and no settings here to correct —
+		// and worth saying quietly, because the arrangement itself is fine.
+		return Candidate{
+			Tier: store.TierInfo, Kind: KindTowerNotProtecting,
+			DedupKey: KindTowerNotProtecting + ":external-only",
+			Subject:  "Your watchtowers belong to somebody else",
+			Message:  ev.Message,
+		}, true
+
 	case tower.ConcernFeeRateFixed, tower.ConcernSessionsExhausted, tower.ConcernDiskFilling:
 		// Worth knowing and not worth waking anyone: none of these is protection
 		// failing, and two of them are ordinary events explained rather than

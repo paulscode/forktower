@@ -41,6 +41,28 @@ func (a *App) buildWardens(cfg config.Config, log *slog.Logger, now func() time.
 			slog.String("kind", string(inst.kind)),
 			slog.String("listen", inst.conf.Listen))
 	}
+
+	// And the towers the user registered with themselves.
+	//
+	// **Discovered rather than configured.** The node already knows which towers
+	// it backs up to — they typed them in when they registered — so asking for
+	// the same list again would be asking twice and getting it wrong once. Runs
+	// whether or not a local tower is configured, because a user with no tower of
+	// their own and a community one is an ordinary deployment and the one where
+	// nobody would otherwise be watching.
+	client := a.towerClient(store.TowerLND, cfg, log)
+	if client == nil {
+		return nil
+	}
+	scout, err := tower.NewScout(tower.ScoutOptions{
+		Store: a.store, Client: client, Bus: a.bus,
+		Log: log.With(slog.String("component", "tower")),
+		Now: now,
+	})
+	if err != nil {
+		return fmt.Errorf("setting up watching for towers you registered with: %w", err)
+	}
+	a.scouts = append(a.scouts, scout)
 	return nil
 }
 

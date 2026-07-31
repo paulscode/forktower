@@ -62,6 +62,7 @@ type App struct {
 	watcher   *watcher.Watcher
 	deadline  *deadline.Engine
 	wardens   []*tower.Warden
+	scouts    []*tower.Scout
 	mirrors   []*mirror.Runner
 	standDown *standdown.Switch
 	alerter   *alert.Alerter
@@ -437,6 +438,9 @@ func (a *App) Run(ctx context.Context) error {
 	group.Go(func() error { return a.deadline.Run(groupCtx) })
 	for _, w := range a.wardens {
 		group.Go(func() error { return w.Run(groupCtx) })
+	}
+	for _, sc := range a.scouts {
+		group.Go(func() error { return sc.Run(groupCtx) })
 	}
 	for _, m := range a.mirrors {
 		group.Go(func() error { return m.Run(groupCtx) })

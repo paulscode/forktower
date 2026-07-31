@@ -1,0 +1,70 @@
+# Watchtowers you could register with, besides one you run yourself.
+#
+# **Registering with more than one is sensible, and it is cheap.** A watchtower
+# holds encrypted blobs it cannot read until the moment it needs them; it learns
+# nothing about your channels, your balances or your payments, and it costs it
+# almost nothing to hold them. So the reason to use several is the ordinary one:
+# a tower that is down when you need it is a tower that was not there.
+#
+# This list is a starting point, not an endorsement. Forktower does not run any
+# of these, cannot check who does, and cannot promise any of them will be
+# answering when it matters. Read the two sections at the bottom before using
+# one.
+#
+# Nothing here is read automatically. Registering is your action on your own
+# node — Forktower is only ever allowed to read from it — so this file is a list
+# of addresses to paste, and the dashboard shows you what happened afterwards.
+
+# ── For an LND node ───────────────────────────────────────────────────────────
+#
+#   lncli wtclient add <uri>
+#
+# Then check the dashboard: a tower that has been registered with but has agreed
+# no sessions is not yet protecting anything, and Forktower will say so.
+
+# [[lnd]]
+# name = ""
+# uri  = "<pubkey>@<host>:9911"
+# note = "who runs it, and anything worth knowing"
+
+# ── For a Core Lightning node ─────────────────────────────────────────────────
+#
+#   lightning-cli registertower <tower_id>@<host>:<port>
+#
+# Two things to check afterwards, both of which Forktower shows you:
+#
+#   * the subscription's expiry. A teos subscription lapses at a block height —
+#     about thirty days by default — and after that the tower stops accepting
+#     backups. **We did not set that number and cannot extend it**, because it
+#     belongs to whoever runs the tower. Forktower shows you the expiry you were
+#     given and warns before it arrives; renewing it means registering again.
+#   * how many appointment slots you were given, for the same reason.
+
+# [[teos]]
+# name = ""
+# uri  = "<tower_id>@<host>:9814"
+# note = "who runs it, and anything worth knowing"
+
+# ── What an external tower cannot do for you ──────────────────────────────────
+#
+# A watchtower punishes a revoked commitment. It does nothing about:
+#
+#   * states revoked *before* you registered with it — those are not covered by
+#     any tower, which is why registering early is worth more than registering
+#     with many;
+#   * a channel closed with its current state, honestly, by either side;
+#   * copying transactions between the two chains, which is a separate job.
+#
+# And it must be watching the right chain. A tower whose view is the chain your
+# own node already follows adds nothing during a split: the whole problem is the
+# chain nobody is looking at.
+
+# ── What Forktower cannot do about somebody else's tower ──────────────────────
+#
+# It can tell you what your own node knows: whether sessions exist, how many
+# states have gone across, at what fee rate, and — for a teos tower — when the
+# subscription runs out and whether it has misbehaved.
+#
+# It cannot restart one, change its settings, or find out why it stopped. If an
+# external tower goes quiet the remedy is to register with another, and that is
+# what the dashboard will say rather than implying somebody here can fix it.
