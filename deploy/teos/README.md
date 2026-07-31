@@ -56,6 +56,28 @@ mechanical form.
 5. Run it against a current Core Lightning. **Upstream's own CI last ran against
    v24.11.1**, so nobody else has checked this and nobody else will.
 
+## The plugin needs a CA bundle on the node, even over plain HTTP
+
+Found by running this against a live Core Lightning v25.09, and worth stating
+plainly because the failure gives no useful clue.
+
+The `watchtower-client` plugin builds its HTTP client eagerly at startup, and
+`reqwest` constructs a TLS stack whether or not any address it will ever talk to
+uses TLS. On a node image without `ca-certificates` installed, that panics:
+
+```
+thread 'tokio-runtime-worker' panicked at reqwest-0.11.27/.../client.rs:1713:38:
+Client::new(): reqwest::Error { kind: Builder, source: Normal(ErrorStack([])) }
+```
+
+The panic is on a worker thread, so the plugin does not die. It loads, reports
+"Plugin watchtower client initialized", starts its retry manager, logs
+"Registering in the Eye of Satoshi" — and then `registertower` **never returns**.
+Everything looks like it is working except the thing you asked for.
+
+Installing `ca-certificates` on the node fixes it immediately and registration
+succeeds. Core Lightning's own images do not all ship one.
+
 ## What we own
 
 Upstream's CI pins Core Lightning v24.11.1 and Bitcoin Core 27.0 — the last

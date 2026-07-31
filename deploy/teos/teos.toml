@@ -1,0 +1,60 @@
+# The Core Lightning watchtower, pointed at the other chain.
+#
+# Mounted into the tower's data directory by the `tower-teos` compose service.
+# teos reads `teos.toml` from its datadir and takes its defaults for anything
+# absent, so what is written here is what we deliberately differ on.
+
+# Where the tower accepts clients.
+#
+# **Never a wildcard.** A watchtower accepts a session from anyone who completes
+# the handshake, and each one costs disk on the same host as the Bitcoin node
+# the user depends on. teos binds to 127.0.0.1 by default, which is right; the
+# compose service reaches it over the private network, and anything beyond that
+# is a Tor hidden service or a deliberate LAN address.
+api_bind = "0.0.0.0"
+api_port = 9814
+
+# The private diagnostic interface, which is where the tower id, the appointment
+# counts and `bitcoind_reachable` live. Loopback only: it is not authenticated,
+# and Forktower does not read it.
+rpc_bind = "127.0.0.1"
+rpc_port = 8814
+internal_api_bind = "127.0.0.1"
+internal_api_port = 50051
+
+# The chain the tower watches: the branch the user's own node is *not*
+# following. teos has no light-client mode — it speaks to bitcoind over RPC —
+# so this arm genuinely does require a full node, unlike the LND tower.
+btc_network = "mainnet"
+btc_rpc_connect = "sq-bitcoind"
+btc_rpc_port = 8432
+btc_rpc_user = "forktower"
+# Set from the environment by the compose service. Left empty here so that a
+# password never sits in a file somebody might paste into a support thread.
+btc_rpc_password = ""
+
+# **Raised from the default of 4320 blocks, about thirty days.**
+#
+# This is the sharpest edge in the Core Lightning arm and it has no equivalent on
+# the LND side, where a session has no clock on it at all. A teos subscription
+# lapses at a block height, and after that the tower stops accepting appointments
+# — silently, as far as the node is concerned.
+#
+# The situation this whole project exists for is a chain split that may run for
+# weeks or months, during which the user has been told they are protected. A
+# thirty-day subscription registered the week before the fork lapses in the
+# middle of it. 52560 blocks is about a year at ordinary cadence, and longer on
+# a minority branch where blocks are further apart — which is the branch this
+# tower is watching.
+subscription_duration = 52560
+
+# Appointment slots per subscription. Raised from the default 10000 for the same
+# reason: a long split means a lot of channel updates, and running out is the
+# same failure as expiring.
+subscription_slots = 50000
+
+# Left at their defaults, and recorded here so that is visible rather than
+# implied:
+#   expiry_delta      = 6      blocks past expiry before an appointment is dropped
+#   min_to_self_delay = 20     the shortest CSV delay the tower will accept
+#   polling_delta     = 60     seconds between chain polls

@@ -340,6 +340,12 @@ type TowerInstance struct {
 	MacaroonPath string `toml:"macaroon_path"`
 	TLSCertPath  string `toml:"tls_cert_path"`
 
+	// Pubkey is a teos tower's identity, which teosd prints at startup as
+	// `tower_id:` and which the user needs anyway to register. Configured
+	// rather than discovered because teos keeps its identity in its own
+	// database and does not offer it over the API. Unused for LND, which
+	// reports its own.
+	Pubkey string `toml:"pubkey"`
 	// DataDir is the tower's storage, watched against MaxDiskMB. Empty means
 	// Forktower cannot see it and will say so rather than assume it is fine.
 	DataDir string `toml:"data_dir"`

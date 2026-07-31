@@ -153,6 +153,7 @@ func envBindings() []envBinding {
 		yesNo("TOWER_TEOS_ENABLED", func(c *Config, b bool) { c.Tower.TEOS.Enabled = b }),
 		str("TOWER_TEOS_LISTEN", func(c *Config, v string) { c.Tower.TEOS.Listen = v }),
 		str("TOWER_TEOS_API_URL", func(c *Config, v string) { c.Tower.TEOS.APIURL = v }),
+		str("TOWER_TEOS_PUBKEY", func(c *Config, v string) { c.Tower.TEOS.Pubkey = v }),
 		str("TOWER_TEOS_DATA_DIR", func(c *Config, v string) { c.Tower.TEOS.DataDir = v }),
 		num64("TOWER_TEOS_MAX_DISK_MB", func(c *Config, n int64) { c.Tower.TEOS.MaxDiskMB = n }),
 

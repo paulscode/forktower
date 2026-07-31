@@ -201,3 +201,79 @@ func TestEffectiveIncludeDetailDefaults(t *testing.T) {
 		}
 	}
 }
+
+// The companion towers are configured entirely from the environment in a
+// container deployment, so every one of their keys has to actually land.
+func TestTheTowerSettingsCanBeSetFromTheEnvironment(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		"FORKTOWER_TOWER_LND_ENABLED":       "true",
+		"FORKTOWER_TOWER_LND_LISTEN":        "abcdef.onion:9911",
+		"FORKTOWER_TOWER_LND_API_URL":       "https://tower-lnd:8080",
+		"FORKTOWER_TOWER_LND_MACAROON_PATH": "/mnt/tower/readonly.macaroon",
+		"FORKTOWER_TOWER_LND_TLS_CERT_PATH": "/mnt/tower/tls.cert",
+		"FORKTOWER_TOWER_LND_DATA_DIR":      "/mnt/tower",
+		"FORKTOWER_TOWER_LND_MAX_DISK_MB":   "4096",
+		"FORKTOWER_TOWER_TEOS_ENABLED":      "true",
+		"FORKTOWER_TOWER_TEOS_LISTEN":       "fedcba.onion:9814",
+		"FORKTOWER_TOWER_TEOS_API_URL":      "http://tower-teos:9814",
+		"FORKTOWER_TOWER_TEOS_PUBKEY":       "021d0a0474eb64a593fb3eba314059409bd353dd5eb847caf3d4361e28871bf593",
+		"FORKTOWER_TOWER_TEOS_DATA_DIR":     "/mnt/teos",
+		"FORKTOWER_TOWER_TEOS_MAX_DISK_MB":  "512",
+	}
+
+	cfg := Default()
+	if _, err := applyEnv(&cfg, func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !cfg.Tower.LND.Enabled || cfg.Tower.LND.APIURL != "https://tower-lnd:8080" ||
+		cfg.Tower.LND.MacaroonPath == "" || cfg.Tower.LND.MaxDiskMB != 4096 {
+		t.Errorf("the LND tower settings did not land: %+v", cfg.Tower.LND)
+	}
+	if !cfg.Tower.TEOS.Enabled || cfg.Tower.TEOS.Pubkey == "" ||
+		cfg.Tower.TEOS.DataDir != "/mnt/teos" || cfg.Tower.TEOS.MaxDiskMB != 512 {
+		t.Errorf("the teos tower settings did not land: %+v", cfg.Tower.TEOS)
+	}
+}
+
+// A platform injecting an empty string, or "on", meant something by it, and
+// reading either as false would switch a watchtower off in silence.
+func TestASwitchThatCannotBeReadIsRefusedRatherThanTakenAsOff(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"", "on", "yes", "1.5", "maybe"} {
+		cfg := Default()
+		_, err := applyEnv(&cfg, func(key string) (string, bool) {
+			if key == "FORKTOWER_TOWER_LND_ENABLED" {
+				return value, true
+			}
+			return "", false
+		})
+		if err == nil {
+			t.Errorf("%q was accepted as a yes-or-no setting", value)
+		}
+		if cfg.Tower.LND.Enabled {
+			t.Errorf("%q switched the tower on", value)
+		}
+	}
+
+	// And the forms that do mean something still work.
+	for _, value := range []string{"true", "TRUE", "1", "t", " true "} {
+		cfg := Default()
+		if _, err := applyEnv(&cfg, func(key string) (string, bool) {
+			if key == "FORKTOWER_TOWER_LND_ENABLED" {
+				return value, true
+			}
+			return "", false
+		}); err != nil {
+			t.Errorf("%q was refused: %v", value, err)
+		} else if !cfg.Tower.LND.Enabled {
+			t.Errorf("%q did not switch the tower on", value)
+		}
+	}
+}

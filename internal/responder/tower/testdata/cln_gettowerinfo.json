@@ -1,0 +1,10 @@
+{
+    "net_addr": "http://teos:9814",
+    "available_slots": 50000,
+    "subscription_start": 150,
+    "subscription_expiry": 52710,
+    "status": "reachable",
+    "appointments": {},
+    "pending_appointments": {},
+    "invalid_appointments": {}
+}

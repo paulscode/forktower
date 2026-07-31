@@ -14,6 +14,10 @@ name: forktower
 # does not start unless you ask for it:
 #
 #     docker compose --profile tower up -d
+#
+# That starts the LND watchtower. Core Lightning users want `--profile tower-cln`
+# instead, which starts teos — the two watchtower protocols do not interoperate,
+# so which one you need is decided by which node you run.
 
 services:
   forktower:
@@ -58,6 +62,18 @@ services:
       FORKTOWER_TOWER_LND_LISTEN: ${FORKTOWER_TOWER_LISTEN:-127.0.0.1:9911}
       FORKTOWER_TOWER_LND_MAX_DISK_MB: ${FORKTOWER_TOWER_MAX_DISK_MB:-2048}
 
+      # The Core Lightning watchtower. Off unless you started the `tower-cln`
+      # profile. The pubkey is what teosd prints at startup as `tower_id:` and
+      # is the same string you paste into `registertower` — teos keeps its
+      # identity in its own database and does not offer it over the API, so it
+      # has to be told to us.
+      FORKTOWER_TOWER_TEOS_ENABLED: ${FORKTOWER_TOWER_TEOS_ENABLED:-false}
+      FORKTOWER_TOWER_TEOS_API_URL: http://tower-teos:9814
+      FORKTOWER_TOWER_TEOS_PUBKEY: ${FORKTOWER_TOWER_TEOS_PUBKEY:-}
+      FORKTOWER_TOWER_TEOS_LISTEN: ${FORKTOWER_TOWER_TEOS_LISTEN:-127.0.0.1:9814}
+      FORKTOWER_TOWER_TEOS_DATA_DIR: /mnt/teos
+      FORKTOWER_TOWER_TEOS_MAX_DISK_MB: ${FORKTOWER_TOWER_TEOS_MAX_DISK_MB:-2048}
+
       FORKTOWER_LOG_LEVEL: ${FORKTOWER_LOG_LEVEL:-info}
     ports:
       # This machine only, by default. Reaching the dashboard from elsewhere
@@ -73,6 +89,7 @@ services:
       # because there is nothing here it has any business changing, and the
       # macaroon it picks up is the tower's *read-only* one.
       - tower-data:/mnt/tower:ro
+      - teos-data:/mnt/teos:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/forktowerd", "--version"]
       interval: 30s
@@ -178,7 +195,50 @@ services:
       retries: 30
       start_period: 120s
 
+  # The Core Lightning watchtower. Same job as tower-lnd and a different
+  # protocol: teos speaks the BOLT13 draft and LND's tower speaks its own, and
+  # they do not interoperate. A Core Lightning node can register with this and
+  # nothing else.
+  #
+  # Built from the copy of rust-teos vendored in this repository rather than
+  # pulled from a registry — see deploy/teos/README.md for why that copy exists.
+  tower-teos:
+    build:
+      context: ../..
+      dockerfile: deploy/teos/Dockerfile
+    image: ${FORKTOWER_TEOS_IMAGE:-forktower/teos:local}
+    profiles: ["tower-cln"]
+    restart: unless-stopped
+    depends_on:
+      sq-bitcoind:
+        condition: service_healthy
+    environment:
+      # teos reads its password from the config file, which is mounted read-only
+      # and deliberately holds an empty one. The entrypoint below substitutes it,
+      # so the secret lives in the environment rather than in a file somebody
+      # might paste into a support thread.
+      TEOS_BTC_RPC_PASSWORD: ${FORKTOWER_SQ_RPC_PASSWORD:-forktower-local}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        sed "s|^btc_rpc_password = \"\"|btc_rpc_password = \"$$TEOS_BTC_RPC_PASSWORD\"|"
+        /etc/teos/teos.toml > /data/teos.toml &&
+        exec /usr/local/bin/teosd --datadir /data
+    volumes:
+      - teos-data:/data
+      - ../teos/teos.toml:/etc/teos/teos.toml:ro
+    healthcheck:
+      # The tower's own public API. The only thing it can be asked without
+      # credentials, and the only liveness signal there is: everything
+      # diagnostic lives on the private interface, which stays on loopback.
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:9814/ping >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+
 volumes:
   forktower-data:
   sq-data:
   tower-data:
+  teos-data:

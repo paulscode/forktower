@@ -23,6 +23,7 @@ func (a *App) buildWardens(cfg config.Config, log *slog.Logger, now func() time.
 		conf config.TowerInstance
 	}{
 		{store.TowerLND, cfg.Tower.LND},
+		{store.TowerTeos, cfg.Tower.TEOS},
 	}
 
 	for _, inst := range instances {
@@ -47,11 +48,7 @@ func (a *App) buildWarden(
 	kind store.TowerKind, conf config.TowerInstance, cfg config.Config,
 	log *slog.Logger, now func() time.Time,
 ) (*tower.Warden, error) {
-	reader, err := tower.NewLND(tower.LNDOptions{
-		BaseURL:      conf.APIURL,
-		TLSCertPath:  conf.TLSCertPath,
-		MacaroonPath: conf.MacaroonPath,
-	})
+	reader, err := towerReader(kind, conf)
 	if err != nil {
 		return nil, err
 	}
@@ -72,9 +69,10 @@ func (a *App) buildWarden(
 		Log:        log.With(slog.String("component", "tower")),
 		Supervisor: supervisor,
 		// The user's own node, which is where the evidence about what is actually
-		// being backed up lives. Nil when they have none configured: the tower is
-		// still watched, but nothing can be said about what it protects.
-		Client:  a.towerClient(cfg, log),
+		// being backed up lives. Nil when they have none configured, or when the
+		// tower is a teos one: the LND coverage check reads sessions that a Core
+		// Lightning node does not have. The tower is still watched either way.
+		Client:  a.towerClient(kind, cfg, log),
 		Kind:    kind,
 		Managed: true,
 		URI:     conf.Listen,
@@ -89,7 +87,12 @@ func (a *App) buildWarden(
 // about a first node's sessions would produce a confident answer about the wrong
 // thing. Returns nil when there is no LND to ask — a Core Lightning user has
 // their own tower arm, and a user with no node at all has nothing to protect.
-func (a *App) towerClient(cfg config.Config, log *slog.Logger) tower.ClientReader {
+func (a *App) towerClient(
+	kind store.TowerKind, cfg config.Config, log *slog.Logger,
+) tower.ClientReader {
+	if kind != store.TowerLND {
+		return nil
+	}
 	for _, node := range cfg.LN.LND {
 		client, err := tower.NewLND(tower.LNDOptions{
 			BaseURL:      node.RESTAddr,
@@ -108,4 +111,29 @@ func (a *App) towerClient(cfg config.Config, log *slog.Logger) tower.ClientReade
 		return client
 	}
 	return nil
+}
+
+// towerReader builds the right way of reading a tower for its kind.
+//
+// The two are not variations of one thing. An LND tower answers a rich
+// diagnostic API with a read-only macaroon; a teos tower offers a single
+// unauthenticated liveness endpoint and keeps everything else on a private
+// interface. What can honestly be said about each differs, and the readers say
+// so rather than pretending to a common shape.
+func towerReader(kind store.TowerKind, conf config.TowerInstance) (tower.Reader, error) {
+	switch kind {
+	case store.TowerLND:
+		return tower.NewLND(tower.LNDOptions{
+			BaseURL:      conf.APIURL,
+			TLSCertPath:  conf.TLSCertPath,
+			MacaroonPath: conf.MacaroonPath,
+		})
+	case store.TowerTeos:
+		return tower.NewTeos(tower.TeosOptions{
+			APIURL: conf.APIURL,
+			Pubkey: conf.Pubkey,
+		})
+	default:
+		return nil, fmt.Errorf("%q is not a watchtower kind", kind)
+	}
 }

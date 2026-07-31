@@ -119,7 +119,12 @@ max_disk_mb = 2048                    # a cap LND does not impose on itself
 [tower.teos]
 enabled = false
 listen = ""
-api_url = ""
+api_url = ""                          # e.g. http://tower-teos:9814
+pubkey = ""                           # the tower_id teosd prints at startup;
+                                      # the same string you paste into
+                                      # `registertower`. teos keeps its identity
+                                      # in its own database and does not offer
+                                      # it over the API, so it has to be told.
 data_dir = ""
 max_disk_mb = 2048
 
