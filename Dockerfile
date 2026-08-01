@@ -86,10 +86,29 @@ FROM debian:bookworm-slim
 ARG S6_OVERLAY_VERSION=3.2.0.2
 ARG TARGETARCH
 
+# jq and yq are for the StartOS 0.3.5.1 half: that version's settings screen
+# writes YAML into the data volume, and its health checks are shell scripts the
+# platform runs and reads JSON back from.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl xz-utils tor \
+      ca-certificates curl xz-utils tor jq \
  && rm -rf /var/lib/apt/lists/*
+
+ARG YQ_VERSION=4.44.3
+ARG YQ_SHA256_X86_64=a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
+ARG YQ_SHA256_AARCH64=0e7e1524f68d91b3ff9b089872d185940ab0fa020a5a9052046ef10547023156
+ARG TARGETARCH
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) yqarch=amd64 ; yqsha="${YQ_SHA256_X86_64}"  ;; \
+      arm64) yqarch=arm64 ; yqsha="${YQ_SHA256_AARCH64}" ;; \
+      *) echo "no yq build for ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 \
+      "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${yqarch}" \
+      -o /usr/local/bin/yq; \
+    echo "${yqsha}  /usr/local/bin/yq" | sha256sum -c -; \
+    chmod +x /usr/local/bin/yq
 
 # s6-overlay supervises the co-resident processes in all-in-one mode. Verified
 # against checksums committed here for the same reason as Bitcoin Core: a
@@ -126,9 +145,18 @@ COPY docker_entrypoint_040.sh /usr/local/bin/docker_entrypoint_040.sh
 # different Bitcoin apps with two different variable prefixes — into the names
 # the shared renderer expects.
 COPY docker_entrypoint_umbrel.sh /usr/local/bin/docker_entrypoint_umbrel.sh
+# The StartOS 0.3.5.1 entrypoint and its health checks. That version runs one
+# image with no per-process daemons, so s6 supervises and the platform asks these
+# scripts how things are going.
+COPY docker_entrypoint_0351.sh /usr/local/bin/docker_entrypoint_0351.sh
+COPY check-dashboard.sh /usr/local/bin/check-dashboard.sh
+COPY check-chains.sh /usr/local/bin/check-chains.sh
 RUN chmod +x /usr/local/bin/docker_entrypoint.sh \
              /usr/local/bin/docker_entrypoint_040.sh \
              /usr/local/bin/docker_entrypoint_umbrel.sh \
+             /usr/local/bin/docker_entrypoint_0351.sh \
+             /usr/local/bin/check-dashboard.sh \
+             /usr/local/bin/check-chains.sh \
  && find /etc/s6-overlay -type f -name run -exec chmod +x {} + \
  && find /etc/s6-overlay/scripts -type f -exec chmod +x {} + 2>/dev/null || true
 

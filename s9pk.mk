@@ -115,6 +115,62 @@ $(PKG_ID)-040-aarch64.s9pk: javascript/index.js Dockerfile
 	@printf '  packed %s\n' "$@"
 
 
+# ── StartOS 0.3.5.1 ───────────────────────────────────────────────────────────
+#
+# The older format: a YAML manifest, Deno procedures bundled into one file, and
+# per-architecture image tars packed by start-sdk. Kept because pre-fork reach is
+# the product — the people this is for are running whatever they are running, and
+# telling half of them to upgrade their server first is telling them no.
+#
+# **s6 supervises the processes on this version.** It runs exactly one image and
+# has no equivalent of 0.4.x's per-process daemons, so the shared entrypoint's
+# all-in-one mode is not a fallback here, it is the only shape available.
+
+PKG_VERSION := $(shell yq e '.version' manifest.yaml 2>/dev/null)
+
+.PHONY: 0351 0351-x86_64 0351-aarch64 _pack-0351 check-0351
+
+check-0351:
+	@test -f manifest.yaml || { printf '  manifest.yaml not found\n' >&2; exit 1; }
+	@command -v deno >/dev/null || { printf '  deno is needed to bundle the 0.3.5.1 procedures\n' >&2; exit 1; }
+	@command -v start-sdk >/dev/null || { printf '  start-sdk is needed to pack a 0.3.5.1 s9pk\n' >&2; exit 1; }
+	@command -v yq >/dev/null || { printf '  yq is needed to read manifest.yaml\n' >&2; exit 1; }
+	@test -n "$(PKG_VERSION)" || { printf '  could not read .version from manifest.yaml\n' >&2; exit 1; }
+
+scripts/embassy.js: scripts/embassy.ts scripts/deps.ts $(wildcard scripts/procedures/*.ts)
+	deno run --allow-read --allow-write --allow-env --allow-net scripts/bundle.ts
+
+## 0351: the StartOS 0.3.5.1 package, both architectures
+0351: check-0351
+	rm -rf docker-images && mkdir -p docker-images
+	docker buildx build --tag start9/$(PKG_ID)/main:$(PKG_VERSION) \
+	  --build-arg VERSION=$(PKG_VERSION) \
+	  --platform=linux/amd64 -o type=docker,dest=docker-images/x86_64.tar .
+	docker buildx build --tag start9/$(PKG_ID)/main:$(PKG_VERSION) \
+	  --build-arg VERSION=$(PKG_VERSION) \
+	  --platform=linux/arm64 -o type=docker,dest=docker-images/aarch64.tar .
+	$(MAKE) _pack-0351 SUFFIX=
+
+0351-x86_64: check-0351
+	rm -rf docker-images && mkdir -p docker-images
+	docker buildx build --tag start9/$(PKG_ID)/main:$(PKG_VERSION) \
+	  --build-arg VERSION=$(PKG_VERSION) \
+	  --platform=linux/amd64 -o type=docker,dest=docker-images/x86_64.tar .
+	$(MAKE) _pack-0351 SUFFIX=-x86_64
+
+0351-aarch64: check-0351
+	rm -rf docker-images && mkdir -p docker-images
+	docker buildx build --tag start9/$(PKG_ID)/main:$(PKG_VERSION) \
+	  --build-arg VERSION=$(PKG_VERSION) \
+	  --platform=linux/arm64 -o type=docker,dest=docker-images/aarch64.tar .
+	$(MAKE) _pack-0351 SUFFIX=-aarch64
+
+# Internal: bundle the procedures and pack whatever tars are in docker-images.
+_pack-0351: scripts/embassy.js
+	start-sdk pack
+	mv $(PKG_ID).s9pk $(PKG_ID)-0351$(SUFFIX).s9pk
+	@printf '  packed %s-0351%s.s9pk\n' "$(PKG_ID)" "$(SUFFIX)"
+
 # ── Umbrel ────────────────────────────────────────────────────────────────────
 #
 # The app definition lives here so that it versions with the code that has to
