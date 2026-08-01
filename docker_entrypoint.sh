@@ -279,12 +279,19 @@ write_forktower_conf() {
     printf '\n[log]\n'
     printf 'level = "%s"\n' "${FORKTOWER_LOG_LEVEL:-info}"
 
-    # On StartOS and Umbrel the platform raises the alerts itself, by reading
-    # this daemon's API: neither exposes its notification system to an app
-    # container, so the daemon cannot push to it. Saying so here is what stops
-    # the dashboard telling a platform user it has no way to reach them.
+    # StartOS raises the alerts itself, by reading this daemon's API: an app
+    # container has no path to the notification system, so the daemon cannot
+    # push to it and the packaging polls instead. Saying so here is what stops
+    # the dashboard telling a StartOS user it has no way to reach them.
+    #
+    # **Umbrel is deliberately not in this list.** It exposes nothing
+    # notification-shaped to an app, so there is no wrapper to poll from and no
+    # notification centre to raise anything in. Claiming otherwise would silence
+    # the readiness item that exists to tell an Umbrel user to set up ntfy, a
+    # webhook or email — and an alarm nobody can hear, reported as working, is
+    # worse than no alarm at all.
     case "${FORKTOWER_PLATFORM:-}" in
-      startos|umbrel)
+      startos)
         printf '\n[alerts]\n'
         printf 'platform_notifications = true\n'
         ;;

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="Pickhash" width="480">
+</p>
+
 # Forktower
 
 **Protects Lightning channels during a chain split.**

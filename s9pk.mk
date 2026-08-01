@@ -18,7 +18,7 @@ PLATFORMS     ?= linux/amd64,linux/arm64
 # rules, so the second node follows the status-quo chain by construction.
 BITCOIN_VERSION ?= 28.0
 
-.PHONY: image image-push image-check 040 040-x86_64 040-aarch64 check-node
+.PHONY: image image-dev image-push image-check 040 040-x86_64 040-aarch64 check-node
 
 ## image: build the container image for this machine's architecture
 image:
@@ -29,6 +29,23 @@ image:
 	  -t $(IMAGE_NAME):latest \
 	  .
 	@printf '  built %s\n' "$(IMAGE)"
+
+## image-dev: build and push the moving tag used while testing on Umbrel
+#
+# A tag rather than a digest, on purpose. umbreld pulls every image in an app's
+# compose file on install and on update, and a tag is re-checked against the
+# registry each time — so a rebuild is picked up without bumping the app's
+# version. The published app pins a digest instead; the trade is written down
+# next to the image line in deploy/umbrel/docker-compose.yml.
+image-dev:
+	docker buildx build \
+	  --platform $(PLATFORMS) \
+	  --build-arg VERSION=$(VERSION) \
+	  --build-arg BITCOIN_VERSION=$(BITCOIN_VERSION) \
+	  -t $(IMAGE_NAME):dev \
+	  --push \
+	  .
+	@printf '  pushed %s:dev\n' "$(IMAGE_NAME)"
 
 ## image-push: build for both architectures and push
 #
@@ -96,3 +113,34 @@ $(PKG_ID)-040-x86_64.s9pk: javascript/index.js Dockerfile
 $(PKG_ID)-040-aarch64.s9pk: javascript/index.js Dockerfile
 	start-cli s9pk pack --icon icon.svg --arch=aarch64 -o $@
 	@printf '  packed %s\n' "$@"
+
+
+# ── Umbrel ────────────────────────────────────────────────────────────────────
+#
+# The app definition lives here so that it versions with the code that has to
+# agree with it; the store repository holds the copy Umbrel actually reads. This
+# target copies one to the other, so the two cannot drift silently — which is the
+# failure mode of keeping a definition in two places.
+
+UMBREL_STORE ?= $(HOME)/workspace/umbrel-store
+UMBREL_APP   := $(UMBREL_STORE)/paulscode-forktower
+
+.PHONY: umbrel-sync umbrel-check
+
+## umbrel-sync: copy deploy/umbrel/ into the community store checkout
+umbrel-sync: umbrel-check
+	@mkdir -p "$(UMBREL_APP)"
+	@cp deploy/umbrel/umbrel-app.yml \
+	    deploy/umbrel/docker-compose.yml \
+	    deploy/umbrel/exports.sh \
+	    deploy/umbrel/icon.png \
+	    deploy/umbrel/icon.svg \
+	    "$(UMBREL_APP)/"
+	@chmod +x "$(UMBREL_APP)/exports.sh"
+	@printf '  synced deploy/umbrel/ -> %s\n' "$(UMBREL_APP)"
+	@printf '  the store repo is a separate checkout: commit and push it there\n'
+
+umbrel-check:
+	@test -d "$(UMBREL_STORE)" || { \
+	  printf '  no store checkout at %s — set UMBREL_STORE\n' "$(UMBREL_STORE)" >&2; \
+	  exit 1; }

@@ -122,7 +122,13 @@ COPY docker_entrypoint.sh /usr/local/bin/docker_entrypoint.sh
 # The StartOS 0.4.x entrypoint, which renders the configuration and stops —
 # there the package's own supervisor starts the processes, so s6 never runs.
 COPY docker_entrypoint_040.sh /usr/local/bin/docker_entrypoint_040.sh
-RUN chmod +x /usr/local/bin/docker_entrypoint.sh /usr/local/bin/docker_entrypoint_040.sh \
+# The Umbrel entrypoint, which translates that platform's environment — two
+# different Bitcoin apps with two different variable prefixes — into the names
+# the shared renderer expects.
+COPY docker_entrypoint_umbrel.sh /usr/local/bin/docker_entrypoint_umbrel.sh
+RUN chmod +x /usr/local/bin/docker_entrypoint.sh \
+             /usr/local/bin/docker_entrypoint_040.sh \
+             /usr/local/bin/docker_entrypoint_umbrel.sh \
  && find /etc/s6-overlay -type f -name run -exec chmod +x {} + \
  && find /etc/s6-overlay/scripts -type f -exec chmod +x {} + 2>/dev/null || true
 
@@ -135,7 +141,8 @@ RUN chmod +x /usr/local/bin/docker_entrypoint.sh /usr/local/bin/docker_entrypoin
 # `/mnt/lnd` is used only by the short-lived container that copies the Lightning
 # credentials out, never by the daemon — the LND volume also holds the wallet
 # seed in plain text.
-RUN mkdir -p /mnt/bitcoind /mnt/lnd
+RUN mkdir -p /mnt/bitcoind /mnt/lnd \
+ && touch /mnt/lnd/tls.cert /mnt/lnd/readonly.macaroon
 
 # Runs as a non-root user. Nothing here needs root, and a Bitcoin node that does
 # is a Bitcoin node whose bugs are worth more to somebody.
