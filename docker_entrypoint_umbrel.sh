@@ -6,17 +6,15 @@
 # in docker_entrypoint.sh, which every deployment runs. What this adds is the
 # translation from Umbrel's environment to the names that renderer expects.
 #
-# **Umbrel exports a different prefix per Bitcoin app**, and which one a user has
-# is exactly the thing Forktower must not assume. The official app exports
-# `APP_BITCOIN_*`; Bitcoin Knots exports `APP_BITCOIN_KNOTS_*` under the app id
-# `bitcoin-knots`. Requiring one of them in `umbrel-app.yml` would exclude the
-# other, and both are real audiences here — a Knots user is enforcing the new
-# rules whether or not they chose to, and a Core user is on the status-quo side
-# and equally wants to see the chain they are blind to. So the compose file
-# passes whatever exists and this picks.
+# **Umbrel exports a different prefix per Bitcoin app.** The official app exports
+# `APP_BITCOIN_*`; Bitcoin Knots exports `APP_BITCOIN_KNOTS_*` and mirrors every
+# one of them back onto `APP_BITCOIN_*` at the end of its own exports. The app
+# declares a dependency on `bitcoin`, which Knots satisfies by declaring
+# `implements: [bitcoin]` — so the generic prefix is the one to trust, and the
+# Knots-specific one is a fallback in case that mirroring ever stops.
 #
-# Same for the Lightning node, which is genuinely optional: Forktower watches
-# both chains with no Lightning node at all.
+# The Lightning node is genuinely optional: Forktower watches both chains with no
+# Lightning node at all.
 
 set -eu
 
@@ -24,10 +22,19 @@ log() { printf '%s\n' "$*" >&2; }
 
 # ── The user's own Bitcoin node ───────────────────────────────────────────────
 #
-# Knots first. Not a preference between the two implementations — if a user has
-# both installed, Knots is the one whose rules changed, so it is the one whose
-# view of the chain is worth comparing against the other side.
-if [ -n "${UMBREL_KNOTS_IP:-}" ]; then
+# The generic prefix first, because the declared dependency guarantees it and
+# Knots mirrors its own values onto it. The Knots-specific prefix is only reached
+# if that mirroring is ever dropped, and it exists so that would be a warning in
+# the log rather than an app that cannot find a node.
+if [ -n "${UMBREL_CORE_IP:-}" ]; then
+  SF_IP="${UMBREL_CORE_IP}"
+  SF_RPC_PORT="${UMBREL_CORE_RPC_PORT:-8332}"
+  SF_RPC_USER="${UMBREL_CORE_RPC_USER:-}"
+  SF_RPC_PASS="${UMBREL_CORE_RPC_PASS:-}"
+  SF_ZMQ_RAWBLOCK_PORT="${UMBREL_CORE_ZMQ_RAWBLOCK_PORT:-}"
+  SF_ZMQ_RAWTX_PORT="${UMBREL_CORE_ZMQ_RAWTX_PORT:-}"
+  SF_WHICH="your Bitcoin node"
+elif [ -n "${UMBREL_KNOTS_IP:-}" ]; then
   SF_IP="${UMBREL_KNOTS_IP}"
   SF_RPC_PORT="${UMBREL_KNOTS_RPC_PORT:-8332}"
   SF_RPC_USER="${UMBREL_KNOTS_RPC_USER:-}"
@@ -35,14 +42,6 @@ if [ -n "${UMBREL_KNOTS_IP:-}" ]; then
   SF_ZMQ_RAWBLOCK_PORT="${UMBREL_KNOTS_ZMQ_RAWBLOCK_PORT:-}"
   SF_ZMQ_RAWTX_PORT="${UMBREL_KNOTS_ZMQ_RAWTX_PORT:-}"
   SF_WHICH="Bitcoin Knots"
-elif [ -n "${UMBREL_CORE_IP:-}" ]; then
-  SF_IP="${UMBREL_CORE_IP}"
-  SF_RPC_PORT="${UMBREL_CORE_RPC_PORT:-8332}"
-  SF_RPC_USER="${UMBREL_CORE_RPC_USER:-}"
-  SF_RPC_PASS="${UMBREL_CORE_RPC_PASS:-}"
-  SF_ZMQ_RAWBLOCK_PORT="${UMBREL_CORE_ZMQ_RAWBLOCK_PORT:-}"
-  SF_ZMQ_RAWTX_PORT="${UMBREL_CORE_ZMQ_RAWTX_PORT:-}"
-  SF_WHICH="Bitcoin Core"
 else
   log "Forktower cannot start: no Bitcoin node was found on this Umbrel."
   log ""
