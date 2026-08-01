@@ -23,7 +23,11 @@ SOURCE="references/icon.png"
 
 # name:size — the size is what the consumer needs, and the comment says who.
 PNG_OUTPUTS=(
-  "icon.png:192"                # StartOS 0.3.5.1 manifest assets.icon
+  # 256, and it has to be: StartOS 0.4.x's packer derives an .ico from this and
+  # fails with "cannot filter out unhashed file icon.ico" at any other size —
+  # an error that says nothing about icons. 0.3.5.1 is happy with 256 too, so
+  # one file serves both.
+  "icon.png:256"                # StartOS manifest assets.icon, both versions
   "web/favicon.png:32"          # dashboard favicon
   "web/logo.png:192"            # dashboard header
   "deploy/umbrel/icon.png:192"  # Umbrel store listing fallback

@@ -29,6 +29,18 @@ die() {
   exit 1
 }
 
+# ── Rendering without starting ────────────────────────────────────────────────
+#
+# StartOS 0.4.x supervises each process itself rather than through s6, so it
+# needs the configuration written and then wants the entrypoint to get out of the
+# way. Same renderer, no handover — one settings path for three deployments,
+# which is what stops a configuration bug from being platform-specific.
+RENDER_ONLY=0
+if [ "${1:-}" = "--render-only" ]; then
+  RENDER_ONLY=1
+  shift
+fi
+
 # ── Asking the image a question ───────────────────────────────────────────────
 #
 # `docker run <image> --version` and the like have to work without a
@@ -233,6 +245,34 @@ write_forktower_conf() {
     [ -n "${FORKTOWER_UI_PASSWORD_HASH:-}" ] && \
       printf 'password_hash = "%s"\n' "${FORKTOWER_UI_PASSWORD_HASH}"
 
+    # ── The Lightning node, if there is one ────────────────────────────────
+    #
+    # Optional, and honestly so: Forktower watches both chains with no Lightning
+    # node at all. What a node adds is the ability to say *which of your
+    # channels* a split would expose, which is the difference between knowing a
+    # split happened and knowing what it means for you.
+    #
+    # Credentials are given as paths, never as the credential itself. And the
+    # credential to give is the read-only one the node already wrote for itself:
+    # nothing here needs, or will accept the responsibility of holding, anything
+    # that can move money.
+    if [ -n "${FORKTOWER_LND_REST_URL:-}" ]; then
+      printf '\n[[ln.lnd]]\n'
+      printf 'rest_addr = "%s"\n' "${FORKTOWER_LND_REST_URL}"
+      [ -n "${FORKTOWER_LND_TLS_PATH:-}" ] && \
+        printf 'tls_cert_path = "%s"\n' "${FORKTOWER_LND_TLS_PATH}"
+      [ -n "${FORKTOWER_LND_MACAROON_PATH:-}" ] && \
+        printf 'macaroon_path = "%s"\n' "${FORKTOWER_LND_MACAROON_PATH}"
+    fi
+    if [ -n "${FORKTOWER_CLN_REST_URL:-}" ]; then
+      printf '\n[[ln.cln]]\n'
+      printf 'rest_addr = "%s"\n' "${FORKTOWER_CLN_REST_URL}"
+      [ -n "${FORKTOWER_CLN_RUNE_PATH:-}" ] && \
+        printf 'rune_path = "%s"\n' "${FORKTOWER_CLN_RUNE_PATH}"
+      [ -n "${FORKTOWER_CLN_TLS_PATH:-}" ] && \
+        printf 'tls_cert_path = "%s"\n' "${FORKTOWER_CLN_TLS_PATH}"
+    fi
+
     printf '\n[store]\n'
     printf 'path = "%s/forktower.db"\n' "${DATA_DIR}"
 
@@ -296,6 +336,11 @@ fi
 write_forktower_conf
 
 chown -R forktower:forktower "${DATA_DIR}" 2>/dev/null || true
+
+if [ "${RENDER_ONLY}" = "1" ]; then
+  log "Forktower configuration written (platform ${FORKTOWER_PLATFORM:-unspecified}, ${SQ_MODE})"
+  exit 0
+fi
 
 log "Forktower starting (platform ${FORKTOWER_PLATFORM:-unspecified}, ${SQ_MODE})"
 

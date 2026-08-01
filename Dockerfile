@@ -15,8 +15,16 @@
 # the image is the same either way, so what is tested in one is tested in both.
 
 # ── The daemon ────────────────────────────────────────────────────────────────
-FROM golang:1.26-bookworm AS build
+#
+# Built on the *build* machine's architecture and cross-compiled to the target,
+# rather than run under emulation. Go cross-compiles natively and cgo is off
+# here, so this costs nothing and avoids a great deal: the Go toolchain running
+# under qemu-user deadlocks partway through linking — the build sits at 0.2% CPU
+# with a defunct compiler behind it and never finishes, which reads as "slow"
+# for the first hour.
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
 
+ARG TARGETARCH
 WORKDIR /src
 
 # Dependencies first, so a change to the code does not re-download the module
@@ -30,7 +38,7 @@ ARG VERSION=dev
 # Static, and reproducible as far as the toolchain allows: no cgo (the SQLite
 # driver is pure Go, so this costs nothing), trimmed paths, no build id. A user's
 # only independent check on a published binary is rebuilding it and comparing.
-RUN CGO_ENABLED=0 go build \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
       -trimpath \
       -ldflags "-s -w -buildid= -X main.version=${VERSION}" \
       -o /out/forktowerd ./cmd/forktowerd
@@ -41,7 +49,10 @@ RUN CGO_ENABLED=0 go build \
 # construction rather than by configuration. Pinned, and verified against a
 # checksum committed here rather than one fetched alongside the download: a
 # checksum an attacker can replace with the file is not a check.
-FROM debian:bookworm-slim AS bitcoin
+# Also built on the build machine: this stage downloads and unpacks a tarball
+# chosen by TARGETARCH and never runs anything from it, so emulating it would buy
+# nothing and cost minutes.
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS bitcoin
 
 ARG BITCOIN_VERSION=28.0
 ARG BITCOIN_SHA256_X86_64=7fe294b02b25b51acb8e8e0a0eb5af6bbafa7cd0c5b0e5fcbb61263104a82fbc
@@ -108,7 +119,10 @@ COPY --from=bitcoin /out/bitcoin-cli /usr/local/bin/bitcoin-cli
 COPY rootfs/ /
 COPY deploy/compose/sq-anchors.txt /usr/share/forktower/sq-anchors.txt
 COPY docker_entrypoint.sh /usr/local/bin/docker_entrypoint.sh
-RUN chmod +x /usr/local/bin/docker_entrypoint.sh \
+# The StartOS 0.4.x entrypoint, which renders the configuration and stops —
+# there the package's own supervisor starts the processes, so s6 never runs.
+COPY docker_entrypoint_040.sh /usr/local/bin/docker_entrypoint_040.sh
+RUN chmod +x /usr/local/bin/docker_entrypoint.sh /usr/local/bin/docker_entrypoint_040.sh \
  && find /etc/s6-overlay -type f -name run -exec chmod +x {} + \
  && find /etc/s6-overlay/scripts -type f -exec chmod +x {} + 2>/dev/null || true
 
