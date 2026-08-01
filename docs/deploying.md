@@ -86,16 +86,28 @@ your node's REST address, its certificate, and a credential. Both kinds of node
 are supported, and you can list more than one of each.
 
 Forktower only ever reads. It never sends your node an instruction, and there is
-no code in it that could. Give it the narrowest credential you can:
+no code in it that could. So give it a credential that cannot do more than read.
+
+**You almost certainly already have one.** LND writes `readonly.macaroon` next to
+`admin.macaroon` when it creates the wallet, and it covers everything Forktower
+asks for:
+
+```
+~/.lnd/data/chain/bitcoin/mainnet/readonly.macaroon
+```
+
+Point the `macaroon_path` at that and you are done. It grants read on rather more
+than Forktower needs — every read permission LND has — so if you would rather
+hand over the four it actually uses:
 
 ```
 lncli bakemacaroon info:read offchain:read onchain:read peers:read
 ```
 
-or, for Core Lightning, a rune restricted to `getinfo` and `listpeerchannels`.
+For Core Lightning, a rune restricted to `getinfo` and `listpeerchannels`.
 
-If you give it a wider credential it will work anyway and say so on the
-dashboard, rather than refusing — being watched with more authority than
+Either works. If you give it a wider credential it will work anyway and say so on
+the dashboard, rather than refusing — being watched with more authority than
 necessary beats not being watched. Credentials are given as *file paths*, never
 pasted into the configuration file itself: a secret in a config file is a secret
 that ends up in a support thread.
