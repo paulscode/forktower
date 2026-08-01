@@ -126,6 +126,17 @@ RUN chmod +x /usr/local/bin/docker_entrypoint.sh /usr/local/bin/docker_entrypoin
  && find /etc/s6-overlay -type f -name run -exec chmod +x {} + \
  && find /etc/s6-overlay/scripts -type f -exec chmod +x {} + 2>/dev/null || true
 
+# The mount points the platform binds onto.
+#
+# **They have to exist in the image.** StartOS does not create a mount point: a
+# bind mount onto a path that is not there fails with `mount exited with exit
+# status: 32`, which names neither the path nor the reason.
+#
+# `/mnt/lnd` is used only by the short-lived container that copies the Lightning
+# credentials out, never by the daemon — the LND volume also holds the wallet
+# seed in plain text.
+RUN mkdir -p /mnt/bitcoind /mnt/lnd
+
 # Runs as a non-root user. Nothing here needs root, and a Bitcoin node that does
 # is a Bitcoin node whose bugs are worth more to somebody.
 RUN useradd --system --create-home --home-dir /home/forktower forktower \

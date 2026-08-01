@@ -147,8 +147,9 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 		return nil, fmt.Errorf("setting up notifications: %w", err)
 	}
 	a.alerter, err = alert.New(st, a.bus, routes, alert.Config{
-		CriticalRepeat:   time.Duration(cfg.Alerts.CriticalRepeatMins) * time.Minute,
-		SelfTestInterval: time.Duration(cfg.Alerts.SelfTestIntervalHours) * time.Hour,
+		CriticalRepeat:        time.Duration(cfg.Alerts.CriticalRepeatMins) * time.Minute,
+		SelfTestInterval:      time.Duration(cfg.Alerts.SelfTestIntervalHours) * time.Hour,
+		PlatformNotifications: cfg.Alerts.PlatformNotifications,
 	}, log.With(slog.String("component", "alerts")), now)
 	if err != nil {
 		a.closeOnFailure()

@@ -1,13 +1,16 @@
 package alert
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -593,4 +596,53 @@ func countKindRows(alerts []store.Alert, kind string) int {
 		}
 	}
 	return n
+}
+
+// A platform install has no transports of its own, and that is the arrangement
+// rather than a gap.
+//
+// On StartOS and Umbrel the platform reads this daemon's alerts and raises them
+// itself, because an app container has no path to the notification system.
+// Warning "alerts will only appear in the dashboard" there is false, and sends a
+// user looking for a problem they do not have.
+func TestNoTransportsIsNotAComplaintWhenThePlatformRaisesThem(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name        string
+		platform    bool
+		wantWarn    bool
+		mustContain string
+	}{
+		{
+			name: "nobody is listening", platform: false, wantWarn: true,
+			mustContain: "only appear in the dashboard",
+		},
+		{
+			name: "the platform is listening", platform: true, wantWarn: false,
+			mustContain: "platform's own notification centre",
+		},
+	} {
+		var buf bytes.Buffer
+		log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+		st := openTempStore(t)
+		b := bus.New(nil)
+		t.Cleanup(b.Close)
+
+		_, err := New(st, b, nil, Config{PlatformNotifications: tc.platform}, log,
+			func() time.Time { return time.Unix(1_790_000_000, 0) })
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+
+		got := buf.String()
+		if strings.Contains(got, "level=WARN") != tc.wantWarn {
+			t.Errorf("%s: warned = %v, want %v\n%s",
+				tc.name, !tc.wantWarn, tc.wantWarn, got)
+		}
+		if !strings.Contains(got, tc.mustContain) {
+			t.Errorf("%s: log does not say %q\n%s", tc.name, tc.mustContain, got)
+		}
+	}
 }

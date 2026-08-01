@@ -61,6 +61,11 @@ type Config struct {
 	// SweepInterval is how often the stored state is re-read for conditions
 	// nothing announces. Zero uses DefaultSweepInterval. Tests set it small.
 	SweepInterval time.Duration
+	// PlatformNotifications says the surrounding platform raises alerts itself by
+	// reading this daemon's API, so having no transports of our own is the
+	// expected arrangement rather than a gap. Only affects what is said at
+	// startup; the platform's own delivery is not this engine's business.
+	PlatformNotifications bool
 }
 
 func (c Config) withDefaults() Config {
@@ -147,10 +152,18 @@ func New(
 			bus.KindTowerHealthChanged, bus.KindTowerConcern),
 		sends: make(chan store.Alert, sendQueue),
 	}
-	if len(routes) == 0 {
-		// Not an error: a user may be watching the dashboard and nothing else. But
-		// an alarm nobody can hear is worth saying out loud once, and the readiness
-		// check surfaces it in the UI.
+	switch {
+	case len(routes) > 0:
+	case cfg.PlatformNotifications:
+		// Not a gap. On StartOS and Umbrel the platform reads this daemon's alerts
+		// and raises them in its own notification centre, because an app container
+		// has no path to that system. Warning here would send a user looking for a
+		// problem they do not have.
+		a.log.Info("alerts are raised by the platform's own notification centre")
+	default:
+		// Not an error either: a user may be watching the dashboard and nothing
+		// else. But an alarm nobody can hear is worth saying out loud once, and the
+		// readiness check surfaces it in the UI.
 		a.log.Warn("no notification transports are configured, so alerts will only " +
 			"appear in the dashboard")
 	}

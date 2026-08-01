@@ -15,4 +15,4 @@ export const appVersion = '0.5.0'
  * description, a new health check — so the platform can offer the update without
  * implying the daemon changed.
  */
-export const packageRevision = 0
+export const packageRevision = 7

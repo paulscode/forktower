@@ -23,30 +23,37 @@ export const bitcoindZmqRawBlockPort = 28332
 export const bitcoindZmqRawTxPort = 28333
 
 /**
- * The Bitcoin node's data volume, mounted read-only for one file: the cookie.
+ * The Bitcoin node's datadir, mounted read-only.
  *
- * Narrow on purpose. A Bitcoin datadir contains the wallet, and Forktower has no
- * business anywhere near it.
+ * A whole directory rather than the one file wanted, because a single-file
+ * dependency mount does not work on StartOS 0.4.0.1. Acceptable here and only
+ * here: the platform's Bitcoin package runs without a wallet, so the directory
+ * holds the chain and an RPC cookie and no keys at all. The cookie has to be
+ * live — it is rewritten every time Bitcoin restarts — so it cannot be copied
+ * the way the Lightning credentials are.
  */
-export const bitcoindCookieMount = '/mnt/bitcoind/.cookie'
+export const bitcoindMount = '/mnt/bitcoind'
 
 /** LND, when installed. */
 export const lndHost = 'lnd.startos'
 export const lndRestPort = 8080
 
 /**
- * LND credentials, mounted as two individual read-only **files**.
+ * Where the LND volume is mounted **while its credentials are copied out**, in a
+ * throwaway container that is destroyed immediately afterwards.
  *
- * **Not the volume.** See the mount block in main.ts — the reason is the wallet
- * seed, and it is worth reading before anyone widens these.
+ * The long-lived container never mounts this. See `copyLndCredentials` in
+ * main.ts — the reason is the wallet seed, and it is worth reading before anyone
+ * moves this mount somewhere more convenient.
  */
-export const lndCertMount = '/mnt/lnd/tls.cert'
-export const lndMacaroonMount = '/mnt/lnd/readonly.macaroon'
+export const lndProbeMount = '/mnt/lnd'
+
+/** Where the copied credentials live, inside Forktower's own volume. */
+export const credentialsDir = '/data/credentials'
 
 /** Core Lightning, when installed. */
 export const clnHost = 'c-lightning.startos'
 export const clnRestPort = 3010
-export const clnRuneMount = '/mnt/cln/rune'
 
 /** Where the daemon's own data lives inside the container. */
 export const dataMount = '/data'
