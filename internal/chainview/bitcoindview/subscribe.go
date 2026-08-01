@@ -57,11 +57,49 @@ const (
 type stallState struct {
 	stalled atomic.Bool
 	dropped atomic.Int64
+	// lastSaid is when the condition was last logged, as a Unix nanosecond
+	// count so it can be compared and swapped without a lock.
+	lastSaid atomic.Int64
+	// saidAt is the running total at that moment, so the next line can say how
+	// many were lost in between rather than only how many in total.
+	saidAt atomic.Int64
 }
 
 func (s *stallState) note() {
 	s.stalled.Store(true)
 	s.dropped.Add(1)
+}
+
+// stallReportInterval is how often a continuing stall is worth repeating.
+//
+// Chosen to be short enough that a stall during a split is visible within a
+// block's worth of time, and long enough that it cannot be the reason a log
+// becomes unreadable.
+const stallReportInterval = 30 * time.Second
+
+// shouldSay reports whether this drop is the one to log, and how many have been
+// lost since the last time it was.
+//
+// **A dropped notification is worth one line, not one line each.** During an
+// initial sync the node replays its memory pool faster than anything downstream
+// can consume it, and the first run of this on real hardware produced 577,371
+// error lines — which is not a report of a problem, it is the destruction of the
+// log that would have shown one. The condition still has to be visible, because
+// a consumer that is genuinely stuck after the chain is caught up is a daemon
+// that has stopped watching; so it is said at once, then at intervals, with the
+// count that accumulated in between.
+func (s *stallState) shouldSay(now time.Time) (say bool, since int64) {
+	total := s.dropped.Load()
+	last := s.lastSaid.Load()
+	if last != 0 && now.UnixNano()-last < int64(stallReportInterval) {
+		return false, 0
+	}
+	if !s.lastSaid.CompareAndSwap(last, now.UnixNano()) {
+		// Somebody else is reporting this round; one line is the point.
+		return false, 0
+	}
+	previous := s.saidAt.Swap(total)
+	return true, total - previous
 }
 
 // SubscribeTip delivers the node's tip whenever it changes.
@@ -185,10 +223,13 @@ func (v *View) emitTip(out chan<- chainview.BlockMeta, meta chainview.BlockMeta)
 	case out <- meta:
 	default:
 		v.stall.note()
-		v.log().Error("tip consumer is not keeping up; dropped a notification",
-			slog.String("hash", meta.Hash.String()),
-			slog.Int("height", int(meta.Height)),
-			slog.Int64("dropped_total", v.stall.dropped.Load()))
+		if say, since := v.stall.shouldSay(v.now()); say {
+			v.log().Error("tip consumer is not keeping up; dropping notifications",
+				slog.String("latest_hash", meta.Hash.String()),
+				slog.Int("latest_height", int(meta.Height)),
+				slog.Int64("dropped_since_last_report", since),
+				slog.Int64("dropped_total", v.stall.dropped.Load()))
+		}
 	}
 }
 
@@ -197,9 +238,12 @@ func (v *View) emitTx(out chan<- *wire.MsgTx, tx *wire.MsgTx) {
 	case out <- tx:
 	default:
 		v.stall.note()
-		v.log().Error("mempool consumer is not keeping up; dropped a transaction",
-			slog.String("txid", tx.TxHash().String()),
-			slog.Int64("dropped_total", v.stall.dropped.Load()))
+		if say, since := v.stall.shouldSay(v.now()); say {
+			v.log().Error("mempool consumer is not keeping up; dropping transactions",
+				slog.String("latest_txid", tx.TxHash().String()),
+				slog.Int64("dropped_since_last_report", since),
+				slog.Int64("dropped_total", v.stall.dropped.Load()))
+		}
 	}
 }
 

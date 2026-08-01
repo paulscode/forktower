@@ -24,6 +24,9 @@ type View struct {
 	// stall records a consumer that stopped keeping up, so Health can report it
 	// rather than leaving a silent gap that looks like a quiet chain.
 	stall stallState
+	// now exists so the stall reporter's interval can be driven in a test
+	// rather than waited out.
+	now func() time.Time
 }
 
 // New builds a view over the node described by opts.
@@ -36,7 +39,7 @@ func New(opts Options) (*View, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &View{c: c}, nil
+	return &View{c: c, now: time.Now}, nil
 }
 
 // BestBlock returns the node's current tip.

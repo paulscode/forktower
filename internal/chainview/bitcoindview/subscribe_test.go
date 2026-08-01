@@ -365,3 +365,45 @@ func newFastPollView(t *testing.T, node *fakeNode) *View {
 	}
 	return v
 }
+
+// A stalled consumer is worth one line, not one line per dropped item.
+//
+// The first run against a real node during its initial sync produced 577,371
+// error lines about dropped transactions — a node replaying its memory pool
+// faster than anything downstream could read it. That is not a report of a
+// problem; it is the destruction of the log that would have shown one, at the
+// moment Forktower exists to be read.
+func TestAStalledConsumerIsReportedOnceNotPerDrop(t *testing.T) {
+	t.Parallel()
+
+	clock := time.Unix(1_790_000_000, 0)
+	var s stallState
+
+	said := 0
+	for range 100_000 {
+		s.note()
+		if say, _ := s.shouldSay(clock); say {
+			said++
+		}
+	}
+	if said != 1 {
+		t.Errorf("100,000 drops in one instant produced %d log lines, want 1", said)
+	}
+
+	// The condition still has to be visible while it continues: a consumer that
+	// is stuck after the chain is caught up is a daemon that has stopped
+	// watching, and silence there would be the worse failure.
+	clock = clock.Add(stallReportInterval + time.Second)
+	s.note()
+	say, since := s.shouldSay(clock)
+	if !say {
+		t.Fatal("a stall that is still going was never mentioned again")
+	}
+	// And it says what was lost in between, not only the running total.
+	if since != 100_000 {
+		t.Errorf("reported %d dropped since the last line, want 100000", since)
+	}
+	if total := s.dropped.Load(); total != 100_001 {
+		t.Errorf("dropped total = %d, want 100001", total)
+	}
+}
