@@ -193,10 +193,7 @@ func validateTower(name string, t TowerInstance) []string {
 // anything. The daemon logs these once at startup.
 func (c Config) UnusedSettings() []string {
 	var out []string
-	if c.Tower.TEOS.Enabled {
-		out = append(out, "tower.teos.enabled is set, but companion watchtowers are "+
-			"not built yet, so nothing is being run or registered")
-	}
+
 	if c.SQ.Witnesses.NeutrinoHeaders {
 		out = append(out, "sq.witnesses.neutrino_headers is set, but independent "+
 			"second opinions about the other chain are not built yet")

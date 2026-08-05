@@ -15,6 +15,19 @@
 
 set -eu
 
+# **Two sets of variables share the FORKTOWER_ prefix, and it is worth knowing
+# which is which.** The ones this script reads are inputs to the renderer: they
+# shape the file it writes. The daemon separately reads its own set, named after
+# the TOML paths they override — `FORKTOWER_SF_RPC_PASS` for `sf.rpc_pass` — and
+# applies those after the file is loaded.
+#
+# Most names agree. Two did not: this script wanted `..._RPC_PASSWORD` where the
+# daemon documents `..._RPC_PASS`, so somebody following the documented rule got
+# a renderer that ignored them. Both spellings are accepted here now, and the
+# documented one wins where both are set.
+FORKTOWER_SF_RPC_PASSWORD="${FORKTOWER_SF_RPC_PASS:-${FORKTOWER_SF_RPC_PASSWORD:-}}"
+FORKTOWER_SQ_RPC_PASSWORD="${FORKTOWER_SQ_BITCOIND_RPC_PASS:-${FORKTOWER_SQ_RPC_PASSWORD:-}}"
+
 DATA_DIR="${FORKTOWER_DATA_DIR:-/data}"
 CONFIG="${DATA_DIR}/forktower.toml"
 SQ_DIR="${DATA_DIR}/sq"

@@ -159,6 +159,31 @@ func TestConfiguredReportsWhetherAnyLightningNodeIsSetUp(t *testing.T) {
 // Configuration that is accepted and then ignored is the failure this project is
 // about. Not a validation error — somebody may be preparing ahead of a milestone
 // — but never silence either.
+// A setting that *does* something must not be reported as inert.
+//
+// The original bug here was the opposite — configuration accepted and silently
+// ignored — and the fix was this list. But a list of things that do nothing goes
+// stale the moment one of them is built, and then it lies in the more damaging
+// direction: it tells somebody their working configuration is doing nothing, and
+// they may well switch it off and go looking for another answer.
+//
+// The companion teos watchtower was built in M3. It is watched, its coverage is
+// checked, and its concerns are raised.
+func TestASettingThatWorksIsNotReportedAsDoingNothing(t *testing.T) {
+	t.Parallel()
+
+	c := Default()
+	c.Tower.TEOS = TowerInstance{
+		Enabled: true, Listen: "abc.onion:9814", APIURL: "http://tower-teos:9814",
+	}
+
+	for _, note := range c.UnusedSettings() {
+		if strings.Contains(note, "tower.teos") {
+			t.Errorf("a working teos watchtower is reported as inert: %q", note)
+		}
+	}
+}
+
 func TestSettingsThatDoNothingAreReported(t *testing.T) {
 	t.Parallel()
 
@@ -172,16 +197,6 @@ func TestSettingsThatDoNothingAreReported(t *testing.T) {
 		mutate func(*Config)
 		want   string
 	}{
-		{
-			name: "the other companion tower",
-			mutate: func(c *Config) {
-				c.Tower.TEOS = TowerInstance{
-					Enabled: true, Listen: "abc.onion:9814",
-					APIURL: "http://tower-teos:9814",
-				}
-			},
-			want: "tower.teos.enabled",
-		},
 		{
 			name:   "an independent second opinion switched on",
 			mutate: func(c *Config) { c.SQ.Witnesses.NeutrinoHeaders = true },
