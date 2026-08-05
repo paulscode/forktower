@@ -24,3 +24,17 @@
 #
 # Add your own with FORKTOWER_SQ_EXTRA_PEERS (comma-separated), or by editing
 # this file and rebuilding.
+#
+# ── Format ────────────────────────────────────────────────────────────────────
+#
+# `forktower-anchors` is the layout version and `version` is the list's own
+# counter. The counter is what stops a rollback: a signed list is not the same
+# thing as a current list, and an old one whose peers have gone dark would leave
+# the node reaching nobody — which looks exactly like a chain where nothing is
+# happening. A replacement must carry a strictly higher number, and version 0 is
+# this one, the empty list every release ships with.
+#
+# Peers go one per line as `peer: host:port`.
+
+forktower-anchors: 1
+version: 0

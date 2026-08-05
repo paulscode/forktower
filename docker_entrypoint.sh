@@ -237,11 +237,17 @@ CONF
     # serve the chain it wants. `addnode`, never `connect`: `connect` would
     # restrict it to exactly these and switch off peer discovery, turning the
     # measure meant to prevent an eclipse into a single point of one.
-    if [ -f /usr/share/forktower/sq-anchors.txt ]; then
-      printf '\n# Anchor peers. addnode, never connect: connect would switch off peer\n'
-      printf '# discovery and make these the only view of the chain.\n'
-      grep -vE '^\s*(#|$)' /usr/share/forktower/sq-anchors.txt \
-        | while IFS= read -r peer; do printf 'addnode=%s\n' "${peer}"; done
+    #
+    # The daemon's own copy first, if it has verified one, and the shipped list
+    # otherwise. Only `peer:` lines are read — the file also carries the format
+    # and version directives that make a replacement checkable, and feeding
+    # those to Bitcoin Core as addresses would be a confusing way to fail.
+    anchors=/usr/share/forktower/sq-anchors.txt
+    [ -f "${DATA_DIR}/anchors/active.txt" ] && anchors="${DATA_DIR}/anchors/active.txt"
+    if [ -f "${anchors}" ]; then
+      printf '\n# Anchor peers from %s. addnode, never connect: connect would\n' "${anchors}"
+      printf '# switch off peer discovery and make these the only view of the chain.\n'
+      sed -nE 's/^[[:space:]]*peer:[[:space:]]*(.+)$/addnode=\1/p' "${anchors}"
     fi
 
     if [ -n "${FORKTOWER_SQ_EXTRA_PEERS:-}" ]; then
