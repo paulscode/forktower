@@ -26,7 +26,7 @@ GOLANGCI   ?= golangci-lint
 .PHONY: build test lint fmt integration run-dev cover-html icons icons-check \
         forkbench-up forkbench-split forkbench-status forkbench-down \
         forkbench-ln-up forkbench-ln-status forkbench-fixtures demo-s1-detect \
-        check check-boundary check-artifacts cover-check cover tidy-check vuln tidy clean help \
+        check check-boundary check-artifacts check-no-rdts cover-check cover tidy-check vuln tidy clean help \
         vendor-teos teos-image
 
 ## check: everything that must pass before a commit — the only gate there is
@@ -35,7 +35,7 @@ GOLANGCI   ?= golangci-lint
 # workflow in .github/ has never run. Until it does, this target is the whole
 # safety net, which is why it includes the two checks that would otherwise only
 # happen on a build server — module tidiness and the vulnerability database.
-check: build lint test cover-check tidy-check vuln
+check: build lint test cover-check tidy-check vuln check-no-rdts
 	@printf '\n  all checks passed\n'
 
 ## build: compile all binaries into bin/
@@ -93,6 +93,16 @@ tidy-check:
 	   echo "  go.mod/go.sum are not tidy — run: make tidy"; exit 1; \
 	 fi
 	@echo "  modules tidy"
+
+## check-no-rdts: the bundled second node must not enforce the new rules
+#
+# Not in `lint`, because it needs Docker and builds an image — but run it before
+# changing the pinned Bitcoin version, and it runs in `check`. A client that
+# enforces BIP-110 would follow the same chain as the user's own node, and
+# Forktower would report two chains in step while watching one of them twice.
+check-no-rdts:
+	@./scripts/check-no-rdts.sh --self-test
+	@./scripts/check-no-rdts.sh
 
 ## check-boundary: no shipped file may reference the private planning documents
 check-boundary:

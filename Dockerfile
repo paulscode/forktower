@@ -45,18 +45,37 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
 
 # ── The second Bitcoin node ───────────────────────────────────────────────────
 #
-# A release that predates the fork's rules, so it follows the status-quo chain by
-# construction rather than by configuration. Pinned, and verified against a
-# checksum committed here rather than one fetched alongside the download: a
-# checksum an attacker can replace with the file is not a check.
+# **A Bitcoin Core release, and that is the load-bearing part.** Core has never
+# merged BIP-110, so it follows the status-quo chain — which is the whole job of
+# this node, since the user's own node is on the other side of the question.
+#
+# This was pinned to 28.0 for a while on the reasoning that a release predating
+# the rules cannot enforce them. That was a proxy: what actually matters is
+# whether the client carries an RDTS deployment, not when it was built. The proxy
+# cost about eighty thousand blocks of script verification on every first sync,
+# because assumevalid froze in August 2024 along with everything else. So the
+# pin now tracks a current release and `make check` asserts the real property
+# directly — see scripts/check-no-rdts.sh, which fails the build if the pinned
+# client knows what RDTS is.
+#
+# Do not swap this for Bitcoin Knots. 29.3.knots20260508 and later refuse to
+# start without `consensusrules=rdts`, so they enforce the new rules and would
+# follow the very chain this node exists to see around. The one build that does
+# not — 29.3.knots20260507 — is a terminal release with no security path, and
+# its stricter relay policy (a sub-dust fee penalty, in particular) would
+# deprioritise exactly the anchor and HTLC outputs a Lightning commitment
+# carries, in the mempool this node is watched for.
+#
+# Verified against a checksum committed here rather than one fetched alongside
+# the download: a checksum an attacker can replace with the file is not a check.
 # Also built on the build machine: this stage downloads and unpacks a tarball
 # chosen by TARGETARCH and never runs anything from it, so emulating it would buy
 # nothing and cost minutes.
 FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS bitcoin
 
-ARG BITCOIN_VERSION=28.0
-ARG BITCOIN_SHA256_X86_64=7fe294b02b25b51acb8e8e0a0eb5af6bbafa7cd0c5b0e5fcbb61263104a82fbc
-ARG BITCOIN_SHA256_AARCH64=7fa582d99a25c354d23e371a5848bd9e6a79702870f9cbbf1292b86e647d0f4e
+ARG BITCOIN_VERSION=31.1
+ARG BITCOIN_SHA256_X86_64=b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e
+ARG BITCOIN_SHA256_AARCH64=dcf1873f2208ba4f962f3398d47e154c39c0084be8f4553e05c940d0ace3d004
 ARG TARGETARCH
 
 RUN apt-get update \

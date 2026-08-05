@@ -14,9 +14,10 @@ IMAGE_TAG     ?= $(VERSION)
 IMAGE         := $(IMAGE_NAME):$(IMAGE_TAG)
 PLATFORMS     ?= linux/amd64,linux/arm64
 
-# Pinned, and overridable for a test build. A release that predates the fork's
-# rules, so the second node follows the status-quo chain by construction.
-BITCOIN_VERSION ?= 28.0
+# Pinned, and overridable for a test build. Bitcoin Core has never merged
+# BIP-110, so the second node follows the status-quo chain — and `make check`
+# asserts that of the pinned build rather than trusting the version number.
+BITCOIN_VERSION ?= 31.1
 
 .PHONY: image image-dev image-push image-check 040 040-x86_64 040-aarch64 check-node
 
