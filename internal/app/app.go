@@ -287,6 +287,24 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 	log.Info("dashboard ready",
 		slog.String("address", a.listener.Addr().String()),
 		slog.String("authentication", string(cfg.UI.Auth)))
+	// `platform` serves the dashboard unauthenticated on a non-loopback address,
+	// trusting that a platform proxy is in front of it. On StartOS and Umbrel
+	// that proxy is genuinely there and saying so on every start would be noise
+	// nobody reads.
+	//
+	// **On anything else it is a claim nobody checked.** The likeliest way to
+	// arrive here is copying a configuration from a packaged install, which is a
+	// sensible thing to do and quietly removes the only thing standing between
+	// the dashboard and the network it is bound to. So the warning is narrow
+	// enough to mean something when it appears.
+	if cfg.UI.Auth == config.AuthPlatform && cfg.Platform == config.PlatformUnknown {
+		log.Warn("serving the dashboard without a password, because the configuration "+
+			"says a platform proxy authenticates it — but this does not look like a "+
+			"packaged install, so nothing here can confirm that proxy exists. If the "+
+			"port is reachable, so is the dashboard",
+			slog.String("address", a.listener.Addr().String()))
+	}
+
 	if cfg.UI.Auth == config.AuthNone && cfg.UI.AccessRestrictedExternally {
 		// Said out loud every time, because it is the one place Forktower is
 		// trusting a claim it cannot check. If whatever was supposed to restrict

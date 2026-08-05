@@ -1,9 +1,11 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -604,5 +606,53 @@ func TestATowerWithAnUnreadableCredentialIsRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "watchtower") {
 		t.Errorf("the error does not say what could not be set up: %v", err)
+	}
+}
+
+// `platform` authentication on an unrecognised platform is a claim nobody
+// checked, and it is said out loud.
+//
+// It serves the dashboard unauthenticated on a non-loopback address, trusting a
+// proxy is in front of it. On StartOS and Umbrel one is, and warning every time
+// would be noise nobody reads. The likeliest way to arrive here otherwise is
+// copying a configuration from a packaged install — a sensible thing to do that
+// quietly removes the only thing between the dashboard and the network.
+func TestPlatformAuthWarnsWhenNothingCanConfirmTheProxy(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		platform config.Platform
+		wantWarn bool
+	}{
+		{"a self-hosted install", config.PlatformUnknown, true},
+		{"StartOS, where the proxy really is there", config.PlatformStartOS04, false},
+		{"Umbrel, likewise", config.PlatformUmbrel, false},
+	} {
+		var buf bytes.Buffer
+		log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+		sf, sq := chainviewtest.NewSharedHistory(sharedHistory)
+		cfg := config.Default()
+		cfg.Store.Path = filepath.Join(t.TempDir(), "forktower.db")
+		cfg.UI.Auth = config.AuthPlatform
+		cfg.UI.Listen = "0.0.0.0:0"
+		cfg.Platform = tc.platform
+
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		daemon, err := app.New(context.Background(), cfg, log,
+			app.Deps{SF: sf, SQ: sq, Listener: listener})
+		if err != nil {
+			_ = listener.Close()
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		_ = daemon.Close()
+
+		warned := strings.Contains(buf.String(), "nothing here can confirm that proxy")
+		if warned != tc.wantWarn {
+			t.Errorf("%s: warned = %v, want %v\n%s", tc.name, warned, tc.wantWarn, buf.String())
+		}
 	}
 }
