@@ -263,6 +263,7 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 			AllowedOrigins:        cfg.UI.AllowedOrigins,
 			FrameAncestors:        cfg.UI.FrameAncestors,
 			PlatformNotifications: cfg.Alerts.PlatformNotifications,
+			Platform:              cfg.Platform,
 		}, log.With(slog.String("component", "api")), now)
 	if err != nil {
 		a.closeOnFailure()

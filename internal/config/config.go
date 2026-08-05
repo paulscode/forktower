@@ -38,9 +38,45 @@ const (
 	ReorgMarginUnknown = 2016
 )
 
+// Platform names the packaging Forktower is running under.
+//
+// StartOS is split by version because the two are genuinely different places to
+// send somebody: 0.4.x has the watchtower client behind an Action, and 0.3.5.1
+// behind a config field.
+type Platform string
+
+// The platforms Forktower knows how to give directions for.
+const (
+	// PlatformUnknown is a self-hosted deployment. Guidance is generic, and says
+	// so rather than guessing at somebody's setup.
+	PlatformUnknown Platform = ""
+	// PlatformStartOS04 is StartOS 0.4.x.
+	PlatformStartOS04 Platform = "startos-0.4"
+	// PlatformStartOS035 is StartOS 0.3.5.x.
+	PlatformStartOS035 Platform = "startos-0.3"
+	// PlatformUmbrel is Umbrel.
+	PlatformUmbrel Platform = "umbrel"
+)
+
+// IsStartOS reports whether this is either StartOS version, for the things that
+// are the same on both.
+func (p Platform) IsStartOS() bool {
+	return p == PlatformStartOS04 || p == PlatformStartOS035
+}
+
 // Config is the whole configuration. Field names and TOML tags match the
 // documented file exactly; the shape is deliberately flat and boring.
 type Config struct {
+	// Platform is which packaging this is running under, declared rather than
+	// guessed.
+	//
+	// **It decides what the setup guidance tells a user to click**, and the three
+	// platforms have three different answers for the one thing Forktower cannot
+	// do on their behalf — turning on their Lightning node's watchtower client.
+	// Naming a control that is not on somebody's screen is worse than saying
+	// nothing, so a wrong guess here is worse than no guess.
+	Platform Platform `toml:"platform"`
+
 	SF       RPCEndpoint    `toml:"sf"`
 	SQ       SQConfig       `toml:"sq"`
 	Fork     ForkDescriptor `toml:"fork"`

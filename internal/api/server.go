@@ -105,6 +105,10 @@ type Config struct {
 	// PlatformNotifications says the surrounding platform raises alerts by
 	// reading this API, which is how StartOS and Umbrel do it.
 	PlatformNotifications bool
+	// Platform is which packaging this is, declared rather than guessed. It
+	// decides which directions the setup guidance gives for the one thing
+	// Forktower cannot do on the user's behalf.
+	Platform config.Platform
 	// SessionTTL is how long a session survives without use. Zero uses
 	// DefaultSessionTTL.
 	SessionTTL time.Duration
@@ -183,6 +187,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/logout", s.open(s.handleLogout))
 
 	s.mux.Handle("GET /api/v1/status", s.guard(s.handleStatus))
+	s.mux.Handle("GET /api/v1/setup", s.guard(s.handleSetup))
 	s.mux.Handle("GET /api/v1/timeline", s.guard(s.handleTimeline))
 	s.mux.Handle("GET /api/v1/channels", s.guard(s.handleChannels))
 	s.mux.Handle("GET /api/v1/spends", s.guard(s.handleSpends))

@@ -33,7 +33,7 @@ cfg() {
   printf '%s' "${2}"
 }
 
-FORKTOWER_PLATFORM=startos
+FORKTOWER_PLATFORM=startos-0.3
 FORKTOWER_DATA_DIR=/data
 FORKTOWER_SQ_MODE=all-in-one
 FORKTOWER_UI_LISTEN=0.0.0.0:8330

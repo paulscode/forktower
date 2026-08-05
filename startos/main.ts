@@ -252,7 +252,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
   // The environment the entrypoint renders `forktower.toml` from. The daemon
   // never sees these names and the user never sees the TOML.
   const env: Record<string, string> = {
-    FORKTOWER_PLATFORM: 'startos',
+    FORKTOWER_PLATFORM: 'startos-0.4',
     FORKTOWER_DATA_DIR: dataMount,
     FORKTOWER_LOG_LEVEL: cfg.logLevel,
 

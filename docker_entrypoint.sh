@@ -359,6 +359,13 @@ write_forktower_conf() {
         printf 'tls_cert_path = "%s"\n' "${FORKTOWER_CLN_TLS_PATH}"
     fi
 
+    # Which packaging this is, declared rather than guessed — it decides which
+    # "how to turn on your watchtower client" directions the setup guidance
+    # shows, and the three platforms have three different answers.
+    if [ -n "${FORKTOWER_PLATFORM:-}" ]; then
+      printf '\nplatform = "%s"\n' "${FORKTOWER_PLATFORM}"
+    fi
+
     printf '\n[store]\n'
     printf 'path = "%s/forktower.db"\n' "${DATA_DIR}"
 
@@ -377,7 +384,7 @@ write_forktower_conf() {
     # webhook or email — and an alarm nobody can hear, reported as working, is
     # worse than no alarm at all.
     case "${FORKTOWER_PLATFORM:-}" in
-      startos)
+      startos*)
         printf '\n[alerts]\n'
         printf 'platform_notifications = true\n'
         ;;
