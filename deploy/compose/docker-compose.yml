@@ -121,9 +121,12 @@ services:
       - -rpcpassword=${FORKTOWER_SQ_RPC_PASSWORD:-forktower-local}
       - -zmqpubrawblock=tcp://0.0.0.0:28432
       - -zmqpubrawtx=tcp://0.0.0.0:28433
-      # How this node describes itself. Forktower uses it, among other things, to
-      # confirm that the two nodes it is comparing really are two nodes.
-      - -uacomment=forktower-sq
+      # How this node describes itself, to Forktower and to its peers. Forktower
+      # uses it, among other things, to confirm that the two nodes it is
+      # comparing really are two nodes. Its peers use it to tell a Forktower
+      # second node from an independent one when counting nodes — see "What the
+      # second node tells other people" in docs/deploying.md.
+      - -uacomment=forktower-${FORKTOWER_VERSION:-dev}
     volumes:
       - sq-data:/data
     healthcheck:

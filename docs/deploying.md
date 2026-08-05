@@ -164,25 +164,13 @@ being isolated for another.
 Forktower's second node identifies itself on the peer-to-peer network like this:
 
 ```
-/Satoshi:31.1.0(forktower-sq-0.5.0)/
+/Satoshi:31.1.0(forktower-0.5.0)/
 ```
 
 It is ordinary Bitcoin Core, and the client and version read exactly as they
-would on any other node. The comment says that this particular one is a
-Forktower second node.
-
-`sq` is short for **status quo** — the chain that carries on under the existing
-rules. Forktower calls the two chains `sf` and `sq` throughout: `sf` is whichever
-chain your own node follows, and `sq` is the other one. They are named by role
-rather than by merit, and Forktower takes no position on which is legitimate.
-
-**Read as a statement of allegiance, `sq` would be misleading**, so it is worth
-saying plainly what it is not. Most people running Forktower have a node that
-*does* enforce the new rules — that is normally the node they already had, and
-the reason they need this one. The second node follows the status-quo chain
-because that is the chain its operator would otherwise be unable to see, not
-because they prefer it. The last number is Forktower's own version, so the
-software and the chain it is watching can be told apart over time.
+would on any other node. The comment says that this particular one belongs to a
+Forktower installation, and gives Forktower's own version so the two can be told
+apart over time.
 
 **That is there for the people counting nodes, and it is worth explaining why.**
 How many nodes run which client is a number a lot of people are watching at the
@@ -198,14 +186,19 @@ do about it:
 
 - **Counting nodes by client and version**, and you want independent operators:
   filter out any user agent whose comment starts with `forktower-`.
-- **Counting how many nodes serve the status-quo chain** — for example to judge
-  whether that chain will have enough of a network to be usable: these are real
-  nodes really serving it, and arguably belong in the count.
+- **Counting how many nodes serve the chain that carries on under the existing
+  rules** — for example to judge whether it will have enough of a network to be
+  usable: every Forktower second node is following exactly that chain, and is a
+  real node really serving it. Arguably these belong in the count.
 - **Counting distinct operators**: each of these sits behind an operator who is
   already counted once, by their own node.
 
-The version after the name is Forktower's own, not Bitcoin Core's, so the two can
-be told apart over time.
+**Read as a statement of allegiance, this would be misleading**, so it is worth
+saying what it is not. Most people running Forktower have a node that *does*
+enforce the new rules — that is normally the node they already had, and the
+reason they need this one. The second node follows the other chain because that
+is the chain its operator would otherwise be unable to see, not because they
+prefer it.
 
 ### What it costs, and how to turn it off
 
