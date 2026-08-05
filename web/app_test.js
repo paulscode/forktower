@@ -359,7 +359,7 @@ test('a channel with something happening to it is marked as such', () => {
 test('with no channels the table is not shown at all', () => {
   app.renderChannels([]);
 
-  assert.strictEqual(byID['channels-card'].className.includes('hidden'), true,
+  assert.strictEqual(byID['exposure'].className.includes('hidden'), true,
     'an empty table was left on the page');
   assert.strictEqual(byID['channels'].children.length, 0, 'rows were left behind');
 });
@@ -719,4 +719,72 @@ test('a hostile partner name in the opt-in stays literal text', () => {
   ]);
   assert.ok(textOf(byID['funding-optin-list']).includes(HOSTILE),
     'the hostile string was not rendered as text');
+});
+
+// **Every anchor the daemon hands out must point at something.**
+//
+// Three of them did not: an action saying "check your setup" scrolled the user
+// nowhere at all. The earlier check on element ids only covered the ids the
+// script reaches for, and an href target is reached by the browser instead — so
+// nothing noticed. This closes that gap from the other side.
+test('every anchor an action can send the user to exists in the page', () => {
+  const markup = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  const anchors = fs.readFileSync(
+    path.join(__dirname, '..', 'internal', 'api', 'headline.go'), 'utf8');
+
+  const targets = [...anchors.matchAll(/anchor[A-Za-z]+\s+=\s+"#([a-z-]+)"/g)]
+    .map((m) => m[1]);
+  assert.ok(targets.length >= 4, 'no anchors were found to check');
+
+  for (const id of targets) {
+    assert.ok(markup.includes(`id="${id}"`),
+      `an action sends the user to #${id}, and no element has that id`);
+  }
+});
+
+// The first-run panel disappears for good once there is nothing left to do.
+test('the setup guidance is gone once setup is complete', () => {
+  app.renderSetup({ complete: true, step: null, done: 4, total: 4, waiting: [] });
+  assert.strictEqual(byID['setup-guide'].className.includes('hidden'), true,
+    'the setup panel is still standing in front of a finished install');
+});
+
+// One step at a time, with its platform's own directions.
+test('the setup guidance shows one step and the directions for it', () => {
+  app.renderSetup({
+    complete: false,
+    done: 2,
+    total: 5,
+    waiting: ['Watching the other chain'],
+    step: {
+      id: 'tower_protection',
+      label: 'Set up a watchtower',
+      why: 'Nobody is watching your channels while your node cannot see the other chain.',
+      detail: '',
+      guidance: ['Open the LND service in StartOS.', 'Go to Actions → Watchtower.'],
+      skippable: true,
+      skip_cost: 'You would be the response.',
+    },
+  });
+
+  assert.strictEqual(byID['setup-guide'].className.includes('hidden'), false);
+  assert.match(byID['setup-progress'].textContent, /Step 3 of 5/);
+  assert.strictEqual(byID['setup-guidance'].children.length, 2,
+    'the platform directions were not shown');
+  // What is being waited for is named, so somebody who cannot finish knows they
+  // are waiting rather than stuck.
+  assert.match(byID['setup-waiting'].textContent, /Watching the other chain/);
+  // And the way out is offered, with what it costs.
+  assert.strictEqual(byID['setup-skip'].className.includes('hidden'), false);
+  assert.match(byID['setup-skip-cost'].textContent, /the response/);
+});
+
+// A step with no directions shows none, rather than an empty list pretending to
+// be instructions.
+test('a platform Forktower does not know gets no invented directions', () => {
+  app.renderSetup({
+    complete: false, done: 0, total: 3, waiting: [],
+    step: { id: 'ln_connected', label: 'Connect your Lightning node', guidance: [] },
+  });
+  assert.strictEqual(byID['setup-guidance'].children.length, 0);
 });

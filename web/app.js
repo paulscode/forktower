@@ -325,6 +325,87 @@ function renderTimeline(entries) {
 // Advanced. Everything with a hash or a height in it lives here.
 // ---------------------------------------------------------------------------
 
+// Steps the user has chosen to skip.
+//
+// Kept in the browser rather than in the daemon, deliberately. Skipping is a
+// statement about what this person wants to be shown, not a fact about the
+// installation — and nothing is hidden by it: every skipped step is still in the
+// readiness list below, still counted, still red if it is red. All that changes
+// is whether the first-run panel keeps standing in front of it.
+const SKIPPED_KEY = 'forktower.setup.skipped';
+
+function skippedSteps() {
+  try {
+    const raw = window.localStorage.getItem(SKIPPED_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    // A browser with storage disabled simply never skips anything, which is a
+    // worse experience than intended and a better one than a broken page.
+    return new Set();
+  }
+}
+
+function skipStep(id) {
+  try {
+    const all = skippedSteps();
+    all.add(id);
+    window.localStorage.setItem(SKIPPED_KEY, JSON.stringify(Array.from(all)));
+  } catch {
+    // Nothing to do. The step reappears on the next pass, which is honest.
+  }
+}
+
+// The first-run guidance: one thing to do, and what is being waited for.
+function renderSetup(setup) {
+  const card = el('setup-guide');
+  if (!card) return;
+
+  const step = setup && setup.step;
+  // Gone for good once there is nothing left that would stop the user being
+  // protected. The readiness list carries the same facts afterwards.
+  if (!setup || setup.complete || !step || skippedSteps().has(step.id)) {
+    show(card, false);
+    return;
+  }
+
+  show(card, true);
+  setText(el('setup-title'), step.label || 'One more thing');
+  setText(el('setup-progress'),
+    'Step ' + Math.min(setup.done + 1, setup.total) + ' of ' + setup.total);
+  setText(el('setup-why'), step.why || '');
+  setText(el('setup-detail'), step.detail || '');
+
+  // The platform's own directions, when Forktower knows the platform. Absent
+  // rather than invented: sending somebody to a screen that does not exist
+  // wastes more of their time than saying nothing.
+  const guidance = el('setup-guidance');
+  clear(guidance);
+  for (const line of step.guidance || []) {
+    guidance.appendChild(make('li', null, line));
+  }
+
+  renderAction(el('setup-action'), step.action);
+
+  // What is being waited for, so somebody who cannot finish knows they are
+  // waiting rather than stuck.
+  const waiting = setup.waiting || [];
+  setText(el('setup-waiting'), waiting.length
+    ? 'Also in progress, with nothing for you to do: ' + waiting.join(', ') + '.'
+    : '');
+
+  const skip = el('setup-skip');
+  show(skip, Boolean(step.skippable));
+  if (step.skippable) {
+    setText(el('setup-skip-cost'), step.skip_cost || '');
+    const button = el('setup-skip-confirm');
+    button.onclick = null;
+    button.addEventListener('click', () => {
+      skipStep(step.id);
+      show(card, false);
+    }, { once: true });
+  }
+}
+
 function renderAdvanced(status) {
   const branches = el('branches');
   clear(branches);
@@ -445,7 +526,7 @@ function formatSats(sats) {
 }
 
 function renderChannels(rows) {
-  const card = el('channels-card');
+  const card = el('exposure');
   const table = el('channels-table');
   const body = el('channels');
   const list = rows || [];
@@ -784,6 +865,9 @@ async function refresh() {
     const deadlines = await api('GET', '/api/v1/deadlines');
     renderDetails(spends, deadlines);
 
+    const setup = await api('GET', '/api/v1/setup');
+    renderSetup(setup);
+
     const alerts = await api('GET', '/api/v1/alerts');
     renderAlerts(alerts);
 
@@ -837,6 +921,7 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined' && window.d
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderHeadline, renderReadiness, renderAlerts, renderTimeline, renderAdvanced,
+    renderSetup,
     renderChannels, renderDetails, renderTowers, renderMirror,
     renderFundingOptIn, renderStandDown, formatSats,
     describeTestResults, formatDuration, formatPercent, setText, KNOWN_STATES,

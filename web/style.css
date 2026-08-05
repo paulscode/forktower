@@ -320,3 +320,23 @@ footer { max-width: 46rem; margin: 0 auto; }
   border-left: 3px solid var(--bad, #c62828);
   padding-left: 0.5rem;
 }
+
+/* First-run guidance.
+ *
+ * Marked like the headline, because while it is showing it is the most
+ * important thing on the page — there is no point reading the rest until it is
+ * gone. */
+.setup { border-left: 5px solid var(--waiting); }
+.setup h2 { font-size: 1.3rem; line-height: 1.25; margin-bottom: 0.3rem; }
+.setup .since { margin: 0 0 0.6rem; color: var(--quiet); font-size: 0.85rem; }
+
+/* Numbered, because they are steps to follow in order rather than a list of
+ * facts. */
+.guidance { margin: 0.6rem 0 0.8rem 1.2rem; padding: 0; }
+.guidance li { margin-bottom: 0.35rem; line-height: 1.45; }
+
+/* The way out, folded away. Available to anyone who needs it and not competing
+ * with the thing we would rather they did. */
+.skip { margin-top: 0.8rem; }
+.skip summary { cursor: pointer; color: var(--quiet); font-size: 0.9rem; }
+.skip .detail { margin: 0.5rem 0; }
