@@ -20,9 +20,14 @@ blocks remaining, not minutes — on a chain with little hashpower, blocks can b
 slow, which works in your favour here.
 
 **3. Whether your watchtower is covering those channels.** The towers section
-says which channels a tower holds backups for. A channel with a countdown *and*
-tower coverage is one where something will be done automatically. One without
-coverage is one where you are the response.
+gives a count of how many of your channels a tower is backing up — and **names
+the ones it is not**. That is the way round that matters here: a channel listed
+there is one nobody is watching for you. A channel with a countdown and *no*
+entry in that list is one where something will be done automatically; one that
+appears in it is where you are the response.
+
+If the list is empty and the count is your whole channel set, everything is
+covered.
 
 ## If a channel has a countdown and no coverage
 

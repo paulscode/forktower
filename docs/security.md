@@ -63,10 +63,17 @@ everything working.
 **The decision-making code cannot perform I/O.** The parts that decide whether
 the chains have separated, whether a channel is covered, whether a transaction
 may be copied, and how long you have are forbidden from opening a socket, reading
-a file, touching the database, or reading a clock. They take facts and return
-verdicts. This is enforced by the linter, per file, with a reason attached to
-each rule — so the question "could this have been influenced by something other
-than its inputs?" is answerable by reading one screen.
+a file, or touching the database. They take facts and return verdicts. This is
+enforced by the linter, per file, with a reason attached to each rule — so the
+question "could this have been influenced by something other than its inputs?" is
+answerable by reading one screen.
+
+Two of them — whether a transaction may be copied, and whether a channel is
+covered — additionally cannot read a clock, so the same question always gets the
+same answer. The other two use clock *types* to express durations and take the
+current time as an argument rather than fetching it, which is the same property
+arrived at by a different route; the linter cannot express that distinction, so
+it is stated here rather than claimed as enforced.
 
 **Credentials never reach the logs or the dashboard.** Log output is visible in
 the interface, so anything that could carry a secret is filtered before it gets

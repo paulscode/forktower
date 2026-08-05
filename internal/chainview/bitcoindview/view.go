@@ -35,6 +35,14 @@ type View struct {
 	catchingUp atomic.Bool
 }
 
+// catchUpMargin is how far blocks may trail headers before the node counts as
+// replaying history rather than keeping up.
+//
+// Two, not zero: a node at the tip can be a block or so behind its own headers
+// for a moment during ordinary propagation, and treating that as a sync would
+// drop the sightings that arrive exactly then — which are the ones worth having.
+const catchUpMargin = 2
+
 // skipMempoolWhileSyncing reports whether published transactions are worth
 // reading at all right now.
 //
@@ -262,9 +270,22 @@ func (v *View) Health(ctx context.Context) (chainview.BackendHealth, error) {
 		health.PeerCount = netInfo.Connections
 	}
 
-	// Remembered for the notification reader, which cannot afford an RPC call
-	// per published transaction.
-	v.catchingUp.Store(info.InitialBlockDownload)
+	// Remembered for the notification reader, which cannot afford an RPC call per
+	// published transaction.
+	//
+	// **Blocks behind headers, not the node's own initial-block-download flag.**
+	// That flag was the obvious signal and the wrong one: a regtest node reports
+	// itself in initial block download while sitting idle at its own tip, so the
+	// gate stayed shut for ever and mempool watching was silently dead on every
+	// regtest deployment — which is where all the scenario testing happens, and
+	// where a lost pre-confirmation sighting would go unnoticed precisely because
+	// the tests were the thing being broken.
+	//
+	// What the gate is actually for is the phase where a node is replaying
+	// history: headers arrive fast and blocks follow slowly behind them, and
+	// every transaction in every connected block is republished. Blocks trailing
+	// headers *is* that phase, and at the tip the two are equal.
+	v.catchingUp.Store(info.Headers-info.Blocks > catchUpMargin)
 
 	switch {
 	case info.InitialBlockDownload:

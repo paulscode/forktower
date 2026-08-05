@@ -66,6 +66,10 @@ linters:
             - "**/internal/sentinel/forkpoint.go"
             - "**/internal/sentinel/cadence.go"
           deny:
+            - pkg: os
+              desc: >-
+                whether the chains have separated is decided from the two views
+                and nothing else; there is no file that could change the answer
             - pkg: net
               desc: decision logic must not perform I/O
             - pkg: net/http
@@ -194,7 +198,7 @@ linters:
         pure-policy:
           files:
             - "**/internal/alert/policy.go"
-            - "**/internal/alert/scrub.go"
+            - "**/internal/redact/redact.go"
           deny:
             - pkg: net
               desc: the alerting policy must not perform I/O

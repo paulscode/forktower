@@ -15,10 +15,10 @@ rather than leaving you to wonder.
 
 ## What to do
 
-**Check tower coverage for that channel first.** If a watchtower holds backups
-for it, the response may already be in hand — the towers section says so per
-channel, and Forktower will report the justice transaction confirming if it sees
-it.
+**Check tower coverage for that channel first.** The towers section names the
+channels a tower is *not* backing up. If the one with the countdown is not in
+that list, a watchtower holds backups for it and the response may already be in
+hand — Forktower will report the justice transaction confirming if it sees it.
 
 **If there is no coverage**, you are the response. That means publishing the
 penalty transaction yourself, which needs your Lightning node and the channel

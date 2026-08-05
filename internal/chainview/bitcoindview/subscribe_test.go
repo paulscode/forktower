@@ -437,24 +437,31 @@ func TestPublishedTransactionsAreIgnoredWhileTheNodeIsCatchingUp(t *testing.T) {
 	}
 }
 
-// A credential in the node's own address never becomes a visible detail.
+// **A node at its own tip is not catching up, whatever it says about itself.**
 //
-// `firstLine` is where every error string that reaches a user passes through —
-// the health report shown on the dashboard, and five log lines besides. Go's
-// HTTP client echoes the request URL into its errors, and an RPC address written
-// as `http://user:pass@host` is a natural way to configure one, so without this
-// the password travels to the dashboard and into any support bundle.
-func TestACredentialInAnErrorNeverBecomesAVisibleDetail(t *testing.T) {
+// The first version of this gate used the node's initial-block-download flag,
+// which a regtest node reports while sitting idle at its tip. Mempool watching
+// was therefore dead on every regtest deployment — including the scenario suite,
+// where a lost pre-confirmation sighting goes unnoticed precisely because the
+// tests are the thing being broken. Found by the integration suite, which is the
+// only place a real node answers this question.
+func TestOnlyABlockBacklogCountsAsCatchingUp(t *testing.T) {
 	t.Parallel()
 
-	got := firstLine(`Post "http://forktower:hunter2@10.0.0.5:8332": dial tcp: refused`)
-
-	if strings.Contains(got, "hunter2") {
-		t.Errorf("the password survived: %q", got)
-	}
-	// The useful half stays. Somebody working out why their node is unreachable
-	// needs to know which address failed and how.
-	if !strings.Contains(got, "10.0.0.5:8332") || !strings.Contains(got, "dial tcp") {
-		t.Errorf("the diagnostic was lost along with the secret: %q", got)
+	for _, tc := range []struct {
+		name            string
+		headers, blocks int32
+		wantSkip        bool
+	}{
+		{"at the tip", 900_000, 900_000, false},
+		{"a block behind, as happens during propagation", 900_001, 900_000, false},
+		{"two behind, still ordinary", 900_002, 900_000, false},
+		{"genuinely replaying history", 900_000, 400_000, true},
+		{"the tail of a sync", 900_000, 899_990, true},
+	} {
+		if got := tc.headers-tc.blocks > catchUpMargin; got != tc.wantSkip {
+			t.Errorf("%s: headers %d blocks %d -> skip = %v, want %v",
+				tc.name, tc.headers, tc.blocks, got, tc.wantSkip)
+		}
 	}
 }
