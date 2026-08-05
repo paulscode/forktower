@@ -182,7 +182,19 @@ _pack-0351: scripts/embassy.js
 UMBREL_STORE ?= $(HOME)/workspace/umbrel-store
 UMBREL_APP   := $(UMBREL_STORE)/paulscode-forktower
 
-.PHONY: umbrel-sync umbrel-check
+.PHONY: umbrel-sync umbrel-check umbrel-pin
+
+## umbrel-pin: point the Umbrel app at an exact image, by digest
+#
+# Run after the release image is pushed and before the store repository is
+# updated. Takes the version from manifest.yaml; pass TAG= to pin something else.
+#
+# Reads the *index* digest, not an architecture's — see the script, where the
+# reason is written down. Refuses a tag that is not pushed, one that is a single
+# image rather than a multi-architecture index, and one missing an architecture
+# somebody is currently able to install on.
+umbrel-pin:
+	@./scripts/umbrel-pin.sh $(TAG)
 
 ## umbrel-sync: copy deploy/umbrel/ into the community store checkout
 umbrel-sync: umbrel-check

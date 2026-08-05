@@ -82,9 +82,24 @@ rather than relying on anyone to look.
 ### 5. Publish
 
 - **StartOS**: upload the two `.s9pk` files and `SHA256SUMS.asc` to the release.
-- **Umbrel**: `make image-push` for the container image, then update
-  `deploy/umbrel/docker-compose.yml` to pin the **digest** rather than a tag, and
-  `make umbrel-sync` to copy the app definition into the store repository.
+- **Umbrel**:
+
+  ```
+  make image-push          # both architectures, to the registry
+  make umbrel-pin          # rewrite the compose to pin the exact image
+  make umbrel-sync         # copy into the store repository checkout
+  ```
+
+  then commit and push the store repository.
+
+  `umbrel-pin` exists because the digest to pin is not the obvious one. A
+  multi-architecture tag is an *index* listing one image per platform, and
+  `docker manifest inspect` shows those per-platform digests prominently — they
+  are the easiest thing to copy and the wrong thing to pin. Pinning one would
+  serve that architecture and leave everybody else unable to install, which for
+  this project means the Raspberry Pi users. The target reads the index digest,
+  and refuses a tag that is not pushed, one that is a single image, or one
+  missing an architecture somebody can currently install on.
 
 On that last point: while an app is in testing its compose file points at a
 moving `:dev` tag, which is convenient for us and wrong for a user. A published
