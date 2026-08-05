@@ -94,6 +94,7 @@ else
 fi
 
 export FORKTOWER_SQ_CLEARNET="$(cfg '.second-node.clearnet' 'false')"
+export FORKTOWER_SQ_ONION_ONLY="$(cfg '.second-node.onion-only' 'false')"
 export FORKTOWER_SQ_EXTRA_PEERS="$(cfg '.second-node.extra-peers' '')"
 export FORKTOWER_SQ_P2P_PORT=8433
 export FORKTOWER_LOG_LEVEL="$(cfg '.advanced.log-level' 'info')"

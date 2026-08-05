@@ -87,6 +87,10 @@ services:
       # Tor, both ways. The traffic says which side of a contested upgrade you
       # are watching, and that is nobody else's business.
       FORKTOWER_SQ_CLEARNET: "false"
+      # Onion peers only. Off: everything already goes through Tor, and refusing
+      # non-onion peers on top of that leaves a cold start with almost nowhere
+      # to bootstrap from.
+      FORKTOWER_SQ_ONION_ONLY: "false"
       FORKTOWER_TOR_PROXY: ${APP_BITCOIN_KNOTS_TOR_PROXY_IP:-${APP_BITCOIN_TOR_PROXY_IP:-10.21.21.11}}:${APP_BITCOIN_KNOTS_TOR_PROXY_PORT:-${APP_BITCOIN_TOR_PROXY_PORT:-9050}}
 
       # ── The dashboard ──

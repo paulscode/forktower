@@ -407,3 +407,32 @@ func TestAStalledConsumerIsReportedOnceNotPerDrop(t *testing.T) {
 		t.Errorf("dropped total = %d, want 100001", total)
 	}
 }
+
+// While the node is catching up, published transactions are dropped before they
+// are parsed.
+//
+// Core's `rawtx` topic fires for every transaction in a newly connected block as
+// well as for every mempool arrival, so a sync republishes the whole chain. On
+// real hardware that was 12.3 million transactions deserialized and immediately
+// discarded, on the same cores the node was trying to sync with — and not one of
+// them could have mattered, because the point of watching the mempool is seeing
+// a spend *before* it confirms.
+func TestPublishedTransactionsAreIgnoredWhileTheNodeIsCatchingUp(t *testing.T) {
+	t.Parallel()
+
+	v := &View{now: func() time.Time { return time.Unix(1_790_000_000, 0) }}
+
+	if v.skipMempoolWhileSyncing() {
+		t.Error("a node that has said nothing yet is treated as catching up")
+	}
+
+	v.catchingUp.Store(true)
+	if !v.skipMempoolWhileSyncing() {
+		t.Error("a node that says it is catching up is still being read")
+	}
+
+	v.catchingUp.Store(false)
+	if v.skipMempoolWhileSyncing() {
+		t.Error("a caught-up node is still being ignored, which loses the early warning")
+	}
+}

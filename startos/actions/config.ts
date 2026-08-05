@@ -51,13 +51,25 @@ export const inputSpec = InputSpec.of({
       'Turn this on only if Tor will not connect for you.',
     default: false,
   }),
+  sqOnionOnly: Value.toggle({
+    name: 'Talk only to onion peers',
+    description:
+      'Off by default, and off is right for almost everybody. Forktower ' +
+      'already reaches the other chain through Tor either way, so no peer ever ' +
+      'learns your address. Turning this on additionally refuses to speak to ' +
+      'anything but onion nodes — which means your second node cannot use the ' +
+      'usual seeds and has very few places to start from. Expect a first sync ' +
+      'measured in days rather than hours, and few peers afterwards.',
+    default: false,
+  }),
   sqExtraPeers: Value.textarea({
     name: 'Extra peers on the other chain',
     description:
-      'Normally leave this blank. Forktower ships a list of nodes known to ' +
-      'follow the other chain. Add addresses here, one per line, if that list ' +
-      'is not finding anyone — during a split the other chain can be hard to ' +
-      'reach, and knowing one good peer is often the whole problem.',
+      'Normally leave this blank — your second node finds peers the usual ' +
+      'way. Forktower ships no peer list of its own: naming nodes that later ' +
+      'go dark would look like a measure that is working when it is not. If ' +
+      'the other chain is hard to reach during a split, one good address here ' +
+      'is often the whole problem solved. One per line.',
     placeholder: 'host:port, one per line',
     required: false,
     default: null,

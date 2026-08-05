@@ -29,6 +29,12 @@ func (v *View) runMempoolZMQ(ctx context.Context, out chan<- *wire.MsgTx) {
 		if len(msg) < 2 {
 			return
 		}
+		// Dropped before it is parsed, not after. While the node is catching up
+		// this topic carries the whole chain's history, and deserializing it to
+		// decide it is uninteresting is the expensive half of the mistake.
+		if v.skipMempoolWhileSyncing() {
+			return
+		}
 		var tx wire.MsgTx
 		if err := tx.Deserialize(bytes.NewReader(msg[1])); err != nil {
 			v.log().Warn("could not read a published transaction",

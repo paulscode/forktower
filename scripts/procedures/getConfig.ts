@@ -43,11 +43,18 @@ export const getConfig: T.ExpectedExports.getConfig = compat.getConfig({
           "Off is the better answer. Forktower reaches the other chain over Tor, because the traffic says which side of a contested upgrade you are watching and that is nobody else's business. Turn this on only if Tor will not connect for you.",
         default: false,
       },
+      "onion-only": {
+        type: "boolean",
+        name: "Talk only to onion peers",
+        description:
+          "Off is right for almost everybody. Forktower already reaches the other chain through Tor either way, so no peer ever learns your address. Turning this on additionally refuses to speak to anything but onion nodes, which leaves your second node very few places to start from — expect a first sync measured in days rather than hours, and few peers afterwards.",
+        default: false,
+      },
       "extra-peers": {
         type: "string",
         name: "Extra peers on the other chain",
         description:
-          "Normally leave this blank. Forktower ships a list of nodes known to follow the other chain. Add addresses here, separated by commas, if that list is not finding anyone — during a split the other chain can be hard to reach, and knowing one good peer is often the whole problem.",
+          "Normally leave this blank — your second node finds peers the usual way. Forktower ships no peer list of its own: naming nodes that later go dark would look like a measure that is working when it is not. If the other chain is hard to reach during a split, one good address here is often the whole problem solved. Separate addresses with commas.",
         nullable: true,
         placeholder: "host:port, host:port",
       },

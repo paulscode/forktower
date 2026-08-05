@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/btcsuite/btcd/chainhash/v2"
@@ -27,7 +28,30 @@ type View struct {
 	// now exists so the stall reporter's interval can be driven in a test
 	// rather than waited out.
 	now func() time.Time
+	// catchingUp is the node's own initial-block-download flag, remembered from
+	// the last Health call so that the notification reader can consult it
+	// without an RPC round trip per message. See skipMempoolWhileSyncing.
+	catchingUp atomic.Bool
 }
+
+// skipMempoolWhileSyncing reports whether published transactions are worth
+// reading at all right now.
+//
+// **A node in initial block download republishes the entire chain's
+// transactions.** Core's `rawtx` topic fires for every transaction added to the
+// mempool *and* for every transaction in a newly connected block, so a sync
+// replays hundreds of millions of them. On real hardware this produced 12.3
+// million deserialized-and-immediately-discarded transactions in four days, on
+// the same four cores the node was trying to sync with.
+//
+// None of them could matter. The whole value of watching the mempool is seeing a
+// spend *before* it confirms, and a transaction arriving inside a block being
+// connected during a sync has been confirmed for years. So while the node says
+// it is catching up, the bytes are dropped before they are parsed.
+//
+// Deliberately reading the *node's* own flag rather than our own progress guess:
+// it is the node that knows, and it is the same field the health check reports.
+func (v *View) skipMempoolWhileSyncing() bool { return v.catchingUp.Load() }
 
 // New builds a view over the node described by opts.
 //
@@ -236,6 +260,10 @@ func (v *View) Health(ctx context.Context) (chainview.BackendHealth, error) {
 	if err := v.c.call(ctx, &netInfo, "getnetworkinfo"); err == nil {
 		health.PeerCount = netInfo.Connections
 	}
+
+	// Remembered for the notification reader, which cannot afford an RPC call
+	// per published transaction.
+	v.catchingUp.Store(info.InitialBlockDownload)
 
 	switch {
 	case info.InitialBlockDownload:

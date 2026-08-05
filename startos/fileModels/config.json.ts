@@ -29,6 +29,9 @@ export const configJson = FileHelper.json(
     // side of a contested upgrade you are watching, which is not something to
     // announce to your ISP.
     sqClearnet: z.boolean().catch(false),
+    // Onion peers only. Off by default: everything already goes through Tor,
+    // and refusing non-onion peers on top of that cripples a cold start.
+    sqOnionOnly: z.boolean().catch(false),
     // Peers on the other chain, one per line. Empty is normal: the built-in
     // list is the starting point and this is for when it is not enough.
     sqExtraPeers: z.string().catch(''),

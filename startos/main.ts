@@ -278,8 +278,9 @@ export const main = sdk.setupMain(async ({ effects }) => {
     // separate saving from not keeping the whole chain, and a user who picked
     // the lightest option did not mean to ask for 600 GB.
     FORKTOWER_SQ_PRUNE_MB: cfg.sqMode === 'full' ? '0' : String(cfg.sqPruneMb),
-    // The entrypoint reads this as the word, not as a flag.
+    // The entrypoint reads these as words, not as flags.
     FORKTOWER_SQ_CLEARNET: cfg.sqClearnet ? 'true' : 'false',
+    FORKTOWER_SQ_ONION_ONLY: cfg.sqOnionOnly ? 'true' : 'false',
     FORKTOWER_SQ_EXTRA_PEERS: cfg.sqExtraPeers ?? '',
 
     // Tor is the platform's, and it is already there. Host and port, not a URL:

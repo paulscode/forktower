@@ -101,16 +101,40 @@ write_bitcoin_conf() {
     return
   fi
 
-  # Peering transport. Tor by default: a second node following only the
-  # status-quo chain, from the user's own address, links the two and marks its
-  # operator as someone defending Lightning channels across a split — which is
-  # targeting information for whoever might breach them. Clearnet is an explicit
-  # choice, and the interface says what it costs.
+  # Peering transport. Everything goes through Tor by default: a second node
+  # following only the status-quo chain, from the user's own address, links the
+  # two and marks its operator as someone defending Lightning channels across a
+  # split — which is targeting information for whoever might breach them.
+  # Clearnet is an explicit choice, and the interface says what it costs.
+  #
+  # **`onlynet=onion` is no longer the default, and that is not a weakening.**
+  # `proxy` is what protects the user: every connection is made through Tor, so
+  # no peer ever learns their address. `onlynet=onion` additionally refuses to
+  # talk to anything but onion peers — which on a cold start is close to
+  # crippling, because a node restricted to onion cannot use the DNS seeds and
+  # has only the small built-in onion seed list to bootstrap from. Measured on
+  # real hardware: four peers held out of a target of eight, two thousand
+  # connection attempts churned through in four days, an initial sync that took
+  # three days where the same machine's other node took less than one, and then
+  # a view that sat permanently DEGRADED for want of peers afterwards.
+  #
+  # Reaching an ordinary peer through a Tor exit still tells that peer nothing
+  # about who is asking. What is given up is that the exit sees Bitcoin P2P
+  # traffic — blocks and transactions everyone already has — and what is bought
+  # is a node that can actually find the chain it is supposed to be watching.
+  #
+  # Onion-only remains available for anyone who wants it, because on this
+  # question the right answer really does depend on the threat being modelled.
   if [ "${FORKTOWER_SQ_CLEARNET:-false}" = "true" ]; then
     peering="# clearnet peering, enabled explicitly by FORKTOWER_SQ_CLEARNET"
-  else
+  elif [ "${FORKTOWER_SQ_ONION_ONLY:-false}" = "true" ]; then
     peering="proxy=${FORKTOWER_TOR_PROXY:-127.0.0.1:9050}
+# Onion peers only, asked for explicitly. Expect a slow first sync and few
+# peers: this node cannot use the DNS seeds and must bootstrap from the built-in
+# onion seed list alone.
 onlynet=onion"
+  else
+    peering="proxy=${FORKTOWER_TOR_PROXY:-127.0.0.1:9050}"
   fi
 
   {
@@ -137,6 +161,13 @@ prune=${FORKTOWER_SQ_PRUNE_MB:-10000}
 # the user time.
 disablewallet=1
 blocksonly=${FORKTOWER_SQ_BLOCKSONLY:-0}
+
+# Cache for the UTXO set while catching up. The default is 450 MB, and the
+# machines this runs on generally have far more to spare than that — a bigger
+# cache means fewer flushes to disk, which is most of what makes a first sync
+# slow. Lowered automatically by Core once the chain is caught up, so this is a
+# cost paid during the sync and largely returned afterwards.
+dbcache=${FORKTOWER_SQ_DBCACHE_MB:-2000}
 
 # Ports of its own. Two Bitcoin nodes on one machine both wanting 8333 is a
 # support question nobody should have to ask.
