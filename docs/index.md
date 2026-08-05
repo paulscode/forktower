@@ -41,6 +41,7 @@ says what is *not* protected, which is the half most people never look at.
 | [Threat model](threat-model.md) | What Forktower defends against, and who the attacker is |
 | [Security](security.md) | What Forktower is prevented from doing to you, and how that is enforced |
 | [Reporting a problem](../SECURITY.md) | If you find something that could cost somebody money |
+| [Notes for a security reviewer](security-review.md) | Where to look, what would be worst, and what has already been found |
 
 ## Contributing and building
 
