@@ -26,7 +26,8 @@ GOLANGCI   ?= golangci-lint
 .PHONY: build test lint fmt integration run-dev cover-html icons icons-check \
         forkbench-up forkbench-split forkbench-status forkbench-down \
         forkbench-ln-up forkbench-ln-status forkbench-fixtures demo-s1-detect \
-        check check-boundary check-artifacts check-no-rdts cover-check cover tidy-check vuln tidy clean help \
+        check check-boundary check-artifacts check-no-rdts check-versions \
+        cover-check cover tidy-check vuln tidy clean help \
         vendor-teos teos-image
 
 ## check: everything that must pass before a commit — the only gate there is

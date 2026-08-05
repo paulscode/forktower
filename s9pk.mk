@@ -201,3 +201,75 @@ umbrel-check:
 	@test -d "$(UMBREL_STORE)" || { \
 	  printf '  no store checkout at %s — set UMBREL_STORE\n' "$(UMBREL_STORE)" >&2; \
 	  exit 1; }
+
+
+# ── Release ───────────────────────────────────────────────────────────────────
+
+RELEASE_VERSION := $(shell yq e '.version' manifest.yaml 2>/dev/null)
+BUILD_DIR       := builds/$(RELEASE_VERSION)
+
+.PHONY: release verify-release sbom check-versions
+
+## check-versions: the version must be the same number everywhere it is written
+check-versions:
+	@./scripts/check-versions.sh
+
+## sbom: write what is inside a release, into the build directory
+sbom: check-versions
+	@mkdir -p $(BUILD_DIR)
+	@./scripts/make-sbom.sh $(BUILD_DIR)/SBOM.md
+
+## release: build both packages, checksum them, then stop
+#
+# **It stops on purpose.** The signing key lives on an airgapped machine and is
+# never on a build host, so there is no `make sign` and cannot be one. What this
+# does is get everything into one directory with a SHA256SUMS beside it and then
+# print exactly what a person has to do next.
+#
+# Runs `check` first. A release cut from a tree that does not pass its own gate
+# is the thing verify-release exists to catch afterwards, and catching it before
+# the build is cheaper than catching it after.
+release: check check-versions
+	rm -rf $(BUILD_DIR) && mkdir -p $(BUILD_DIR)
+	$(MAKE) 0351
+	cp $(PKG_ID)-0351.s9pk $(BUILD_DIR)/$(PKG_ID)-0351.s9pk
+	start-cli s9pk pack --icon icon.svg -o $(BUILD_DIR)/$(PKG_ID)-040.s9pk
+	$(MAKE) sbom
+	cd $(BUILD_DIR) && sha256sum *.s9pk SBOM.md > SHA256SUMS
+	@printf '\n'
+	@printf '  Built %s into %s:\n\n' "$(RELEASE_VERSION)" "$(BUILD_DIR)"
+	@cd $(BUILD_DIR) && ls -1 && printf '\n'
+	@printf '  Nothing is signed yet, and this machine cannot sign it.\n\n'
+	@printf '  On the airgapped machine:\n'
+	@printf '    1. copy %s/SHA256SUMS across\n' "$(BUILD_DIR)"
+	@printf '    2. gpg --detach-sign --armor SHA256SUMS\n'
+	@printf '    3. copy SHA256SUMS.asc back into %s\n\n' "$(BUILD_DIR)"
+	@printf '  Then, here:\n'
+	@printf '    make verify-release\n\n'
+	@printf '  Do not publish anything until that passes.\n\n'
+
+## verify-release: refuse to publish a release that is not signed
+#
+# This exists because of a specific mistake, and the mistake is the sort anyone
+# would make: a sibling project shipped one version unsigned while every release
+# before and after it was signed. Nobody noticed, because nothing was checking —
+# the absence of a signature looks exactly like a directory listing you have seen
+# a hundred times.
+#
+# Verified with the *public* key, the same way a user would. Checking with the
+# private key would prove that the machine holding it can verify its own work,
+# which is not the question.
+verify-release:
+	@test -d "$(BUILD_DIR)" || { \
+	  printf '  no build at %s — run `make release` first\n' "$(BUILD_DIR)" >&2; exit 1; }
+	@test -f "$(BUILD_DIR)/SHA256SUMS" || { \
+	  printf '  %s/SHA256SUMS is missing\n' "$(BUILD_DIR)" >&2; exit 1; }
+	@test -f "$(BUILD_DIR)/SHA256SUMS.asc" || { \
+	  printf '\n  %s/SHA256SUMS.asc is missing.\n\n' "$(BUILD_DIR)" >&2; \
+	  printf '  This release is unsigned. Sign SHA256SUMS on the airgapped\n' >&2; \
+	  printf '  machine and copy the .asc back before publishing anything.\n\n' >&2; \
+	  exit 1; }
+	@cd $(BUILD_DIR) && gpg --verify SHA256SUMS.asc SHA256SUMS 2>&1 | sed 's/^/  /'
+	@cd $(BUILD_DIR) && sha256sum -c SHA256SUMS --quiet && \
+	  printf '  every file matches its checksum\n'
+	@printf '\n  %s is signed and consistent. Safe to publish.\n\n' "$(RELEASE_VERSION)"
