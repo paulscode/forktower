@@ -57,10 +57,16 @@ whichever chain survives.
 
 ## Documentation
 
+Start at [docs/index.md](docs/index.md), or go straight to what you need:
+
 | | |
 |---|---|
 | [Lightning channels and the RDTS activation](docs/lightning-and-the-rdts-activation.md) | What is happening, why Lightning is a special case, and what you can do — with a deadline |
+| [Installing on StartOS](docs/install-startos.md) · [on Umbrel](docs/install-umbrel.md) · [anything else](docs/deploying.md) | Getting it running |
+| [Runbooks](docs/runbooks/) | What to do when a particular thing happens |
 | [Residual risks](docs/residual-risks.md) | What a correct, fully configured install still cannot protect you from |
+| [Threat model](docs/threat-model.md) · [Security](docs/security.md) | What it defends against, and what it is prevented from doing to you |
+| [Reporting a security problem](SECURITY.md) | Please do not open a public issue |
 
 ## Building
 
