@@ -171,6 +171,19 @@ It is ordinary Bitcoin Core, and the client and version read exactly as they
 would on any other node. The comment says that this particular one is a
 Forktower second node.
 
+`sq` is short for **status quo** — the chain that carries on under the existing
+rules. Forktower calls the two chains `sf` and `sq` throughout: `sf` is whichever
+chain your own node follows, and `sq` is the other one. They are named by role
+rather than by merit, and Forktower takes no position on which is legitimate.
+
+**Read as a statement of allegiance, `sq` would be misleading**, so it is worth
+saying plainly what it is not. Most people running Forktower have a node that
+*does* enforce the new rules — that is normally the node they already had, and
+the reason they need this one. The second node follows the status-quo chain
+because that is the chain its operator would otherwise be unable to see, not
+because they prefer it. The last number is Forktower's own version, so the
+software and the chain it is watching can be told apart over time.
+
 **That is there for the people counting nodes, and it is worth explaining why.**
 How many nodes run which client is a number a lot of people are watching at the
 moment, and reasonably so. A Forktower second node would distort it: it is not an
