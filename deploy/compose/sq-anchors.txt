@@ -1,40 +1,40 @@
-# Anchor peers for the second Bitcoin node.
+# Extra peers for the second Bitcoin node.
 #
-# These give it somewhere to start looking for peers that serve the chain the
-# user's own node does not. They are a starting point, never the whole picture:
-# the generated configuration uses `addnode`, so ordinary peer discovery keeps
-# running alongside them. Using `connect` instead would switch discovery off and
-# make these the node's entire view of the chain — turning the measure meant to
-# prevent an eclipse into a single point of one.
+# Empty, and expected to stay that way. The reasoning changed, so it is written
+# out properly here rather than left standing in its old form.
 #
-# One address per line. Onion addresses are preferred: a node following only the
-# status-quo chain from the user's own network address links the two and marks
-# its operator as someone with Lightning channels to defend, which is useful to
-# exactly the wrong person.
+# This file was once meant to hold a curated, signed list of nodes known to serve
+# the chain the user's own node does not — on the assumption that during a split
+# that chain might be hard to reach. The signalling figures make that close to
+# backwards. Support for the new rules has not risen above a few per cent of
+# blocks and no major pool is behind it, so once the chains separate it is the
+# *enforcing* chain that will be scarce: few nodes, almost no hashpower.
 #
-# This list is empty on purpose.
+# The chain this node follows is the other one — the one that keeps essentially
+# all the hashpower and most of the nodes. That is the ordinary Bitcoin network,
+# and ordinary peer discovery finds it without help. A curated list of peers for
+# the majority chain would solve a problem that does not exist, and publishing
+# one would name nodes for anyone wanting to attack that side of the split.
 #
-# Populating it means naming real, running nodes, and a list of addresses that
-# have gone dark is worse than none — it looks like a measure that is working.
-# Two things have to land before it can be filled honestly: nodes that are known
-# to be serving the status-quo chain after the fork actually happens, and the
-# signature check that lets the list be updated without shipping a new release.
-# Until then the node relies on ordinary peer discovery, and the daemon reports
-# what it can see rather than assuming.
+# So: no list, no signing machinery, and no addresses shipped with the software.
 #
-# Add your own with FORKTOWER_SQ_EXTRA_PEERS (comma-separated), or by editing
-# this file and rebuilding.
+# ── Adding your own ───────────────────────────────────────────────────────────
 #
-# ── Format ────────────────────────────────────────────────────────────────────
+# Still worth having, and unchanged. If the second node cannot find peers, or
+# somebody you trust gives you an address during a split, add it. That path never
+# depended on anyone else's list:
 #
-# `forktower-anchors` is the layout version and `version` is the list's own
-# counter. The counter is what stops a rollback: a signed list is not the same
-# thing as a current list, and an old one whose peers have gone dark would leave
-# the node reaching nobody — which looks exactly like a chain where nothing is
-# happening. A replacement must carry a strictly higher number, and version 0 is
-# this one, the empty list every release ships with.
+#   FORKTOWER_SQ_EXTRA_PEERS=host:port,host:port
 #
-# Peers go one per line as `peer: host:port`.
-
-forktower-anchors: 1
-version: 0
+# or the second node's settings on StartOS and Umbrel, or by adding lines to this
+# file and rebuilding. One address per line, `#` for comments.
+#
+# Onion addresses are preferred. A second node following only the status-quo
+# chain from the user's own network address links the two and marks its operator
+# as someone with Lightning channels to defend, which is useful to exactly the
+# wrong person.
+#
+# Whatever is listed here is passed to Bitcoin Core as `addnode`, never
+# `connect`: `connect` would restrict the node to these alone and switch off peer
+# discovery, turning a measure meant to prevent an eclipse into a single point of
+# one.

@@ -143,34 +143,6 @@ linters:
         # one decision in this program that can *create* exposure rather than
         # observe it, so it is held to the same "no I/O" bar as the rest and
         # allowed the store only for its vocabulary of shapes and branches.
-        # Whoever controls the anchor list controls who the second node peers
-        # with on the chain it is defending, so the code that decides whether to
-        # trust a list must be answerable by reading it. In particular it must
-        # never be able to fetch one: a daemon that downloads its own
-        # configuration has configuration belonging to whoever holds the other
-        # end, and that is the rule this package exists to keep.
-        pure-anchors:
-          files:
-            - "**/internal/anchors/list.go"
-            - "**/internal/anchors/verify.go"
-          deny:
-            - pkg: net
-              desc: >-
-                anchor lists arrive by app update or by the user importing a
-                file, never over the network
-            - pkg: net/http
-              desc: >-
-                anchor lists arrive by app update or by the user importing a
-                file, never over the network
-            - pkg: os
-              desc: the list rules take bytes; reading files is the caller's job
-            - pkg: database/sql
-              desc: the list rules must not touch storage
-            - pkg: time
-              desc: >-
-                a list is accepted on its signature and its version, never on
-                what time it is
-
         pure-policy-mirror:
           files:
             - "**/internal/responder/mirror/policy.go"

@@ -233,28 +233,33 @@ ${ua_line}
 ${peering}
 CONF
 
-    # Anchor peers, so the node has somewhere to start looking for peers that
-    # serve the chain it wants. `addnode`, never `connect`: `connect` would
-    # restrict it to exactly these and switch off peer discovery, turning the
-    # measure meant to prevent an eclipse into a single point of one.
+    # Any extra peers shipped with the image. Empty by default and expected to
+    # stay so — the chain this node follows is the one that keeps most of the
+    # network, and ordinary peer discovery finds it without help. The file
+    # explains why at length.
     #
-    # The daemon's own copy first, if it has verified one, and the shipped list
-    # otherwise. Only `peer:` lines are read — the file also carries the format
-    # and version directives that make a replacement checkable, and feeding
-    # those to Bitcoin Core as addresses would be a confusing way to fail.
-    anchors=/usr/share/forktower/sq-anchors.txt
-    [ -f "${DATA_DIR}/anchors/active.txt" ] && anchors="${DATA_DIR}/anchors/active.txt"
-    if [ -f "${anchors}" ]; then
-      printf '\n# Anchor peers from %s. addnode, never connect: connect would\n' "${anchors}"
-      printf '# switch off peer discovery and make these the only view of the chain.\n'
-      sed -nE 's/^[[:space:]]*peer:[[:space:]]*(.+)$/addnode=\1/p' "${anchors}"
+    if [ -f /usr/share/forktower/sq-anchors.txt ]; then
+      printf '\n# Extra peers. addnode, never connect: connect would switch off peer\n'
+      printf '# discovery and make these the only view of the chain.\n'
+      grep -vE '^\s*(#|$)' /usr/share/forktower/sq-anchors.txt \
+        | while IFS= read -r peer; do printf 'addnode=%s\n' "${peer}"; done
     fi
 
     if [ -n "${FORKTOWER_SQ_EXTRA_PEERS:-}" ]; then
       printf '\n# Extra peers from FORKTOWER_SQ_EXTRA_PEERS.\n'
-      printf '%s' "${FORKTOWER_SQ_EXTRA_PEERS}" | tr ',' '\n' \
+      # **The trailing newline matters.** Without it the last address has no
+      # line terminator, `read` returns false on it, and the loop exits before
+      # writing it out — so the final peer is silently dropped, and with a single
+      # peer that is the only one. Which is the case that matters: somebody
+      # adding one address they were given during a split.
+      printf '%s\n' "${FORKTOWER_SQ_EXTRA_PEERS}" | tr ',' '\n' \
         | while IFS= read -r peer; do
-            [ -n "${peer}" ] && printf 'addnode=%s\n' "${peer}"
+            # An `if`, not `[ ... ] && ...`: under `set -e` the AND-list fails on
+            # an empty element — a trailing comma is enough — and takes the rest
+            # of the list with it.
+            if [ -n "${peer}" ]; then
+              printf 'addnode=%s\n' "${peer}"
+            fi
           done
     fi
   } > "${conf}"

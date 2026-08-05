@@ -26,14 +26,6 @@ DEFAULT_MIN=70
 declare -A MIN=(
   # Pure decision logic: no I/O, so there is no excuse for a gap.
   [internal/sentinel]=90  # decision logic: no I/O, so no excuse for a gap
-  # Whoever controls the anchor list controls who the second node peers with on
-  # the chain it is defending. Every failure path here is a way that control
-  # could be taken, so they are all exercised — the rollback refusal especially,
-  # because every signature involved in that attack is genuine.
-  # 93 rather than 95: the rules in list.go and verify.go are exercised
-  # exhaustively, and what is left uncovered is the handful of filesystem errors
-  # in store.go that need a broken disk to reach.
-  [internal/anchors]=93
   # The computation decides when somebody loses money and is pure, so it is held
   # near-total; the engine around it is I/O against an in-process database and a
   # real bus, which needs no container either.

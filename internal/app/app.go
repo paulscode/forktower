@@ -10,13 +10,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"path/filepath"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/paulscode/forktower/internal/alert"
-	"github.com/paulscode/forktower/internal/anchors"
 	"github.com/paulscode/forktower/internal/api"
 	"github.com/paulscode/forktower/internal/bus"
 	"github.com/paulscode/forktower/internal/chainview"
@@ -270,17 +268,6 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 		a.closeOnFailure()
 		return nil, fmt.Errorf("setting up the dashboard: %w", err)
 	}
-	// Where the release puts the anchor list it shipped with. The image copies it
-	// here; a deployment without one simply has no anchors, which is the shipped
-	// state anyway.
-	const builtInAnchorsPath = "/usr/share/forktower/sq-anchors.txt"
-
-	// The anchor-peer list the second node starts from. Mounted after the server
-	// exists because it is optional, like the UI itself.
-	a.api.MountAnchors(anchors.NewStore(
-		filepath.Dir(cfg.Store.Path), builtInAnchorsPath,
-		log.With(slog.String("component", "anchors"))))
-
 	a.api.MountUI()
 
 	a.listener = deps.Listener
