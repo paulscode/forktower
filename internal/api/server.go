@@ -119,9 +119,12 @@ type Server struct {
 	deadlines Deadlines
 	watcher   Watcher
 	standDown StandDown
-	cfg       Config
-	now       func() time.Time
-	log       *slog.Logger
+	// anchors is optional: without it the dashboard has no anchor-list section,
+	// which is the right shape for a deployment that has no list to manage.
+	anchors Anchors
+	cfg     Config
+	now     func() time.Time
+	log     *slog.Logger
 
 	auth *authenticator
 	mux  *http.ServeMux

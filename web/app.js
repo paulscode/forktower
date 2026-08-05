@@ -325,6 +325,48 @@ function renderTimeline(entries) {
 // Advanced. Everything with a hash or a height in it lives here.
 // ---------------------------------------------------------------------------
 
+// The anchor-peer list, its version and who signed for it.
+//
+// The signer is shown because a signature check is only worth as much as knowing
+// whose signature it was — a user who cannot see which key their software trusts
+// has been told that something was verified and nothing about by whom.
+function renderAnchors(list) {
+  const box = el('anchors');
+  if (!box) return;
+  show(box, true);
+  clear(box);
+
+  const tile = make('div', 'tile');
+  const dl = document.createElement('dl');
+  addPair(dl, 'Peers', list.peers && list.peers.length
+    ? String(list.peers.length)
+    : 'none — finding peers the usual way');
+  addPair(dl, 'List version', String(list.version));
+  addPair(dl, 'Where it came from', list.source === 'imported'
+    ? 'imported, and checked against the signing key'
+    : 'shipped with this version of Forktower');
+  addPair(dl, 'Signed by', list.signer || 'this build has no signing key');
+  tile.appendChild(dl);
+
+  if (list.peers && list.peers.length) {
+    const peers = make('ul', 'peers');
+    for (const peer of list.peers) {
+      peers.appendChild(make('li', 'mono', peer));
+    }
+    tile.appendChild(peers);
+  }
+
+  // Said plainly, because a user who imported a list and is not running it would
+  // otherwise believe they were.
+  if (list.fallback) {
+    tile.appendChild(make('p', 'warn',
+      'A list was imported but is not being used: ' + list.fallback +
+      ' The list shipped with Forktower is in use instead.'));
+  }
+
+  box.appendChild(tile);
+}
+
 function renderAdvanced(status) {
   const branches = el('branches');
   clear(branches);
@@ -783,6 +825,12 @@ async function refresh() {
     const spends = await api('GET', '/api/v1/spends');
     const deadlines = await api('GET', '/api/v1/deadlines');
     renderDetails(spends, deadlines);
+
+    // Optional: a deployment without an anchor list has no such endpoint, and
+    // its absence is not a failure worth reporting to the user.
+    await api('GET', '/api/v1/anchors')
+      .then(renderAnchors)
+      .catch(() => show(el('anchors'), false));
 
     const alerts = await api('GET', '/api/v1/alerts');
     renderAlerts(alerts);
