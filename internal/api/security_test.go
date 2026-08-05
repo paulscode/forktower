@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/config"
 )
 
@@ -423,4 +425,48 @@ func newHarnessWithPassword(t *testing.T, password string, mutate func(*Config))
 			mutate(c)
 		}
 	})
+}
+
+// **A credential in a node's address must not reach the dashboard.**
+//
+// Writing an RPC address as `http://user:pass@host:8332` is a perfectly natural
+// thing to do, and Go's HTTP client echoes the request URL into its errors:
+// `Post "http://forktower:hunter2@10.0.0.5:8332": dial tcp: refused`. That string
+// was travelling from a chain backend's health report, through the status
+// endpoint, onto the dashboard — and from there into any support bundle a user
+// was invited to send a stranger.
+//
+// Redacted at its source and again here, because this is where text stops being
+// ours and becomes something shown to somebody.
+func TestACredentialInANodeAddressDoesNotReachTheDashboard(t *testing.T) {
+	t.Parallel()
+
+	const secret = "hunter2"
+	h := newHarness(t, nil)
+	h.sen.mu.Lock()
+	h.sen.sqView = chainview.BackendHealth{
+		State:  chainview.HealthDown,
+		Detail: `Post "http://forktower:` + secret + `@10.0.0.5:8332": dial tcp: refused`,
+	}
+	h.sen.mu.Unlock()
+
+	resp := h.do(t, http.MethodGet, "/api/v1/status", "")
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), secret) {
+		t.Errorf("the node's password reached the dashboard:\n%s", body)
+	}
+	// **And the diagnostic survives.** Removing the whole message would trade one
+	// problem for another: somebody trying to work out why their node is
+	// unreachable needs to see which address failed. Only the userinfo goes, so
+	// `Post "http://10.0.0.5:8332": dial tcp: refused` is what remains.
+	if !strings.Contains(string(body), "10.0.0.5:8332") {
+		t.Errorf("the address was removed along with the password, leaving nothing "+
+			"to diagnose:\n%s", body)
+	}
+	if !strings.Contains(string(body), "dial tcp") {
+		t.Errorf("the reason was lost:\n%s", body)
+	}
 }

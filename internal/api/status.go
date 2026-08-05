@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/paulscode/forktower/internal/chainview"
+	"github.com/paulscode/forktower/internal/redact"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
 )
@@ -139,7 +140,13 @@ func viewOf(h chainview.BackendHealth, id chainview.Identity) View {
 		State:        string(h.State),
 		PeerCount:    h.PeerCount,
 		SyncProgress: h.SyncProgress,
-		Detail:       h.Detail,
-		Software:     id.Subversion,
+		// **Redacted here as well as at its source.** The origin — a chain
+		// backend turning an RPC error into something a person can read —
+		// already removes credentials, and this is the boundary where text
+		// stops being ours and becomes something shown to somebody and pasted
+		// into support threads. A second implementation of Sentinel, or a later
+		// edit at the origin, must not be able to quietly undo that.
+		Detail:   redact.String(h.Detail),
+		Software: id.Subversion,
 	}
 }

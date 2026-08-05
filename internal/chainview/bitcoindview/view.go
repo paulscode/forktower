@@ -14,6 +14,7 @@ import (
 	"github.com/btcsuite/btcd/wire/v2"
 
 	"github.com/paulscode/forktower/internal/chainview"
+	"github.com/paulscode/forktower/internal/redact"
 )
 
 // View reads one chain from a Bitcoin node.
@@ -450,7 +451,17 @@ func mustHash(s string) chainhash.Hash {
 }
 
 // firstLine trims an error to something short enough to show a user.
+// firstLine trims an error to something short enough to show, and removes any
+// credential in it on the way.
+//
+// **Every error string that becomes visible passes through here**, which is why
+// the redaction belongs at this point rather than at each of the six call sites.
+// A node's RPC address may carry its own credentials — `http://user:pass@host` is
+// a perfectly natural way to write one — and Go's HTTP client echoes the request
+// URL into its errors: `Post "http://forktower:hunter2@10.0.0.5:8332": dial tcp`.
+// That string was reaching the dashboard, and from there any support bundle.
 func firstLine(s string) string {
+	s = redact.String(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}

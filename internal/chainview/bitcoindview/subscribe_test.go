@@ -436,3 +436,25 @@ func TestPublishedTransactionsAreIgnoredWhileTheNodeIsCatchingUp(t *testing.T) {
 		t.Error("a caught-up node is still being ignored, which loses the early warning")
 	}
 }
+
+// A credential in the node's own address never becomes a visible detail.
+//
+// `firstLine` is where every error string that reaches a user passes through —
+// the health report shown on the dashboard, and five log lines besides. Go's
+// HTTP client echoes the request URL into its errors, and an RPC address written
+// as `http://user:pass@host` is a natural way to configure one, so without this
+// the password travels to the dashboard and into any support bundle.
+func TestACredentialInAnErrorNeverBecomesAVisibleDetail(t *testing.T) {
+	t.Parallel()
+
+	got := firstLine(`Post "http://forktower:hunter2@10.0.0.5:8332": dial tcp: refused`)
+
+	if strings.Contains(got, "hunter2") {
+		t.Errorf("the password survived: %q", got)
+	}
+	// The useful half stays. Somebody working out why their node is unreachable
+	// needs to know which address failed and how.
+	if !strings.Contains(got, "10.0.0.5:8332") || !strings.Contains(got, "dial tcp") {
+		t.Errorf("the diagnostic was lost along with the secret: %q", got)
+	}
+}
