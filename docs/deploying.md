@@ -159,6 +159,58 @@ comma-separated list. These are added to ordinary peer discovery rather than
 replacing it — a node restricted to a handful of addresses has swapped one way of
 being isolated for another.
 
+## What the second node tells other people
+
+Forktower's second node identifies itself on the peer-to-peer network like this:
+
+```
+/Satoshi:31.1.0(forktower-sq-0.5.0)/
+```
+
+It is ordinary Bitcoin Core, and the client and version read exactly as they
+would on any other node. The comment says that this particular one is a
+Forktower second node.
+
+**That is there for the people counting nodes, and it is worth explaining why.**
+How many nodes run which client is a number a lot of people are watching at the
+moment, and reasonably so. A Forktower second node would distort it: it is not an
+independent node whose operator chose a client and a side. It is a *second* node
+belonging to somebody who already runs one, and it follows the status-quo chain
+because watching that chain is its entire job — not because its operator was
+expressing a preference.
+
+Counting it as an independent Core node would inflate one side's numbers, quietly
+and at scale. So the node says what it is, and anyone counting can decide what to
+do about it:
+
+- **Counting nodes by client and version**, and you want independent operators:
+  filter out any user agent whose comment starts with `forktower-`.
+- **Counting how many nodes serve the status-quo chain** — for example to judge
+  whether that chain will have enough of a network to be usable: these are real
+  nodes really serving it, and arguably belong in the count.
+- **Counting distinct operators**: each of these sits behind an operator who is
+  already counted once, by their own node.
+
+The version after the name is Forktower's own, not Bitcoin Core's, so the two can
+be told apart over time.
+
+### What it costs, and how to turn it off
+
+A peer that connects to this node learns that its operator runs Forktower — and
+therefore that they have Lightning channels they are watching across a possible
+split. That is a reason the second node reaches the network through Tor: the peer
+learns it about an anonymous node rather than about your address.
+
+If you would rather say nothing at all, set the user agent comment to nothing:
+
+```
+FORKTOWER_SQ_UACOMMENT=
+```
+
+The node then advertises plain `/Satoshi:31.1.0/` and is indistinguishable from
+any other. Nothing about how Forktower works depends on this — it is a courtesy
+to people trying to measure the network honestly, and it is yours to withhold.
+
 ## Upgrading
 
 ```

@@ -197,6 +197,12 @@ RUN useradd --system --create-home --home-dir /home/forktower forktower \
  && mkdir -p /data /data/sq \
  && chown -R forktower:forktower /data /home/forktower
 
+# The version, available to the entrypoint as well as compiled into the binary:
+# the second Bitcoin node advertises it in its user agent so that anyone counting
+# nodes can tell a Forktower second node from an independent one.
+ARG VERSION=dev
+ENV FORKTOWER_VERSION=${VERSION}
+
 ENV FORKTOWER_SQ_MODE=all-in-one \
     FORKTOWER_DATA_DIR=/data \
     FORKTOWER_UI_LISTEN=0.0.0.0:8330 \
