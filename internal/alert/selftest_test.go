@@ -174,22 +174,42 @@ func TestAFixedTransportStopsBeingReportedAsBroken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// **Resolved, not merely acknowledged.** A dismissed warning still reads
+	// "alerts may not reach you", which is the wrong thing to show the person who
+	// just fixed it.
+	if got.Tier != store.TierResolved {
+		t.Errorf("the transport works again but its alert still reads %s: %q",
+			got.Tier, got.Message)
+	}
 	if !got.Acked() {
 		t.Error("the transport works again but is still reported as broken")
 	}
 
-	// And if it breaks again, the user hears about it: the raise reopens the same
-	// alert rather than being swallowed as a duplicate.
+	// And if it breaks again, the user hears about it — as a new entry, since the
+	// old one has been closed and its key retired with it.
 	broken.fail.Store(true)
 	h.clock.Add(int64(time.Hour.Seconds()))
 	h.al.SelfTest(ctx)
 
-	got, err = h.store.GetAlert(ctx, failing.ID)
+	rows, err := h.store.ListAlerts(ctx, store.AlertFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Acked() {
-		t.Error("a transport that broke again is still marked as handled")
+	var again *store.Alert
+	for i := range rows {
+		if rows[i].Kind == KindTransportFailing && rows[i].Tier == store.TierWarning {
+			again = &rows[i]
+		}
+	}
+	if again == nil {
+		t.Fatal("the transport broke again and nothing on the dashboard says so")
+	}
+	if again.ID == failing.ID {
+		t.Error("the new failure reopened the closed alert rather than raising one")
+	}
+	if again.Acked() {
+		t.Error("the new failure arrived pre-dismissed, inheriting the " +
+			"acknowledgement of the resolution that closed the last one")
 	}
 }
 

@@ -206,34 +206,42 @@ func (a *Alerter) recordSelfTest(ctx context.Context, results []SelfTestResult, 
 	}
 }
 
-// clearTransportFailure marks a previous failure as no longer needing attention.
+// clearTransportFailure retires a previous failure, because it has ended.
 //
-// Acknowledged rather than announced: the condition has demonstrably ended, and a
-// separate "your webhook works again" notification for a test the user never
-// asked for is noise. The alert stays in the history with its original timestamp,
-// and if the transport breaks again the raise reopens it.
+// Not announced: the user did not ask for the test, and "your webhook works
+// again" for something they may never have known was broken is noise. But the
+// row does turn over. It used to be merely acknowledged, which left it reading
+// "Forktower could not send a test message through this, so alerts may not reach
+// you" at warning tier — the exact stale-warning confusion a tester reported
+// about the watchtower, aimed at somebody who had just fixed the thing.
+//
+// **And it only looked at unacknowledged alerts**, so a user who dismissed the
+// warning themselves kept it at warning tier permanently: the one path where the
+// person most likely to have acted on it was the least likely to see it clear.
 func (a *Alerter) clearTransportFailure(ctx context.Context, transport string) {
-	key := fmt.Sprintf("%s:%s", KindTransportFailing, transport)
+	now := a.now().Unix()
+	wctx, cancel := writeCtx(ctx)
+	defer cancel()
 
-	open, err := a.store.ListAlerts(ctx, store.AlertFilter{UnackedOnly: true})
+	id, err := a.store.ResolveAlert(wctx, store.Alert{
+		Tier:     store.TierResolved,
+		Kind:     KindTransportFailing,
+		DedupKey: fmt.Sprintf("%s:%s", KindTransportFailing, transport),
+		Subject:  transport,
+		Message: fmt.Sprintf(
+			"Forktower's test message reached %q. Alerts can get to you through it.",
+			transport),
+		CreatedAt:    now,
+		LastRaisedAt: now,
+	})
 	if err != nil {
-		a.log.Debug("could not check for an earlier transport failure",
+		a.log.Debug("could not clear an earlier transport failure",
 			slog.String("error", err.Error()))
 		return
 	}
-	for _, al := range open {
-		if al.DedupKey != key {
-			continue
-		}
-		wctx, cancel := writeCtx(ctx)
-		if _, err := a.store.AckAlert(wctx, al.ID, a.now().Unix()); err != nil {
-			a.log.Debug("could not clear an earlier transport failure",
-				slog.String("error", err.Error()))
-		}
-		cancel()
+	if id != 0 {
 		a.log.Info("a transport that had been failing is working again",
 			slog.String("transport", transport))
-		return
 	}
 }
 
