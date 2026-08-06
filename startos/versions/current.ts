@@ -5,11 +5,14 @@ export const current = VersionInfo.of({
   version: `${appVersion}:${packageRevision}`,
   releaseNotes: {
     en_US:
-      'First StartOS release. Forktower runs a second Bitcoin node following ' +
-      'the chain your own node does not, tells you which of your Lightning ' +
-      'channels a split would expose and how long you have, and can watch a ' +
-      'watchtower on the other chain and copy your own closing transactions ' +
-      'across. It reads from your Lightning node and never writes to it.',
+      'Fixes found by running 0.6.0 on real hardware. On StartOS 0.3.5.1 ' +
+      'Forktower could not authenticate to your Bitcoin node at all, so it ' +
+      'never started and its dashboard was never served — that is fixed. A ' +
+      'second node still syncing is no longer reported as a chain that was ' +
+      'replaced, which was raising a critical alert on every poll. A ' +
+      'watchtower that is starting up, or whose own node is still catching ' +
+      'up, is no longer described as having stopped answering. And where the ' +
+      'dashboard asks you to set up notifications, it now says where to do it.',
   },
   migrations: {
     up: async ({ effects }) => {},
