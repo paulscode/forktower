@@ -91,7 +91,7 @@ func (p *pushingNode) push(t *testing.T) {
 	t.Helper()
 	select {
 	case <-p.watching:
-	case <-time.After(2 * time.Second):
+	case <-time.After(testDeadline):
 		t.Fatal("the node was never asked for notifications")
 	}
 	p.mu.Lock()
@@ -142,17 +142,28 @@ func (h *harness) run() {
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(testDeadline):
 			h.t.Error("the registry did not stop")
 		}
 	})
 }
 
+// testDeadline is how long a test waits on work happening in another goroutine.
+//
+// **Generous on purpose.** These conditions are met in milliseconds when the
+// machine is idle, so the limit measures nothing about the code — it only
+// decides how a genuine hang is reported. Five seconds was tight enough that
+// three tests in this package failed a release build while the same machine was
+// running the race detector across every other package, and a gate that fails on
+// load is one people re-run rather than read. The passing case returns as soon
+// as the condition holds and costs nothing extra.
+const testDeadline = 30 * time.Second
+
 // waitFor polls until cond holds. Storage writes happen on another goroutine, so
 // reading once and asserting would be a race dressed up as a test.
 func (h *harness) waitFor(what string, cond func() bool) {
 	h.t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testDeadline)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -248,7 +259,7 @@ func TestChannelsAreReadIntoTheStore(t *testing.T) {
 			if up.Channel.RelevanceReason == "" {
 				t.Error("a channel was announced without saying why it is being watched")
 			}
-		case <-time.After(5 * time.Second):
+		case <-time.After(testDeadline):
 			t.Fatal("a channel was stored but never announced")
 		}
 	}
@@ -266,7 +277,7 @@ func TestAnUnchangedPollSaysNothing(t *testing.T) {
 
 	select {
 	case <-events:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testDeadline):
 		t.Fatal("the first sighting was never announced")
 	}
 
@@ -291,7 +302,7 @@ func TestAChangedChannelIsAnnouncedAgain(t *testing.T) {
 
 	select {
 	case <-events:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testDeadline):
 		t.Fatal("the first sighting was never announced")
 	}
 
@@ -308,7 +319,7 @@ func TestAChangedChannelIsAnnouncedAgain(t *testing.T) {
 		if up.Channel.PeerAlias != "the counterparty" {
 			t.Errorf("announced alias %q", up.Channel.PeerAlias)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testDeadline):
 		t.Fatal("a changed channel was never announced")
 	}
 }
@@ -339,7 +350,7 @@ func TestAClosingChannelIsRecordedAndAnnounced(t *testing.T) {
 		if c.State != string(store.ClosePending) || c.CloseTxid != "abc123" {
 			t.Errorf("announced %+v", c)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testDeadline):
 		t.Fatal("a closing channel was never announced")
 	}
 
@@ -942,7 +953,7 @@ func TestItStopsWhenAsked(t *testing.T) {
 		if err != nil {
 			t.Errorf("shutting down reported an error: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testDeadline):
 		t.Fatal("the registry did not stop when its context ended")
 	}
 }
@@ -995,7 +1006,7 @@ func TestTheStoreClosingUnderneathIsSurvived(t *testing.T) {
 	h.reg.Refresh()
 
 	before := node.pollCount()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(testDeadline)
 	for node.pollCount() < before+3 && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond) //nolint:forbidigo // waiting on a real goroutine
 	}
@@ -1006,7 +1017,7 @@ func TestTheStoreClosingUnderneathIsSurvived(t *testing.T) {
 		if err != nil {
 			t.Errorf("shutting down reported an error: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testDeadline):
 		t.Fatal("the registry did not stop after its store went away")
 	}
 }
