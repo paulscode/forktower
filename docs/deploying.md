@@ -151,6 +151,59 @@ Forktower checks at startup that the two nodes really are two nodes: pointing it
 at the same node twice would produce two views that agree by construction, and
 every indicator would stay green forever while nothing was watched.
 
+## The one thing Forktower cannot do for you
+
+**Tell your Lightning node to use a watchtower.**
+
+A watchtower is what answers a breach while you are asleep — the difference
+between Forktower telling you about a problem and something being done about it.
+Forktower can run the tower. It cannot register it with your node, because it
+reads your node with a credential that cannot write, which is the same reason it
+can never spend your money. So this step is yours.
+
+**1. Have a tower.** The compose file here runs one under the `tower` profile:
+
+```
+docker compose --profile tower up -d
+```
+
+That is a second lnd, run only as a watchtower, with the second Bitcoin node as
+its chain backend — which is the point, because a tower is only useful if it is
+watching the chain a breach would land on. It holds no money and has no seed.
+
+The packaged StartOS and Umbrel apps run this for you and show you the address.
+
+**2. Turn on your node's watchtower client.** In your own `lnd.conf`:
+
+```
+[wtclient]
+wtclient.active=1
+```
+
+Restart LND for it to take effect. For Core Lightning, install the teos plugin
+instead.
+
+**3. Register the tower with your node.**
+
+```
+lncli wtclient add <pubkey>@<host>:9911            # LND
+lightning-cli registertower <tower_id>@<host>:9814 # Core Lightning
+```
+
+Forktower's dashboard shows the exact line to paste for the tower it is watching,
+so you should not have to assemble it by hand.
+
+**Do it sooner rather than later.** A watchtower can only punish a channel state
+it was given, and it is given them as they happen. States revoked before you
+registered are not covered by any tower, ever — which is why registering early is
+worth more than registering with several.
+
+Forktower checks that backups are actually arriving rather than that a setting
+looks right, and says so on the readiness list until they are. `wtclient
+.sweep-fee-rate` is worth a look too: it decides what a penalty transaction pays
+to get confirmed, it is fixed when a session is negotiated, and it cannot be
+raised afterwards.
+
 ## The second node's peers
 
 After a fork the peer population splits. A node following the status-quo chain

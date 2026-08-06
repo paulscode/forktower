@@ -57,11 +57,14 @@ a revoked state stops being a gamble and becomes a free option.
   channels' funding outputs there.
 - **Works out how long you have** for each one, in time rather than block counts,
   and escalates as the window closes.
-- **Watches the watchtower** that has a view of that chain — the thing that
-  actually publishes the penalty transaction — and says so when it has stopped
-  working, because a tower that has quietly failed looks exactly like one that
-  has not. Forktower does not run or register it; it checks that your node is
-  really backing up to it, and which channels are covered.
+- **Runs a watchtower** with a view of that chain — the thing that actually
+  publishes the penalty transaction — and shows you the address to register with
+  your Lightning node. **That registration is yours to do**: it needs your node's
+  watchtower client switched on, which is a setting on your node, and Forktower
+  holds a read-only credential and could not change it even if it wanted to. It
+  then checks that your node is really backing up to the tower, and which
+  channels are covered, and says so when it has stopped — a tower that has
+  quietly failed looks exactly like one that has not.
 - **Copies your own transactions across**, so cooperative closes and sweeps exist
   wherever they can — including a justice transaction your node has already
   published, which then punishes the same breach on the chain nobody was

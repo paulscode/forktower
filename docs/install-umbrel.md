@@ -67,13 +67,30 @@ reach you until you do, and it is right to.
 
 **Turn on your Lightning node's watchtower client.**
 
-Lightning → **Advanced Settings** → `wtclient.active`. There is also
-`wtclient.sweep-fee-rate` there, which controls what a watchtower will pay to get
-a penalty confirmed; the default is 10 sat/vB, and during a busy period that may
-not be enough.
+Forktower runs the tower. What it cannot do is tell your node to use it, because
+it reads your node with a credential that cannot write — the same reason it can
+never spend your money.
+
+**1. Get the address.** Forktower's dashboard shows it on the watchtower card.
+Wait until it appears: the tower has to finish starting before it has an
+identity, and the dashboard says so while that happens.
+
+**2. Turn the client on.** Lightning → **Advanced Settings** → `wtclient.active`,
+then restart the Lightning app.
+
+**3. Register the address** with your node.
+
+While you are on that screen, `wtclient.sweep-fee-rate` controls what a
+watchtower will pay to get a penalty confirmed. The default is 10 sat/vB, and
+during a busy period that may not be enough — it is fixed when a session is
+negotiated and cannot be raised afterwards.
+
+**Do it sooner rather than later.** A watchtower can only punish a channel state
+it was given, and it is given them as they happen. States revoked before you
+registered are not covered by any tower, ever.
 
 Forktower checks whether this took effect rather than trusting an "I did it"
-button, and keeps saying so until it sees it.
+button, and keeps saying so until it sees the backups arriving.
 
 ## Then
 

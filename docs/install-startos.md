@@ -75,14 +75,30 @@ A watchtower is what responds to a breach while your node is not looking, and it
 is the difference between Forktower telling you about a problem and something
 being done about it.
 
-- **StartOS 0.4.x**: LND → **Actions → Watchtower → Watchtower Client Settings**,
-  and add a tower. The app enables the client itself once the list is not empty.
-- **StartOS 0.3.5.x**: LND → **Config**, and set `wtclient.active`, then restart
-  LND.
+Forktower runs the tower. What it cannot do is tell your node to use it, because
+it reads your node with a credential that cannot write — which is the same reason
+it can never spend your money.
 
-Forktower's readiness list will keep telling you this is not done until it is,
-and will confirm it once it sees the setting take effect — it checks rather than
-taking your word for it.
+**1. Get the address.** Forktower's dashboard shows it on the watchtower card,
+as `<key>@forktower.startos:9911`. Wait until it appears: the tower has to finish
+starting before it has an identity, and the dashboard says so while that happens.
+
+**2. Turn the client on and register the address.**
+
+- **StartOS 0.4.x**: LND → **Actions → Watchtower → Watchtower Client Settings**,
+  and paste the address in. LND switches the client on by itself once the list is
+  not empty — there is no separate toggle to find.
+- **StartOS 0.3.5.x**: LND → **Config**, set `wtclient.active`, save, and restart
+  LND. Then register the address with your node.
+
+**Do it sooner rather than later.** A watchtower can only punish a channel state
+it was given, and it is given them as they happen. States revoked before you
+registered are not covered by any tower, ever — so registering early is worth
+more than registering with several.
+
+Forktower's readiness list keeps telling you this is not done until it is, and
+confirms it once it sees the backups arriving — it checks rather than taking your
+word for it.
 
 ## Then
 
