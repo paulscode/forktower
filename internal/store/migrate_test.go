@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -255,5 +256,130 @@ func TestMigration0003AppliesOverAPopulatedDatabase(t *testing.T) {
 	}
 	if _, _, err := s.RecordMirrorDecision(ctx, sampleDecision(channelID)); err != nil {
 		t.Errorf("the new schema is not usable after upgrading: %v", err)
+	}
+}
+
+// The alerts a per-height key multiplied are collapsed into the one entry a
+// correct daemon would have written.
+//
+// **Not a tidy-up of inconvenient history.** Two watcher alerts used to carry the
+// block height in their identity, so a condition that recurred at a moving
+// height minted a fresh critical alert every time instead of joining the one
+// already there. One install reached 15,206 of them. The keys were made stable
+// in 0.6.1 and 0.6.5, which stopped new ones and left every existing one behind.
+//
+// Exercised against the real schema, including its UNIQUE index on dedup_key,
+// because re-keying the survivor is the step that could collide with a row the
+// fixed code has already written.
+func TestTheAlertsAPerHeightKeyMultipliedAreCollapsed(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "forktower.db")
+
+	// A database as a user running the older build actually has it: the schema
+	// before this migration, carrying the rows it has to deal with.
+	st, err := openAtVersion(ctx, path, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raise := func(kind, key string, created, last int64) {
+		t.Helper()
+		if _, err := st.UpsertAlert(ctx, Alert{
+			Tier: TierCritical, Kind: kind, DedupKey: key,
+			Subject:   "Forktower stopped watching the other chain",
+			Message:   "The other chain changed further back than a reorganisation reaches.",
+			CreatedAt: created, LastRaisedAt: last,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, height := range []int{176, 1116, 2094, 959766} {
+		raise("watcher_deep_reorg",
+			fmt.Sprintf("watcher_deep_reorg:%d", height), 100+int64(i), 200+int64(i))
+	}
+	raise("watcher_stalled", "watcher_stalled:272806", 300, 400)
+	raise("watcher_stalled", "watcher_stalled:297306", 301, 401)
+	// Untouchable: a different kind, and one whose key merely contains a colon.
+	raise("view_degraded", "view_degraded:sq", 500, 600)
+
+	// Upgrading is what applies it, through the one path production uses.
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = Open(ctx, path)
+	if err != nil {
+		t.Fatalf("upgrading a database with these alerts in it: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	rows, err := st.ListAlerts(ctx, AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKind := map[string][]Alert{}
+	for _, a := range rows {
+		byKind[a.Kind] = append(byKind[a.Kind], a)
+	}
+
+	for _, kind := range []string{"watcher_deep_reorg", "watcher_stalled"} {
+		got := byKind[kind]
+		if len(got) != 1 {
+			t.Fatalf("%s left %d entries, want the one a stable key would have made",
+				kind, len(got))
+		}
+		if got[0].DedupKey != kind {
+			t.Errorf("%s survived under %q, so the next occurrence would open a "+
+				"second thread beside it", kind, got[0].DedupKey)
+		}
+	}
+	// When it first happened is kept; when it last happened is carried across.
+	deep := byKind["watcher_deep_reorg"][0]
+	if deep.CreatedAt != 100 {
+		t.Errorf("created_at = %d, want the first occurrence", deep.CreatedAt)
+	}
+	if deep.LastRaisedAt != 203 {
+		t.Errorf("last_raised_at = %d, want the most recent of the group", deep.LastRaisedAt)
+	}
+	if len(byKind["view_degraded"]) != 1 {
+		t.Error("an unrelated alert whose key contains a colon was disturbed")
+	}
+}
+
+// And where the fixed code has already written the canonical row, the old ones
+// are duplicates of it — re-keying one onto it would violate the unique index.
+func TestCollapsingIsSafeWhenTheCanonicalAlertAlreadyExists(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "forktower.db")
+	st, err := openAtVersion(ctx, path, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"watcher_stalled", "watcher_stalled:100", "watcher_stalled:200"} {
+		if _, err := st.UpsertAlert(ctx, Alert{
+			Tier: TierCritical, Kind: "watcher_stalled", DedupKey: key,
+			Message: "stopped scanning", CreatedAt: 10, LastRaisedAt: 20,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = Open(ctx, path)
+	if err != nil {
+		t.Fatalf("collapsing onto an existing canonical row: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	rows, err := st.ListAlerts(ctx, AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].DedupKey != "watcher_stalled" {
+		t.Fatalf("%d rows left, want only the canonical one: %+v", len(rows), rows)
 	}
 }
