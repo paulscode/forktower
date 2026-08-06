@@ -36,7 +36,7 @@ GOLANGCI   ?= golangci-lint
 # workflow in .github/ has never run. Until it does, this target is the whole
 # safety net, which is why it includes the two checks that would otherwise only
 # happen on a build server — module tidiness and the vulnerability database.
-check: build lint test cover-check tidy-check vuln check-no-rdts check-clone
+check: build lint test cover-check tidy-check vuln check-no-rdts check-clone verify-release-selftest
 	@printf '\n  all checks passed\n'
 
 ## build: compile all binaries into bin/

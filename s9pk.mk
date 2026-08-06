@@ -314,7 +314,50 @@ verify-release:
 	  printf '  This release is unsigned. Sign SHA256SUMS on the airgapped\n' >&2; \
 	  printf '  machine and copy the .asc back before publishing anything.\n\n' >&2; \
 	  exit 1; }
-	@cd $(BUILD_DIR) && gpg --verify SHA256SUMS.asc SHA256SUMS 2>&1 | sed 's/^/  /'
+	@cd $(BUILD_DIR) && \
+	  out="$$(gpg --verify SHA256SUMS.asc SHA256SUMS 2>&1)"; status=$$?; \
+	  printf '%s\n' "$$out" | sed 's/^/  /'; \
+	  if [ "$$status" -ne 0 ]; then \
+	    printf '\n  **The signature does not verify.**\n\n' >&2; \
+	    printf '  The most likely cause is that SHA256SUMS was rebuilt after it\n' >&2; \
+	    printf '  was signed: `make release` remakes the whole directory, so a\n' >&2; \
+	    printf '  signature from before a rebuild is a signature over different\n' >&2; \
+	    printf '  bytes. Sign the current SHA256SUMS again.\n\n' >&2; \
+	    printf '  Publish nothing until this passes.\n\n' >&2; \
+	    exit 1; \
+	  fi
 	@cd $(BUILD_DIR) && sha256sum -c SHA256SUMS --quiet && \
 	  printf '  every file matches its checksum\n'
 	@printf '\n  %s is signed and consistent. Safe to publish.\n\n' "$(RELEASE_VERSION)"
+
+## verify-release-selftest: prove the verifier refuses a signature that is wrong
+#
+# **Because it did not.** The check piped gpg into sed, so the recipe took sed's
+# exit status and gpg's verdict was thrown away — a signature gpg called BAD
+# printed the word BAD and then reported "Safe to publish", exit 0. Every
+# release this project has cut was verified by something that could not fail.
+#
+# The same shape of mistake as `make check | tail`, in the one place where it
+# turns a wrong signature into a published one.
+#
+# Self-contained on purpose: it forges its own unverifiable signature rather
+# than needing a real one, so it runs in a fresh clone and on every `make check`
+# rather than only on the machine that happens to have signed something.
+#
+# **The checksums it builds are correct, and that is the point.** The first
+# version of this wrote nonsense into SHA256SUMS, so `sha256sum -c` failed and
+# the whole thing was refused — by the wrong check. It passed against the very
+# bug it was written for. Only a directory that is internally consistent and
+# wrongly signed can tell the two checks apart.
+verify-release-selftest:
+	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
+	  printf 'a released artefact\n' > "$$tmp/artefact"; \
+	  (cd "$$tmp" && sha256sum artefact > SHA256SUMS); \
+	  printf -- '-----BEGIN PGP SIGNATURE-----\n\nbm90IGEgc2lnbmF0dXJl\n=AAAA\n-----END PGP SIGNATURE-----\n' \
+	    > "$$tmp/SHA256SUMS.asc"; \
+	  if $(MAKE) --no-print-directory verify-release BUILD_DIR="$$tmp" >/dev/null 2>&1; then \
+	    printf '\n  verify-release passed a signature that does not verify.\n' >&2; \
+	    printf '  That is the whole of what it exists to refuse.\n\n' >&2; \
+	    exit 1; \
+	  fi; \
+	  printf '  verify-release refuses a signature that does not verify\n'
