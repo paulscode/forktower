@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -559,17 +560,43 @@ func (w *Warden) raise(c Concern) {
 }
 
 // forgetResolved clears the memory of concerns that no longer apply, so that one
-// recurring is announced again.
+// recurring is announced again — and says that each has passed.
+//
+// **It used to forget in silence.** The warning it had raised stayed on the
+// dashboard with nothing beside it, so the one thing a user does here — go and
+// change a setting on their own node — had no visible outcome. They came back to
+// the same sentence and no way to tell whether it was current or a record of
+// something already dealt with.
 func (w *Warden) forgetResolved(current []Concern) {
 	still := make(map[string]bool, len(current))
 	for _, c := range current {
 		still[fmt.Sprintf("%s:%d", c.Kind, c.ChannelID)] = true
 	}
 	for key := range w.lastConcerns {
-		if !still[key] {
-			delete(w.lastConcerns, key)
+		if still[key] {
+			continue
 		}
+		kind, channelID := splitConcernKey(key)
+		delete(w.lastConcerns, key)
+		w.bus.Publish(bus.TowerConcern{
+			TowerID: w.towerID.Load(), Concern: kind,
+			ChannelID: channelID, Cleared: true,
+		})
 	}
+}
+
+// splitConcernKey undoes the key raise builds, so a cleared concern can be
+// announced as the same kind it was raised as.
+func splitConcernKey(key string) (kind string, channelID int64) {
+	at := strings.LastIndex(key, ":")
+	if at < 0 {
+		return key, 0
+	}
+	id, err := strconv.ParseInt(key[at+1:], 10, 64)
+	if err != nil {
+		return key, 0
+	}
+	return key[:at], id
 }
 
 // TowerID is the row this warden is keeping up to date. Zero until the tower has

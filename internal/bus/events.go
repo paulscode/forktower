@@ -340,6 +340,14 @@ type TowerConcern struct {
 	// about the tower as a whole.
 	ChannelID int64  `json:"channel_id,omitempty"`
 	Message   string `json:"message"`
+	// Cleared says this concern no longer applies.
+	//
+	// **Announced, because the user is the one who fixed it.** Turning on a
+	// node's watchtower client is a setting Forktower cannot change and cannot
+	// confirm any other way — so somebody who does it comes straight back to see
+	// whether it took, and used to find the same warning still sitting there
+	// with nothing beside it to say the condition had passed.
+	Cleared bool `json:"cleared,omitempty"`
 }
 
 // Kind implements Event.

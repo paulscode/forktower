@@ -20,6 +20,10 @@ const (
 	// KindTowerNotProtecting means the tower is fine and is protecting nothing —
 	// the failure with no other symptom.
 	KindTowerNotProtecting = "tower_not_protecting"
+	// KindTowerProtecting says a gap the user had to close is closed. Its own
+	// kind, so the resolution reads as news rather than as the same warning
+	// again.
+	KindTowerProtecting = "tower_protecting"
 	// KindTowerMisbehaving means the tower returned a receipt that does not check
 	// out. Proof, not suspicion.
 	KindTowerMisbehaving = "tower_misbehaving"
@@ -127,6 +131,9 @@ func mapTowerHealth(ev bus.TowerHealthChanged) (Candidate, bool) {
 // backing up to nothing" and "one channel of an unusual type is not covered" are
 // not the same news.
 func mapTowerConcern(ev bus.TowerConcern) (Candidate, bool) {
+	if ev.Cleared {
+		return clearedConcern(ev)
+	}
 	switch tower.ConcernKind(ev.Concern) {
 	case tower.ConcernClientOff, tower.ConcernPluginMissing:
 		// Nothing is being backed up anywhere. The largest gap this arm can have,
@@ -284,5 +291,61 @@ func neverReachable(previous string) bool {
 		return false
 	default:
 		return false
+	}
+}
+
+// clearedConcern announces that something the user had to fix is fixed.
+//
+// **Its own entry, under its own key, rather than editing the warning.** That is
+// how every other resolution in this program works — a split resolving does not
+// rewrite the alert that announced it — and it is also the only thing the store
+// supports: raising a resolution under the warning's key would find the existing
+// row and bump it, leaving the warning's own words on the screen.
+//
+// Only for the concerns a person acts on. A channel becoming coverable because
+// it closed is not news anybody was waiting for, and an entry for every one of
+// those would bury the two that matter.
+func clearedConcern(ev bus.TowerConcern) (Candidate, bool) {
+	switch tower.ConcernKind(ev.Concern) {
+	case tower.ConcernClientOff, tower.ConcernPluginMissing:
+		return Candidate{
+			Tier: store.TierResolved, Kind: KindTowerProtecting,
+			DedupKey: fmt.Sprintf("%s:client:%d", KindTowerProtecting, ev.TowerID),
+			Subject:  "Your node is backing up to a watchtower",
+			Message: "The watchtower client on your Lightning node is on, and " +
+				"channel states are reaching the tower. That was the one step " +
+				"Forktower could not take for you.",
+		}, true
+
+	case tower.ConcernNotRegistered:
+		return Candidate{
+			Tier: store.TierResolved, Kind: KindTowerProtecting,
+			DedupKey: fmt.Sprintf("%s:unregistered:%d", KindTowerProtecting, ev.TowerID),
+			Subject:  "Your watchtower has your channels registered",
+			Message: "Your node has registered with the tower and is sending it " +
+				"channel states.",
+		}, true
+
+	case tower.ConcernChannelUncovered, tower.ConcernBackupsStalled,
+		tower.ConcernFeeRateFixed, tower.ConcernSessionsExhausted,
+		tower.ConcernExternalOnly, tower.ConcernSubscriptionExpiring,
+		tower.ConcernSlotsLow, tower.ConcernAppointmentsUndelivered,
+		tower.ConcernAppointmentsInvalid, tower.ConcernTowerMisbehaving,
+		tower.ConcernDiskFilling:
+		// Real while they last and not worth an announcement when they stop.
+		//
+		// Every one of these ends without anybody doing anything — a subscription
+		// renewed, a channel closed, disk freed — so nobody is sitting there
+		// waiting to hear. The readiness list carries the current answer, and an
+		// entry for each of these would bury the two above, which are the ones
+		// somebody went and worked for.
+		//
+		// Listed rather than defaulted, so a concern added later has to be
+		// classified here on purpose instead of falling silently into the quiet
+		// half.
+		return Candidate{}, false
+
+	default:
+		return Candidate{}, false
 	}
 }

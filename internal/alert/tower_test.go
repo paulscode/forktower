@@ -493,3 +493,54 @@ func TestNoDetailProducesNoSentence(t *testing.T) {
 		t.Errorf("an empty detail produced %q", got)
 	}
 }
+
+// Fixing the one thing Forktower cannot fix is worth saying out loud.
+//
+// **Reported by a tester.** They turned on their node's watchtower client,
+// pasted in the address, came back — and found the same "your watchtower client
+// is switched off" warning sitting there, with nothing to say whether it was
+// current or a record of something already dealt with. The warden had noticed
+// the concern go away and forgotten it in silence.
+func TestFixingTheWatchtowerClientIsAnnounced(t *testing.T) {
+	t.Parallel()
+	got, raised := mapTowerConcern(bus.TowerConcern{
+		TowerID: 1,
+		Concern: string(tower.ConcernClientOff),
+		Cleared: true,
+	})
+	if !raised {
+		t.Fatal("the client being switched on produced nothing at all")
+	}
+	if got.Tier != store.TierResolved {
+		t.Errorf("tier = %s, want %s", got.Tier, store.TierResolved)
+	}
+	// **Its own key.** Raising a resolution under the warning's key would find
+	// the existing row and bump it, leaving the warning's own words on screen.
+	warning, _ := mapTowerConcern(bus.TowerConcern{
+		TowerID: 1,
+		Concern: string(tower.ConcernClientOff),
+	})
+	if got.DedupKey == warning.DedupKey {
+		t.Errorf("the resolution reuses the warning's key %q, so it would edit "+
+			"the warning rather than appear beside it", got.DedupKey)
+	}
+}
+
+// Not every concern ending is news. A channel becoming coverable because it
+// closed is not something anybody was waiting to hear, and an entry for each
+// would bury the two that a person actually acted on.
+func TestOnlyConcernsAPersonActedOnAreAnnouncedAsFixed(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []tower.ConcernKind{
+		tower.ConcernChannelUncovered,
+		tower.ConcernBackupsStalled,
+		tower.ConcernFeeRateFixed,
+		tower.ConcernSessionsExhausted,
+	} {
+		if _, raised := mapTowerConcern(bus.TowerConcern{
+			TowerID: 1, Concern: string(kind), Cleared: true,
+		}); raised {
+			t.Errorf("%s ending produced an announcement nobody was waiting for", kind)
+		}
+	}
+}
