@@ -157,6 +157,13 @@ type Watcher struct {
 	ws       WatchSet
 	last     blockRef
 	progress Progress
+	// replaying remembers whether the backend is still working through history,
+	// with when it was last asked. Cached because during an initial sync a tip
+	// notification arrives for every connected block, and an RPC per block would
+	// make the check heavier than the scanning it exists to prevent.
+	replaying     bool
+	replayingAt   time.Time
+	replayingSeen bool
 	// sweep is the range of blocks behind the high-water mark still to be
 	// looked at, and blockedSweep says it hit something it could not read. The
 	// sweep is retried when the next block arrives rather than immediately, so a
@@ -362,6 +369,45 @@ func (w *Watcher) onEvent(ctx context.Context, e bus.Event, open bool) {
 	}
 }
 
+// replayingCheckEvery is how often the backend is asked whether it is still
+// working through history.
+//
+// Not per tip: during an initial sync a notification arrives for every connected
+// block, and asking each time would cost more than the scanning this prevents.
+// Half a minute is far shorter than any sync and far longer than any block.
+const replayingCheckEvery = 30 * time.Second
+
+// backendReplaying reports whether the other chain's node is still validating
+// blocks it already has headers for.
+//
+// **Fails open, deliberately.** If the backend cannot say, this answers "not
+// replaying" and scanning proceeds — the failure to read health is itself
+// reported elsewhere, and a watcher that stops watching because one status call
+// did not come back would turn a transient RPC blip into silent blindness. The
+// cost of being wrong the other way is some wasted scanning.
+func (w *Watcher) backendReplaying(ctx context.Context) bool {
+	now := w.now()
+
+	w.mu.Lock()
+	fresh := !w.replayingAt.IsZero() && now.Sub(w.replayingAt) < replayingCheckEvery
+	cached := w.replaying
+	w.mu.Unlock()
+	if fresh {
+		return cached
+	}
+
+	health, err := w.view.Health(ctx)
+	if err != nil {
+		return false
+	}
+
+	w.mu.Lock()
+	w.replaying = health.ReplayingHistory
+	w.replayingAt = now
+	w.mu.Unlock()
+	return health.ReplayingHistory
+}
+
 // stopping reports that the daemon is shutting down, which makes every failure
 // below it uninteresting.
 func stopping(ctx context.Context) bool { return ctx.Err() != nil }
@@ -459,7 +505,36 @@ func (w *Watcher) handleTip(ctx context.Context, tip chainview.BlockMeta) {
 		}
 		return
 	}
+	// **A node replaying history has no tip worth watching.** Its "tip" is a
+	// historical block that climbs quickly, and following it means scanning
+	// hundreds of thousands of blocks from years before any of the user's
+	// channels existed — while competing for disk with the very sync being
+	// chased. Observed on a fresh install: the mark reached height 311,611, in
+	// 2014, and every read that hiccupped under that load raised a *critical*
+	// "scanning has stopped" alert at a new height.
+	//
+	// Nothing is recorded either, so no mark is laid at a height that means
+	// nothing. Once the backend is caught up, the first tip starts watching from
+	// a real one.
+	if w.backendReplaying(ctx) {
+		w.mu.Lock()
+		noted := w.replayingSeen
+		w.replayingSeen = true
+		w.progress.Why = "the other chain's node is still catching up, so there is " +
+			"nothing to watch yet"
+		w.mu.Unlock()
+		if !noted {
+			w.log.Info("not watching the other chain yet, because its node is still " +
+				"catching up with history")
+		}
+		return
+	}
 	w.mu.Lock()
+	if w.replayingSeen {
+		w.replayingSeen = false
+		w.progress.Why = ""
+		w.log.Info("the other chain's node has caught up, so watching starts")
+	}
 	w.pausedNoted = false
 	last := w.last
 	w.mu.Unlock()

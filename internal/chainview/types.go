@@ -185,6 +185,18 @@ type BackendHealth struct {
 	PeerCount int
 	// SyncProgress runs 0..1, reaching 1 when caught up.
 	SyncProgress float64
+	// ReplayingHistory means the backend is working through blocks it has headers
+	// for but has not validated — an initial sync, or a long catch-up after being
+	// off. Its "tip" during that phase is a historical block that moves forward
+	// quickly, which is not a chain anybody should be drawing conclusions from.
+	//
+	// **Not the node's own initial-block-download flag.** A regtest node reports
+	// itself in initial block download while sitting idle at its own tip, so a
+	// gate keyed on that flag stays shut for ever on exactly the deployments the
+	// scenario tests use. Blocks trailing headers is the phase this names, and at
+	// the tip the two are equal — the same expression the mempool gate uses, and
+	// deliberately so: if one of them is right, both are.
+	ReplayingHistory bool
 	// Detail is a short human explanation, safe to show a user.
 	Detail string
 }

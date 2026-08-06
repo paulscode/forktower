@@ -285,7 +285,9 @@ func (v *View) Health(ctx context.Context) (chainview.BackendHealth, error) {
 	// history: headers arrive fast and blocks follow slowly behind them, and
 	// every transaction in every connected block is republished. Blocks trailing
 	// headers *is* that phase, and at the tip the two are equal.
-	v.catchingUp.Store(info.Headers-info.Blocks > catchUpMargin)
+	replaying := info.Headers-info.Blocks > catchUpMargin
+	v.catchingUp.Store(replaying)
+	health.ReplayingHistory = replaying
 
 	switch {
 	case info.InitialBlockDownload:

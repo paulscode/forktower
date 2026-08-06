@@ -1196,3 +1196,102 @@ func TestAChainThatOutrunsTheReaderIsRejoinedAtItsTip(t *testing.T) {
 		}
 	}
 }
+
+// A node still replaying history has no tip worth watching.
+//
+// **Reported from a fresh install, and it is the loudest instance of the
+// mistake this codebase keeps making.** The second Bitcoin node was doing its
+// initial sync; the watcher took its tip — a block from 2014 — as a starting
+// point and followed the download forward, scanning hundreds of thousands of
+// blocks from years before any of the user's channels existed. Every read that
+// hiccupped under that load raised a *critical* "scanning has stopped" alert,
+// at a new height each time: eleven of them in ten minutes.
+func TestAChainStillReplayingHistoryIsNotWatchedYet(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	h.view.SetHealth(chainview.BackendHealth{
+		State: chainview.HealthSyncing, ReplayingHistory: true,
+	})
+	h.run()
+
+	h.view.Extend("history", 5)
+	// Nothing to wait for, so give the loop room to do the wrong thing.
+	h.waitForNoMark(t)
+
+	if got := h.w.Progress().Height; got != 0 {
+		t.Errorf("the watcher started from height %d on a node that has not "+
+			"caught up, and will now follow its whole download", got)
+	}
+	if _, err := h.store.GetMeta(context.Background(), store.MetaLastScannedSQHeight); err == nil {
+		t.Error("a scan mark was laid at a height that means nothing, which a " +
+			"restart will then trust")
+	}
+}
+
+// And once it has caught up, watching starts from a real tip.
+func TestWatchingStartsOnceTheChainHasCaughtUp(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	h.view.SetHealth(chainview.BackendHealth{
+		State: chainview.HealthSyncing, ReplayingHistory: true,
+	})
+	h.run()
+	h.view.Extend("history", 3)
+	h.waitForNoMark(t)
+
+	h.view.SetHealth(chainview.BackendHealth{State: chainview.HealthOK})
+	// Past the point where the cached answer is re-asked. Without this the
+	// watcher is entitled to keep believing the node is still catching up, which
+	// is the whole reason the check is cached.
+	h.clock.Add(int64(replayingCheckEvery/time.Second) + 1)
+	meta := h.view.Extend("real", 1)
+
+	h.waitFor("watching to start from the caught-up tip", func() bool {
+		return h.w.Progress().Height == meta.Height
+	})
+}
+
+// waitForNoMark gives the loop a fair chance to lay a mark, so that asserting it
+// did not is a real assertion rather than a race won by the test.
+func (h *liveHarness) waitForNoMark(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if h.w.Progress().Height != 0 {
+			return // it laid one; the caller's assertion will report it
+		}
+		time.Sleep(5 * time.Millisecond) //nolint:forbidigo // waiting on a real goroutine
+	}
+}
+
+// One stall is one alert, however far the height has moved.
+//
+// **Eleven critical alerts in ten minutes on one install**, all describing the
+// same condition, because the key carried the height and the height was climbing
+// as the backend replayed history. deepReorg carries the identical fix twenty
+// lines above this, with a comment describing exactly this failure; stall was
+// missed in that pass.
+func TestOneStallIsOneAlertHoweverTheHeightMoves(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	ctx := context.Background()
+
+	for _, height := range []int32{272806, 275304, 277691, 297306} {
+		h.w.stall(ctx, height, errors.New("could not read the block"))
+	}
+
+	alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stalls int
+	for _, a := range alerts {
+		if a.Kind == StalledAlertKind {
+			stalls++
+		}
+	}
+	if stalls != 1 {
+		t.Errorf("one condition at four heights produced %d critical alerts, "+
+			"want one thread", stalls)
+	}
+}

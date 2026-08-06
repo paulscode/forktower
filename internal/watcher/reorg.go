@@ -607,8 +607,13 @@ func (w *Watcher) stall(ctx context.Context, height int32, cause error) {
 	w.log.Error("scanning the other chain has stopped making progress",
 		slog.Int("height", int(height)), slog.String("error", cause.Error()))
 
-	w.raise(ctx, store.TierCritical, StalledAlertKind,
-		fmt.Sprintf("%s:%d", StalledAlertKind, height),
+	// **A stable key, not one per height** — the same fix deepReorg carries
+	// twenty lines above, and this is what it warns about. Keyed by height, a
+	// condition that recurred as the height moved minted a fresh *critical*
+	// alert every time: eleven of them in ten minutes on one install, all
+	// describing the same thing. What a user needs to know is that scanning has
+	// stopped, once, not the height it was at on each occasion.
+	w.raise(ctx, store.TierCritical, StalledAlertKind, StalledAlertKind,
 		"Forktower has stopped scanning the other chain",
 		"A block on the other chain could not be read after several tries, so nothing "+
 			"new is being checked. Forktower is still running, which is exactly why this "+
