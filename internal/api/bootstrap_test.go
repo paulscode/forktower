@@ -607,3 +607,63 @@ func putTower(t *testing.T, h *harness, pubkey string, managed bool) int64 {
 	}
 	return id
 }
+
+// On a platform with no settings screen, having nowhere to send alerts is a
+// fact rather than an unfinishable task.
+//
+// **Reported from a live Umbrel install.** It was shown as "Step 9 of 9", with
+// directions to edit the app's docker-compose.yml by hand and restart — to
+// somebody who had installed from an app store. The step could not be completed,
+// so the setup never read as finished, which is the thing SkipCost's own comment
+// warns produces abandoned installs.
+func TestNowhereToSendAlertsIsNotASetupStepOnAnAppStorePlatform(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.Platform = config.PlatformUmbrel })
+	h.alerter.setNames()
+	ctx := context.Background()
+
+	item := findCheck(t, h.srv.Readiness(ctx), CheckAlertTransports)
+	if item.Action != nil {
+		t.Error("a button was offered for something the user cannot do from any " +
+			"screen they have")
+	}
+	if !item.informational {
+		t.Error("a condition nobody on this platform can clear was counted as a " +
+			"blocking failure, so the dashboard stays red for ever")
+	}
+
+	// And it must not hold up the wizard, which was the reported symptom.
+	setup := setupOf(t, h)
+	for _, w := range setup.Waiting {
+		if strings.Contains(w, "reach you") || strings.Contains(w, "Alerts appear") {
+			t.Error("presented as something to wait for, when nothing is coming")
+		}
+	}
+	if setup.Step != nil && setup.Step.ID == CheckAlertTransports {
+		t.Errorf("still the wizard's current step: %q", setup.Step.Label)
+	}
+
+	// But it is still said. Somebody who does not know this will assume that
+	// software talking about urgent countdowns will come and find them.
+	if item.OK {
+		t.Error("a deployment that cannot reach its user was reported as fine")
+	}
+	if !strings.Contains(item.Label, "nowhere else") {
+		t.Errorf("label = %q, which does not say alerts stay on this page", item.Label)
+	}
+}
+
+// A self-hoster who wrote the compose file is a different audience: naming an
+// environment variable is the natural instruction, and it stays a real step.
+func TestASelfHostedDeploymentIsStillAskedToSetAlertsUp(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.Platform = config.PlatformUnknown })
+	h.alerter.setNames()
+
+	item := findCheck(t, h.srv.Readiness(context.Background()), CheckAlertTransports)
+	if item.informational {
+		t.Error("a deployment whose operator edits its configuration by hand was " +
+			"excused from setting up notifications")
+	}
+	if item.Action == nil {
+		t.Error("no way offered to set them up")
+	}
+}

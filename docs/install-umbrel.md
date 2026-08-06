@@ -59,6 +59,14 @@ elsewhere**. Without one, alerts appear only on Forktower's dashboard — which
 works, and only helps if you happen to be looking at it. The alerts that matter
 most arrive while you are not.
 
+Forktower does not present this as a setup step on Umbrel, because there is no
+screen on which you could complete it. It says plainly that alerts appear on its
+page and nowhere else, and leaves it there. **If you are comfortable with a
+terminal**, setting `FORKTOWER_NTFY_URL` or `FORKTOWER_WEBHOOK_URL` in the app's
+`docker-compose.yml` and restarting the app changes that — but it is not
+something the app can walk you through, and a future version will let you set
+this up from Forktower's own screen instead.
+
 Set `FORKTOWER_NTFY_URL` to an ntfy topic, or `FORKTOWER_WEBHOOK_URL` to
 something of your own. Forktower's readiness list reports that it has no way to
 reach you until you do, and it is right to.

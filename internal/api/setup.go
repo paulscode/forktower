@@ -235,14 +235,13 @@ func alertsGuidance(platform config.Platform) []string {
 			"Restart Forktower so the setting takes effect.",
 		}
 	case config.PlatformUmbrel:
-		return []string{
-			"Umbrel gives an app no settings screen, so this one is edited by hand.",
-			"In the Forktower app's docker-compose.yml, set FORKTOWER_NTFY_URL or " +
-				"FORKTOWER_WEBHOOK_URL.",
-			"Restart the app.",
-			"If that is more than you want to do, the dashboard still shows " +
-				"everything — it just cannot come and find you.",
-		}
+		// **Nothing, because this is no longer a step there.** Umbrel gives an app
+		// no settings screen, so the directions here were "open a terminal and
+		// edit the compose file" — presented as step nine of nine to somebody who
+		// installed from an app store. The readiness check now states the position
+		// as a fact instead, and carries the terminal route in its detail for the
+		// minority who want it. One place saying it, and it is the reachable one.
+		return nil
 	case config.PlatformUnknown:
 		return nil
 	default:

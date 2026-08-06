@@ -106,6 +106,14 @@ func newFakeAlerter(names ...string) *fakeAlerter {
 	return &fakeAlerter{names: names, failing: map[string]bool{}}
 }
 
+// setNames replaces the configured transports, for tests about a deployment with
+// none.
+func (f *fakeAlerter) setNames(names ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.names = names
+}
+
 func (f *fakeAlerter) TransportNames() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

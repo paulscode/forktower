@@ -8,6 +8,7 @@ import (
 
 	"github.com/paulscode/forktower/internal/alert"
 	"github.com/paulscode/forktower/internal/chainview"
+	"github.com/paulscode/forktower/internal/config"
 	"github.com/paulscode/forktower/internal/sentinel"
 	"github.com/paulscode/forktower/internal/store"
 	"github.com/paulscode/forktower/internal/words"
@@ -461,6 +462,29 @@ func enforcesNewRules(subversion string) bool {
 	return false
 }
 
+// alertsSetUpByHand reports whether telling this user to edit a configuration
+// file is realistic advice.
+//
+// **Not "is there a settings screen" — "is this someone who edits files".** A
+// self-hoster running the compose deployment wrote that file; naming an
+// environment variable is the natural instruction and they will not blink at it.
+// Somebody who installed from an app store did not write anything, has no screen
+// to change it on, and telling them to open a terminal is how a setup step
+// becomes a dead end.
+//
+// The platforms with their own settings forms never reach this: they raise
+// notifications themselves, and are answered above.
+func alertsSetUpByHand(platform config.Platform) bool {
+	switch platform {
+	case config.PlatformUmbrel:
+		return false
+	case config.PlatformStartOS04, config.PlatformStartOS035, config.PlatformUnknown:
+		return true
+	default:
+		return true
+	}
+}
+
 func (s *Server) checkAlertTransports(ctx context.Context) ReadinessItem {
 	noTransports := s.alerter == nil || len(s.alerter.TransportNames()) == 0
 
@@ -473,6 +497,30 @@ func (s *Server) checkAlertTransports(ctx context.Context) ReadinessItem {
 		return ReadinessItem{
 			ID: CheckAlertTransports, OK: true,
 			Label: "Alerts reach you through this device's own notifications",
+		}
+	}
+
+	if noTransports && !alertsSetUpByHand(s.cfg.Platform) {
+		// **A fact, not a task.** Told to edit a compose file by hand, an Umbrel
+		// user was shown this as step nine of nine — a step they cannot complete,
+		// so the setup never read as finished. A setup somebody cannot finish is
+		// one they abandon, which is the reasoning written beside SkipCost, and
+		// it was being done to every Umbrel install.
+		//
+		// Still said, though, and not hidden. On that platform this is not a
+		// missing extra: it is a property of the deployment, and somebody who
+		// does not know it will reasonably assume that software talking about
+		// urgent countdowns will come and find them.
+		return ReadinessItem{
+			ID: CheckAlertTransports, OK: false, informational: true,
+			Label: "Alerts appear here and nowhere else",
+			Why: "This platform gives an app no settings screen, so Forktower has " +
+				"no way to send you anything. Everything still appears on this " +
+				"page — it just cannot come and find you, so it is worth looking " +
+				"in from time to time.",
+			Detail: "If you are comfortable with a terminal, setting " +
+				"FORKTOWER_NTFY_URL or FORKTOWER_WEBHOOK_URL in the app's " +
+				"docker-compose.yml and restarting will change that.",
 		}
 	}
 
