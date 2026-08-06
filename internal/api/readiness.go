@@ -168,14 +168,35 @@ func (s *Server) checkTowerProtection(ctx context.Context) ReadinessItem {
 					"do until it is — this finishes on its own.",
 			}
 		case oursWorking > 0 && s.notUsingOurs(ctx, towers):
+			// **Registered and not yet covering is not the same as unregistered**,
+			// and telling the two apart matters because only one of them is
+			// something the user can act on. Inferring "not registered" from "not
+			// covered" sent somebody who had just done the registration back to do
+			// it again, with instructions for a thing already done — while
+			// Forktower's own record showed the scout had seen the registration
+			// and closed its concern about it.
+			//
+			// The scout is the thing that knows, so its concern is the signal:
+			// raised when the node is backing up to somebody else's tower and not
+			// ours, withdrawn when that changes.
+			if s.stillUnregisteredWithOurs(ctx) {
+				return ReadinessItem{
+					ID: CheckTowerProtection, OK: false, informational: true,
+					Label: "Your node is not registered with Forktower's watchtower",
+					Why: "Whatever else you have registered watches whichever chain " +
+						"its operator's node follows, which cannot be seen from here. " +
+						"The tower Forktower runs is the one with a known view of " +
+						words.OtherChain + " — the chain your own node cannot see.",
+					Action: actionSetUpTower(),
+				}
+			}
 			return ReadinessItem{
-				ID: CheckTowerProtection, OK: false, informational: true,
-				Label: "Your node is not registered with Forktower's watchtower",
-				Why: "Whatever else you have registered watches whichever chain " +
-					"its operator's node follows, which cannot be seen from here. " +
-					"The tower Forktower runs is the one with a known view of " +
-					words.OtherChain + " — the chain your own node cannot see.",
-				Action: actionSetUpTower(),
+				ID: CheckTowerProtection, OK: false,
+				informational: true, settling: true,
+				Label: "Forktower's watchtower is not covering your channels yet",
+				Why: "Your node is registered with it and has not yet agreed a " +
+					"session, which it does on its own. Until it has, a breach on " +
+					words.OtherChain + " would not be answered. Nothing for you to do.",
 			}
 		}
 	}
@@ -234,6 +255,28 @@ func (s *Server) checkTowerProtection(ctx context.Context) ReadinessItem {
 		ID: CheckTowerProtection, OK: true,
 		Label: "A watchtower is ready to answer a breach",
 	}
+}
+
+// stillUnregisteredWithOurs reports whether the scout currently says the node is
+// not registered with the tower this installation runs.
+//
+// Read from the alert it raises rather than recomputed, because the scout is the
+// only thing that compares the node's registered list against ours — and it
+// already withdraws this the moment that changes.
+func (s *Server) stillUnregisteredWithOurs(ctx context.Context) bool {
+	rows, err := s.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		// No opinion. Falling back to the gentler of the two messages, because
+		// telling somebody to redo work they have done is the worse mistake.
+		return false
+	}
+	for _, a := range rows {
+		if a.DedupKey == alert.KindTowerNotProtecting+":ours-not-registered" &&
+			a.Tier != store.TierResolved {
+			return true
+		}
+	}
+	return false
 }
 
 // notUsingOurs reports whether the node is demonstrably not backing up to a

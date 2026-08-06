@@ -13,6 +13,8 @@ import (
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/config"
 	"github.com/paulscode/forktower/internal/store"
+
+	"github.com/paulscode/forktower/internal/alert"
 )
 
 // fakeBootstrap is a scripted snapshot shortcut.
@@ -551,6 +553,19 @@ func TestSomebodyElsesTowerDoesNotSatisfyTheCheckWhereWeRunOne(t *testing.T) {
 		}
 	}
 
+	// The scout's own verdict, which is what says the node has not registered
+	// with ours. Without it this is the *other* state — registered, no session
+	// yet — which is not something to ask the user to act on.
+	if _, err := h.store.UpsertAlert(ctx, store.Alert{
+		Tier: store.TierWarning, Kind: alert.KindTowerNotProtecting,
+		DedupKey:  alert.KindTowerNotProtecting + ":ours-not-registered",
+		Subject:   "Forktower's watchtower is not registered with your node",
+		Message:   "your node is backing up to a watchtower Forktower does not run",
+		CreatedAt: 1, LastRaisedAt: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	item := findCheck(t, h.srv.Readiness(ctx), CheckTowerProtection)
 	if item.OK {
 		t.Fatal("a third-party tower marked the watchtower step done, so the " +
@@ -665,5 +680,41 @@ func TestASelfHostedDeploymentIsStillAskedToSetAlertsUp(t *testing.T) {
 	}
 	if item.Action == nil {
 		t.Error("no way offered to set them up")
+	}
+}
+
+// Registered, and waiting for a session, is not the same as not registered.
+//
+// **Reported from a live install.** The user had registered Forktower's watchtower
+// with their node — Forktower's own record showed the scout had seen it and
+// withdrawn its concern — and the setup wizard still said "Your node is not
+// registered with Forktower's watchtower", as step nine of nine, with
+// instructions to go and do the thing they had just done. It was inferring "not
+// registered" from "not covered", which are different states with different
+// remedies, and only one of them has a remedy at all.
+func TestRegisteredButNotYetCoveredIsNotReportedAsUnregistered(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.RunsOwnWatchtower = true })
+	ctx := context.Background()
+
+	ours := putTower(t, h, "03"+strings.Repeat("c", 62), true)
+	ch := addChannel(t, h, "aa"+strings.Repeat("0", 62), nil)
+	if err := h.store.UpsertCoverage(ctx, store.Coverage{
+		ChannelID: ch, TowerID: ours, Coverable: false,
+		Reason: "both ends support anchor sessions but the node has not negotiated one",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// No scout concern standing: the node *has* registered.
+
+	item := findCheck(t, h.srv.Readiness(ctx), CheckTowerProtection)
+	if strings.Contains(item.Label, "not registered") {
+		t.Errorf("label = %q, sending somebody to redo a registration they have "+
+			"already made", item.Label)
+	}
+	if item.Action != nil {
+		t.Error("a button was offered for a registration that already exists")
+	}
+	if !waitingOn(item) {
+		t.Error("a session the node agrees on its own was presented as a task")
 	}
 }
