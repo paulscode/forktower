@@ -645,8 +645,7 @@ func (w *Watcher) clearStall(ctx context.Context) {
 	// Restoring Stalled from storage at startup would be the other way, and is
 	// worse: it would report scanning as stopped until the next block, and on
 	// the chain being watched a block can be a long time coming.
-	first := !w.checkedStanding
-	w.checkedStanding = true
+	first := w.takeStandingCheck()
 	w.progress.Stalled = false
 	w.progress.StalledAt = 0
 	w.progress.Why = ""
@@ -658,6 +657,42 @@ func (w *Watcher) clearStall(ctx context.Context) {
 	if was {
 		w.log.Info("scanning the other chain is making progress again")
 	}
+	w.closeStanding(ctx)
+}
+
+// takeStandingCheck reports whether this process has yet to look for alerts a
+// previous run left standing, and records that it has. Caller holds the lock.
+func (w *Watcher) takeStandingCheck() bool {
+	first := !w.checkedStanding
+	w.checkedStanding = true
+	return first
+}
+
+// closeStandingOnce does that look, from anywhere, exactly once.
+//
+// **Because clearStall is not always reached.** It runs at the end of processing
+// a block, and a watcher deliberately not scanning — its node still replaying
+// history — never gets there. On the machine that found this, that meant a
+// critical alert left over from a previous run would have stood for the days its
+// node needed to catch up, which is precisely the window where a new user is
+// deciding whether to trust any of this.
+//
+// Contact with the backend is the right trigger rather than a successful scan:
+// at that point the current state is whatever progress says, and an alert from a
+// previous run is not evidence about it. If the condition still holds, the next
+// pass raises it again under the same stable key.
+func (w *Watcher) closeStandingOnce(ctx context.Context) {
+	w.mu.Lock()
+	first := w.takeStandingCheck()
+	w.mu.Unlock()
+	if !first {
+		return
+	}
+	w.closeStanding(ctx)
+}
+
+// closeStanding retires the two alerts this watcher can raise.
+func (w *Watcher) closeStanding(ctx context.Context) {
 	w.resolve(ctx, StalledAlertKind,
 		"Forktower is reading the other chain again",
 		"Whatever stopped it has passed, and blocks are being checked again.")

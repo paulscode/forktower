@@ -24,6 +24,15 @@ type runnerHarness struct {
 	run   *Runner
 }
 
+// testDeadline is how long a test waits on work happening in another goroutine.
+//
+// **Generous on purpose**, as in the watcher and registry packages for the same
+// reason: on an idle machine these are met in milliseconds, so the limit
+// measures the build host rather than the code. Five seconds failed a full-suite
+// run under the race detector while passing every time in isolation, and a gate
+// that fails on load is one people re-run rather than read.
+const testDeadline = 30 * time.Second
+
 func newRunnerHarness(t *testing.T) *runnerHarness {
 	t.Helper()
 
@@ -71,7 +80,7 @@ func (h *runnerHarness) start() {
 			if err != nil {
 				h.t.Errorf("the runner stopped with an error: %v", err)
 			}
-		case <-time.After(5 * time.Second):
+		case <-time.After(testDeadline):
 			h.t.Error("the runner did not stop when asked")
 		}
 	})
@@ -104,7 +113,7 @@ func (h *runnerHarness) channelSpending(tx *wire.MsgTx) int64 {
 
 func (h *runnerHarness) waitFor(what string, ok func() bool) {
 	h.t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(testDeadline)
 	for !ok() {
 		select {
 		case <-deadline:
@@ -311,7 +320,7 @@ func TestAClosedBusStopsTheRunner(t *testing.T) {
 		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Errorf("stopping reported an error: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testDeadline):
 		t.Error("the runner did not stop when its bus closed")
 	}
 }

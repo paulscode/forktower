@@ -601,6 +601,12 @@ func (w *Watcher) handleTip(ctx context.Context, tip chainview.BlockMeta) {
 	// nothing. Once the backend is caught up, the first tip starts watching from
 	// a real one.
 	replaying, activeBest := w.backendState(ctx)
+
+	// The backend answered, so whatever an earlier run left standing is no longer
+	// evidence about now. Once per process, and before the gates below, because
+	// a watcher that is waiting for its node never reaches the scanning path.
+	w.closeStandingOnce(ctx)
+
 	if replaying {
 		w.mu.Lock()
 		noted := w.replayingSeen

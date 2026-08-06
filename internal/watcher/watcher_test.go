@@ -982,7 +982,14 @@ func TestASweepInTheSameBlockAsItsCommitmentIsFound(t *testing.T) {
 			t.Errorf("a spend was recorded at height %d, want %d", sp.BlockHeight, meta.Height)
 		}
 	}
-	if !shapes[store.ShapeCommitmentUnknown] || !shapes[store.ShapeJustice] {
+	// **Either commitment shape passes, and that is not a weakened assertion.**
+	// The justice transaction proves the commitment was revoked, so a second pass
+	// refines "unknown" into "revoked" — a better answer, arrived at slightly
+	// later. Insisting on the earlier one made this a race the test happened to
+	// win, and any change to the loop's timing could lose it. What is being
+	// proved here is that a sweep in its commitment's own block is found at all.
+	commitmentFound := shapes[store.ShapeCommitmentUnknown] || shapes[store.ShapeCommitmentRevoked]
+	if !commitmentFound || !shapes[store.ShapeJustice] {
 		t.Errorf("found %v, want a commitment and the justice answering it", shapes)
 	}
 }
@@ -1516,4 +1523,40 @@ func TestTheStandingCheckHappensOnceNotPerBlock(t *testing.T) {
 	if len(alerts) != 1 || alerts[0].Tier == store.TierResolved {
 		t.Errorf("the standing check ran again on a later block: %+v", alerts)
 	}
+}
+
+// A watcher that is waiting for its node still closes what a previous run left.
+//
+// **The gap in 0.6.8's own fix, found on hardware.** Closing standing alerts
+// happened at the end of processing a block — and a watcher deliberately not
+// scanning, because its node is still replaying history, never gets there. On
+// the machine that showed this, that meant a critical alert from a previous run
+// would have stood for the days its node needed to catch up.
+func TestAWatcherWaitingForItsNodeStillClosesOldAlerts(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	ctx := context.Background()
+
+	h.w.raise(ctx, DeepReorgAlertKind, DeepReorgAlertKind,
+		"Forktower stopped watching the other chain", "The other chain changed.")
+
+	// The node is still catching up, so nothing will be scanned at all.
+	h.view.SetHealth(chainview.BackendHealth{
+		State: chainview.HealthSyncing, ReplayingHistory: true,
+	})
+	h.run()
+	h.view.Extend("history", 2)
+
+	h.waitFor("the alert a previous run left to be closed", func() bool {
+		alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+		if err != nil || len(alerts) == 0 {
+			return false
+		}
+		for _, a := range alerts {
+			if a.Tier != store.TierResolved {
+				return false
+			}
+		}
+		return true
+	})
 }
