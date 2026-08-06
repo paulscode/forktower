@@ -423,3 +423,43 @@ func TestNoStartTimeProducesNoElapsedClaim(t *testing.T) {
 		t.Errorf("Human = %q with no recorded start", got)
 	}
 }
+
+// A watchtower this installation runs has not appeared yet — which is not the
+// same as there being none.
+//
+// **Reported from a fresh install.** The tower is written into the record the
+// first time it answers, and lnd takes a while to open its listener. For that
+// whole window the dashboard said "No watchtower is protecting your channels",
+// which is exactly the sentence a new user should be able to trust, about the
+// component the app was starting for them underneath.
+func TestATowerThisInstallRunsIsNotReportedAsAbsentWhileItStarts(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.RunsOwnWatchtower = true })
+
+	item := findCheck(t, h.srv.Readiness(context.Background()), CheckTowerProtection)
+	if strings.Contains(item.Label, "No watchtower") {
+		t.Errorf("a tower that is starting was reported as absent: %q", item.Label)
+	}
+	if item.Action != nil {
+		t.Error("the user was asked to go and find a tower the app is already starting")
+	}
+	if !waitingOn(item) {
+		t.Error("a tower that is coming up on its own was presented as a task")
+	}
+}
+
+// An installation that runs no tower of its own still says so plainly. That
+// sentence is the whole reason this check exists.
+func TestAnInstallWithNoTowerOfItsOwnStillSaysThereIsNone(t *testing.T) {
+	h := newHarness(t, nil)
+
+	item := findCheck(t, h.srv.Readiness(context.Background()), CheckTowerProtection)
+	if !strings.Contains(item.Label, "No watchtower") {
+		t.Errorf("label = %q; a user with no tower must be told so", item.Label)
+	}
+	if item.Action == nil {
+		t.Error("no way offered to set one up")
+	}
+	if waitingOn(item) {
+		t.Error("a tower nobody is bringing up was presented as something to wait for")
+	}
+}

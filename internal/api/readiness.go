@@ -48,6 +48,20 @@ type ReadinessItem struct {
 	// distinction, and exposing it would invite the UI to make its own judgement
 	// about which failures matter.
 	informational bool
+
+	// settling marks something that is on its way and needs nobody.
+	//
+	// **This distinction has been missing four times and invented differently
+	// each time.** A watchtower that has not started yet was reported as no
+	// watchtower at all; one whose chain backend was catching up as one that had
+	// stopped answering; lnd opening its listener as a tower that was down. Every
+	// one of them told a user that protection was absent at the noisiest moment
+	// in an installation's life, which is exactly when they are deciding whether
+	// to believe the thing.
+	//
+	// "Not yet" and "not at all" are different, and a check that cannot say which
+	// will keep guessing wrong. This is that difference, named once.
+	settling bool
 }
 
 // Readiness returns the fixed, ordered list of checks.
@@ -97,6 +111,21 @@ func (s *Server) checkTowerProtection(ctx context.Context) ReadinessItem {
 	}
 
 	if len(towers) == 0 {
+		// **A tower this installation runs has not appeared in the record yet,
+		// which is not the same as there being none.** It is registered the
+		// first time it answers, and lnd takes a while to open its listener — so
+		// a fresh install spent that time being told nothing was protecting it,
+		// while the thing protecting it was starting up underneath.
+		if s.cfg.RunsOwnWatchtower {
+			return ReadinessItem{
+				ID: CheckTowerProtection, OK: false,
+				informational: true, settling: true,
+				Label: "Your watchtower is still starting",
+				Why: "Forktower runs one here, to watch " + words.OtherChain +
+					" for you. It is not ready yet, and there is nothing for you to " +
+					"do until it is — this finishes on its own.",
+			}
+		}
 		return ReadinessItem{
 			ID: CheckTowerProtection, OK: false, informational: true,
 			Label: "No watchtower is protecting your channels",
@@ -139,7 +168,8 @@ func (s *Server) checkTowerProtection(ctx context.Context) ReadinessItem {
 	// fault the user would go looking for.
 	if working == 0 && settling > 0 {
 		return ReadinessItem{
-			ID: CheckTowerProtection, OK: false, informational: true,
+			ID: CheckTowerProtection, OK: false,
+			informational: true, settling: true,
 			Label: "Your watchtower is not watching yet",
 			Why: "It is running and answering. It cannot see " + words.OtherChain +
 				" yet, so it could not act on a breach there. This finishes on " +

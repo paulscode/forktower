@@ -105,6 +105,11 @@ type Config struct {
 	// PlatformNotifications says the surrounding platform raises alerts by
 	// reading this API, which is how StartOS and Umbrel do it.
 	PlatformNotifications bool
+	// RunsOwnWatchtower says this installation brings up a watchtower of its
+	// own, so that "there is no tower" can be told apart from "the tower has not
+	// answered yet". Without it the readiness sees an empty list and concludes
+	// the wrong one.
+	RunsOwnWatchtower bool
 	// Platform is which packaging this is, declared rather than guessed. It
 	// decides which directions the setup guidance gives for the one thing
 	// Forktower cannot do on the user's behalf.

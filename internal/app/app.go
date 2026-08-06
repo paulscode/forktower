@@ -274,6 +274,7 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 			FrameAncestors:        cfg.UI.FrameAncestors,
 			PlatformNotifications: cfg.Alerts.PlatformNotifications,
 			Platform:              cfg.Platform,
+			RunsOwnWatchtower:     cfg.Tower.LND.Enabled || cfg.Tower.TEOS.Enabled,
 		}, log.With(slog.String("component", "api")), now)
 	if err != nil {
 		a.closeOnFailure()

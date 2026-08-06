@@ -110,6 +110,12 @@ func waitingOn(item ReadinessItem) bool {
 	if item.Action != nil {
 		return false
 	}
+	// On its way and needs nobody, whatever check it came from. Keyed on the
+	// fact rather than on a list of ids, because the list is what kept failing
+	// to include the case in front of the user.
+	if item.settling {
+		return true
+	}
 	switch item.ID {
 	case CheckSQSynced, CheckWatcherProgressing, CheckChannelsInventoried:
 		return true
