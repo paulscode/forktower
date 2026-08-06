@@ -381,3 +381,92 @@ func TestGetAlert(t *testing.T) {
 		t.Errorf("got %v for a missing alert, want ErrNotFound", err)
 	}
 }
+
+// Closing an alert retires the row rather than opening a second one.
+//
+// **The bug this was written for shipped.** A resolution carrying the warning's
+// dedup key went through UpsertAlert, which found the row, bumped it and cleared
+// the acknowledgement — so the good news was recorded as a fresh copy of the bad
+// news, and a warning the user had already dismissed came back.
+func TestResolvingAnAlertRetiresTheRowItNames(t *testing.T) {
+	t.Parallel()
+	st := openTemp(t)
+	ctx := t.Context()
+
+	up, err := st.UpsertAlert(ctx, Alert{
+		Tier: TierWarning, Kind: "tower_down", DedupKey: "tower_down:1",
+		Subject: "Your watchtower is not answering", Message: "It stopped replying.",
+		CreatedAt: 100, LastRaisedAt: 100,
+	})
+	if err != nil {
+		t.Fatalf("raising the warning: %v", err)
+	}
+	if _, err := st.AckAlert(ctx, up.ID, 110); err != nil {
+		t.Fatalf("dismissing the warning: %v", err)
+	}
+
+	id, err := st.ResolveAlert(ctx, Alert{
+		Tier: TierResolved, Kind: "tower_recovered", DedupKey: "tower_down:1",
+		Subject: "Your watchtower is answering again", Message: "It is back.",
+		LastRaisedAt: 200,
+	})
+	if err != nil {
+		t.Fatalf("resolving: %v", err)
+	}
+	if id != up.ID {
+		t.Fatalf("resolve reported id %d, want the existing row %d", id, up.ID)
+	}
+
+	rows, err := st.ListAlerts(ctx, AlertFilter{})
+	if err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("%d rows after one thing broke and was fixed, want one", len(rows))
+	}
+	got := rows[0]
+	if got.Tier != TierResolved || got.Kind != "tower_recovered" {
+		t.Errorf("the row still reads %s/%s", got.Tier, got.Kind)
+	}
+	if got.Message != "It is back." {
+		t.Errorf("message = %q, still the failure's words", got.Message)
+	}
+	// When the trouble started is the part worth keeping; a closed alert whose
+	// history begins at the moment it ended says nothing about how long it ran.
+	if got.CreatedAt != 100 {
+		t.Errorf("created_at = %d, want the moment the trouble started", got.CreatedAt)
+	}
+	if got.AckedAt == 0 {
+		t.Error("the resolution needs dismissing, so a condition that is over " +
+			"goes on asking for attention")
+	}
+}
+
+// Resolving something that was never raised must not invent a row.
+//
+// The caller relies on this to tell "I closed a thread" from "I have news of my
+// own", and the difference decides whether a split ending is announced or
+// swallowed.
+func TestResolvingSomethingNeverRaisedChangesNothing(t *testing.T) {
+	t.Parallel()
+	st := openTemp(t)
+	ctx := t.Context()
+
+	id, err := st.ResolveAlert(ctx, Alert{
+		Tier: TierResolved, Kind: "split_resolved", DedupKey: "split_resolved",
+		Message: "The split has ended.", LastRaisedAt: 100,
+	})
+	if err != nil {
+		t.Fatalf("resolving nothing: %v", err)
+	}
+	if id != 0 {
+		t.Errorf("reported closing row %d, but nothing was standing", id)
+	}
+	rows, err := st.ListAlerts(ctx, AlertFilter{})
+	if err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("%d rows exist after resolving something never raised", len(rows))
+	}
+}

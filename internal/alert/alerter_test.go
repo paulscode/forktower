@@ -646,3 +646,42 @@ func TestNoTransportsIsNotAComplaintWhenThePlatformRaisesThem(t *testing.T) {
 		}
 	}
 }
+
+// Good news with nothing to close is still delivered.
+//
+// **The near-miss that made this worth pinning down.** Resolutions were changed
+// to close the alert they name, so that a watchtower coming back retires the
+// "not answering" notice instead of re-raising it. Three resolutions do not name
+// an earlier alert at all — a split ending, a view coming back, a countdown
+// stopping — and the obvious reading of "nothing to close" is "nothing to say".
+// That reading would have silenced the only unambiguously good news this
+// software has.
+func TestAResolutionWithNothingToCloseIsStillAnnounced(t *testing.T) {
+	t.Parallel()
+	rec := newRecorder("phone")
+	h := newHarness(t, []Route{{Transport: rec, MinTier: config.MinTierInfo}}, nil)
+	h.start(t)
+
+	// Straight to resolved, with no degradation before it, so there is no
+	// standing row under any key.
+	h.bus.Publish(bus.DeadlineResolved{DeadlineID: 4, ByTxid: "abcd"})
+
+	waitFor(t, "the countdown stopping to be announced", func() bool {
+		return rec.countKind(KindDeadlineResolved) > 0
+	})
+
+	alerts, err := h.store.ListAlerts(t.Context(), store.AlertFilter{})
+	if err != nil {
+		t.Fatalf("reading the alerts back: %v", err)
+	}
+	var found bool
+	for _, a := range alerts {
+		if a.Kind == KindDeadlineResolved {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the countdown stopping reached the transport but was never " +
+			"recorded, so the dashboard will not show it")
+	}
+}

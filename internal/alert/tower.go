@@ -38,6 +38,10 @@ const (
 // saying it came back; otherwise the only way to find out is to go and look,
 // which is the behaviour this whole project exists to replace.
 func mapTowerHealth(ev bus.TowerHealthChanged) (Candidate, bool) {
+	// One key for the failure and its recovery, deliberately: they are one
+	// thread, and the entry becomes resolved rather than the dashboard showing
+	// both at once. The store closes it — see ResolveAlert, which exists because
+	// this used to bump the warning and clear its acknowledgement instead.
 	key := fmt.Sprintf("%s:%d", KindTowerDown, ev.TowerID)
 
 	switch store.TowerStatus(ev.Status) {
@@ -296,11 +300,10 @@ func neverReachable(previous string) bool {
 
 // clearedConcern announces that something the user had to fix is fixed.
 //
-// **Its own entry, under its own key, rather than editing the warning.** That is
-// how every other resolution in this program works — a split resolving does not
-// rewrite the alert that announced it — and it is also the only thing the store
-// supports: raising a resolution under the warning's key would find the existing
-// row and bump it, leaving the warning's own words on the screen.
+// **Under the warning's key, so it closes it** rather than sitting beside it.
+// The store's ResolveAlert marks that entry resolved and keeps when it first
+// happened; a user who fixed the thing sees the item they acted on turn over,
+// not a second line under a warning that still reads as current.
 //
 // Only for the concerns a person acts on. A channel becoming coverable because
 // it closed is not news anybody was waiting for, and an entry for every one of
@@ -310,7 +313,7 @@ func clearedConcern(ev bus.TowerConcern) (Candidate, bool) {
 	case tower.ConcernClientOff, tower.ConcernPluginMissing:
 		return Candidate{
 			Tier: store.TierResolved, Kind: KindTowerProtecting,
-			DedupKey: fmt.Sprintf("%s:client:%d", KindTowerProtecting, ev.TowerID),
+			DedupKey: fmt.Sprintf("%s:client:%d", KindTowerNotProtecting, ev.TowerID),
 			Subject:  "Your node is backing up to a watchtower",
 			Message: "The watchtower client on your Lightning node is on, and " +
 				"channel states are reaching the tower. That was the one step " +
@@ -320,7 +323,7 @@ func clearedConcern(ev bus.TowerConcern) (Candidate, bool) {
 	case tower.ConcernNotRegistered:
 		return Candidate{
 			Tier: store.TierResolved, Kind: KindTowerProtecting,
-			DedupKey: fmt.Sprintf("%s:unregistered:%d", KindTowerProtecting, ev.TowerID),
+			DedupKey: fmt.Sprintf("%s:unregistered:%d", KindTowerNotProtecting, ev.TowerID),
 			Subject:  "Your watchtower has your channels registered",
 			Message: "Your node has registered with the tower and is sending it " +
 				"channel states.",

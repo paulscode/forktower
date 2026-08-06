@@ -231,6 +231,54 @@ func (s *Store) GetAlert(ctx context.Context, id int64) (Alert, error) {
 	return a, nil
 }
 
+// ResolveAlert closes a standing alert, because the condition it describes has
+// passed.
+//
+// **This is what a resolution was always supposed to do and never did.** A
+// resolved candidate carrying the same dedup key as the warning went through
+// UpsertAlert, which found the row, bumped its timestamp and cleared its
+// acknowledgement — so a watchtower coming back produced no recovery at all and
+// resurrected the "not answering" notice the user had already dismissed. The
+// comment promising that recovery is announced was describing something that
+// could not happen.
+//
+// The tier, subject and message move to the resolution's; created_at does not,
+// because when the trouble started is the part worth keeping. It is marked
+// acknowledged in the same breath: a condition that is over should not go on
+// repeating, and nobody needs to dismiss news that the problem went away.
+//
+// Returns the closed alert's id, or zero when there was nothing standing under
+// that key. A resolution for something never raised is not news, and the caller
+// drops it rather than announcing relief from a problem the user never had.
+func (s *Store) ResolveAlert(ctx context.Context, a Alert) (id int64, err error) {
+	if a.DedupKey == "" {
+		return 0, errors.New("store: alert needs a dedup key")
+	}
+	err = s.withTx(ctx, func(tx *sql.Tx) error {
+		id = 0
+		row := tx.QueryRowContext(ctx,
+			`SELECT id FROM alerts WHERE dedup_key = ? AND tier != ?`,
+			a.DedupKey, TierResolved)
+		switch e := row.Scan(&id); {
+		case errors.Is(e, sql.ErrNoRows):
+			return nil
+		case e != nil:
+			return fmt.Errorf("resolving alert %q: %w", a.DedupKey, e)
+		}
+		if _, e := tx.ExecContext(ctx,
+			`UPDATE alerts
+			    SET tier = ?, kind = ?, subject = ?, message = ?,
+			        last_raised_at = ?, acked_at = ?
+			  WHERE id = ?`,
+			a.Tier, a.Kind, nullString(a.Subject), a.Message,
+			a.LastRaisedAt, a.LastRaisedAt, id); e != nil {
+			return fmt.Errorf("resolving alert %q: %w", a.DedupKey, e)
+		}
+		return nil
+	})
+	return id, err
+}
+
 // AckAlert marks an alert acknowledged, stopping its repeat delivery. It reports
 // whether this call was the one that changed it, so acknowledging twice is
 // harmless and distinguishable.

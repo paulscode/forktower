@@ -514,15 +514,16 @@ func TestFixingTheWatchtowerClientIsAnnounced(t *testing.T) {
 	if got.Tier != store.TierResolved {
 		t.Errorf("tier = %s, want %s", got.Tier, store.TierResolved)
 	}
-	// **Its own key.** Raising a resolution under the warning's key would find
-	// the existing row and bump it, leaving the warning's own words on screen.
+	// **The warning's own key, so the entry the user acted on turns over.** A
+	// resolution beside it would leave a warning still reading as current
+	// directly above the sentence saying it is not.
 	warning, _ := mapTowerConcern(bus.TowerConcern{
 		TowerID: 1,
 		Concern: string(tower.ConcernClientOff),
 	})
-	if got.DedupKey == warning.DedupKey {
-		t.Errorf("the resolution reuses the warning's key %q, so it would edit "+
-			"the warning rather than appear beside it", got.DedupKey)
+	if got.DedupKey != warning.DedupKey {
+		t.Errorf("the resolution is keyed %q and the warning %q, so the warning "+
+			"would be left standing beside it", got.DedupKey, warning.DedupKey)
 	}
 }
 
@@ -542,5 +543,72 @@ func TestOnlyConcernsAPersonActedOnAreAnnouncedAsFixed(t *testing.T) {
 		}); raised {
 			t.Errorf("%s ending produced an announcement nobody was waiting for", kind)
 		}
+	}
+}
+
+// A tower coming back must not resurrect the notice that it had gone.
+//
+// **Measured against the store, not assumed.** Sharing the key used to mean the
+// recovery found the existing row, bumped it and cleared the acknowledgement —
+// leaving one entry that still read "Your watchtower is not answering", now
+// un-acknowledged. A user who had dismissed the failure got it back, and never
+// got the sentence saying it had recovered. Sharing the key is right; what was
+// missing was a store that closed the row instead of re-raising it.
+func TestARecoveryDoesNotReviveTheFailureItResolves(t *testing.T) {
+	t.Parallel()
+
+	down, ok := mapTowerHealth(bus.TowerHealthChanged{
+		TowerID: 7, Status: string(store.TowerUnreachable),
+		Previous: string(store.TowerReachable),
+	})
+	if !ok {
+		t.Fatal("no warning raised for a tower that stopped answering")
+	}
+	back, ok := mapTowerHealth(bus.TowerHealthChanged{
+		TowerID: 7, Status: string(store.TowerReachable),
+		Previous: string(store.TowerUnreachable),
+	})
+	if !ok {
+		t.Fatal("no resolution raised for a tower that came back")
+	}
+	if back.Tier != store.TierResolved {
+		t.Errorf("recovery tier = %s", back.Tier)
+	}
+
+	st := openTempStore(t)
+	ctx := t.Context()
+	raise := func(c Candidate) store.Alert {
+		return store.Alert{
+			Tier: c.Tier, Kind: c.Kind, DedupKey: c.DedupKey,
+			Subject: c.Subject, Message: c.Message, LastRaisedAt: 100,
+		}
+	}
+	up, err := st.UpsertAlert(ctx, raise(down))
+	if err != nil {
+		t.Fatalf("recording the failure: %v", err)
+	}
+	if _, err := st.AckAlert(ctx, up.ID, 101); err != nil {
+		t.Fatalf("dismissing the failure: %v", err)
+	}
+	if _, err := st.ResolveAlert(ctx, raise(back)); err != nil {
+		t.Fatalf("recording the recovery: %v", err)
+	}
+
+	rows, err := st.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatalf("reading the alerts back: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the dashboard shows %d entries for one tower going away and "+
+			"coming back, want one thread", len(rows))
+	}
+	switch got := rows[0]; {
+	case got.Tier != store.TierResolved:
+		t.Errorf("the entry still reads %s: %q", got.Tier, got.Subject)
+	case got.Kind != KindTowerRecovered:
+		t.Errorf("the entry is still kind %q", got.Kind)
+	case got.AckedAt == 0:
+		t.Error("the recovery came back un-acknowledged, so it will go on " +
+			"asking to be dismissed after the trouble has passed")
 	}
 }

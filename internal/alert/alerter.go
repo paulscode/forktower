@@ -256,6 +256,37 @@ func (a *Alerter) put(ctx context.Context, candidate Candidate, keepAck bool) {
 	wctx, cancel := writeCtx(ctx)
 	defer cancel()
 
+	// A resolution closes the thread it names, when it names one. Sharing the
+	// warning's key used to mean bumping that warning and clearing its
+	// acknowledgement, which resurrected the failure instead of retiring it.
+	//
+	// **Falls through when there is nothing standing**, rather than being
+	// dropped. Not every resolution closes something: a split ending, a view
+	// coming back and a countdown stopping are all announcements under keys of
+	// their own, and they are the best news this program has to give. Treating
+	// "nothing to close" as "nothing to say" would have silenced all three.
+	if candidate.Tier == store.TierResolved {
+		id, resolveErr := a.store.ResolveAlert(wctx, record)
+		if resolveErr != nil {
+			a.log.Error("could not resolve an alert",
+				slog.String("kind", candidate.Kind),
+				slog.String("error", resolveErr.Error()))
+			return
+		}
+		if id > 0 {
+			record.ID = id
+			a.bus.Publish(bus.AlertRaised{
+				AlertID:   id,
+				Tier:      string(record.Tier),
+				AlertKind: record.Kind,
+				DedupKey:  record.DedupKey,
+				Message:   record.Message,
+			})
+			a.enqueue(record)
+			return
+		}
+	}
+
 	upsert := a.store.UpsertAlert
 	if keepAck {
 		upsert = a.store.ReconcileAlert
