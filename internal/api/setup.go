@@ -186,11 +186,16 @@ func watchtowerGuidance(platform config.Platform) []string {
 				"— there is no separate switch.",
 		}
 	case config.PlatformStartOS035:
+		// **Both in one save, address first.** That package refuses to save the
+		// client as enabled with no tower listed, so the order this used to give
+		// — switch it on, save, then register — cannot be carried out at all.
 		return []string{
-			"Open the LND service in StartOS.",
-			"Go to Config, and turn on the watchtower client (wtclient.active).",
-			"Save, and restart LND so the setting takes effect.",
-			"Then register the address from the watchtower card on this page.",
+			"Copy the address from the watchtower card on this page.",
+			"Open the LND service in StartOS, and go to Config.",
+			"Add that address to the watchtower list, and turn on the watchtower " +
+				"client (wtclient.active), in the same edit. LND will not save the " +
+				"client as enabled with an empty list, so both have to go in together.",
+			"Save, and restart LND so it takes effect.",
 		}
 	case config.PlatformUmbrel:
 		return []string{

@@ -88,8 +88,11 @@ starting before it has an identity, and the dashboard says so while that happens
 - **StartOS 0.4.x**: LND → **Actions → Watchtower → Watchtower Client Settings**,
   and paste the address in. LND switches the client on by itself once the list is
   not empty — there is no separate toggle to find.
-- **StartOS 0.3.5.x**: LND → **Config**, set `wtclient.active`, save, and restart
-  LND. Then register the address with your node.
+- **StartOS 0.3.5.x**: LND → **Config**. Add the address to the watchtower list
+  **and** set `wtclient.active` in the same edit, then save and restart LND. That
+  package refuses to save the client as enabled with an empty list, so switching
+  it on first and registering afterwards is not a thing you can do — which is why
+  step 1 is getting the address rather than an afterthought.
 
 **Do it sooner rather than later.** A watchtower can only punish a channel state
 it was given, and it is given them as they happen. States revoked before you

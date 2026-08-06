@@ -11,6 +11,7 @@ import (
 
 	"github.com/paulscode/forktower/internal/bootstrap"
 	"github.com/paulscode/forktower/internal/chainview"
+	"github.com/paulscode/forktower/internal/config"
 	"github.com/paulscode/forktower/internal/store"
 )
 
@@ -461,5 +462,66 @@ func TestAnInstallWithNoTowerOfItsOwnStillSaysThereIsNone(t *testing.T) {
 	}
 	if waitingOn(item) {
 		t.Error("a tower nobody is bringing up was presented as something to wait for")
+	}
+}
+
+// The directions have to be carryable out in the order given.
+//
+// **StartOS 0.3.5.1 refuses to save the watchtower client as enabled with an
+// empty tower list.** The directions said to switch it on, save, restart, and
+// register afterwards — which that platform rejects at the first save, so
+// somebody following them got stuck at step two with no indication that the
+// sequence itself was impossible.
+//
+// Getting the address is therefore the first step, not the last, and both
+// settings go in one edit.
+func TestTheWatchtowerDirectionsCanBeFollowedInOrder(t *testing.T) {
+	t.Parallel()
+
+	for _, platform := range []config.Platform{
+		config.PlatformStartOS04,
+		config.PlatformStartOS035,
+		config.PlatformUmbrel,
+	} {
+		steps := watchtowerGuidance(platform)
+		if len(steps) == 0 {
+			t.Errorf("%s has no directions at all", platform)
+			continue
+		}
+		joined := strings.ToLower(strings.Join(steps, " "))
+
+		// Every platform needs the address, and it is Forktower that has it.
+		if !strings.Contains(joined, "address") {
+			t.Errorf("%s never mentions the address to register: %v", platform, steps)
+		}
+
+		// Where the address is needed, it must be fetched before it is used.
+		copyAt, useAt := -1, -1
+		for i, s := range steps {
+			l := strings.ToLower(s)
+			if copyAt < 0 && (strings.Contains(l, "copy the address") ||
+				strings.Contains(l, "paste the address")) {
+				copyAt = i
+			}
+			if useAt < 0 && strings.Contains(l, "wtclient.active") {
+				useAt = i
+			}
+		}
+		if copyAt >= 0 && useAt >= 0 && useAt < copyAt {
+			t.Errorf("%s tells the user to enable the client at step %d and to get "+
+				"the address at step %d; that order cannot be carried out",
+				platform, useAt+1, copyAt+1)
+		}
+	}
+}
+
+// The platform that validates both together says so, rather than leaving
+// somebody to discover it from a rejected save.
+func TestTheOneSaveConstraintIsStated(t *testing.T) {
+	t.Parallel()
+	joined := strings.Join(watchtowerGuidance(config.PlatformStartOS035), " ")
+	if !strings.Contains(joined, "same edit") && !strings.Contains(joined, "together") {
+		t.Errorf("the directions do not say both settings must be saved at once: %q",
+			joined)
 	}
 }
