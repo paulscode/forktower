@@ -61,7 +61,18 @@ func NewTeos(opts TeosOptions) (*Teos, error) {
 	return &Teos{
 		baseURL: strings.TrimRight(opts.APIURL, "/"),
 		pubkey:  opts.Pubkey,
-		http:    &http.Client{Timeout: opts.Timeout},
+		// **Its own connection pool, rather than the process-wide default.**
+		// Same settings, cloned — but a shared pool is shared with everything
+		// else in the process, and anything calling CloseIdleConnections on it
+		// breaks a request this client has in flight. That is not hypothetical:
+		// it broke a test in the release gate, because httptest closes idle
+		// connections on the default transport when a server shuts down.
+		// Isolating it also means a burst of traffic elsewhere cannot starve the
+		// one client that reports whether a watchtower is protecting anything.
+		http: &http.Client{
+			Timeout:   opts.Timeout,
+			Transport: http.DefaultTransport.(*http.Transport).Clone(),
+		},
 	}, nil
 }
 
