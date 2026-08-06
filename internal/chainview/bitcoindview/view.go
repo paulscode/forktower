@@ -259,7 +259,7 @@ func (v *View) Health(ctx context.Context) (chainview.BackendHealth, error) {
 	health := chainview.BackendHealth{
 		State:           chainview.HealthOK,
 		SyncProgress:    info.VerificationProgress,
-		BehindOnMempool: v.mempoolStall.stalled.Load(),
+		BehindOnMempool: v.mempoolStall.behind(v.now()),
 	}
 
 	if hdr, err := v.BlockHeaderByHash(ctx, mustHash(info.BestBlockHash)); err == nil {
@@ -303,7 +303,7 @@ func (v *View) Health(ctx context.Context) (chainview.BackendHealth, error) {
 		health.State = chainview.HealthSyncing
 		health.Detail = fmt.Sprintf("%d blocks behind the headers it has seen",
 			info.Headers-info.Blocks)
-	case v.stall.stalled.Load():
+	case v.stall.behind(v.now()):
 		// A dropped *block* notification is not a quiet chain, and the two look
 		// identical from outside. Say so. Unconfirmed transactions are counted
 		// apart and deliberately do not reach here — see emitTx.

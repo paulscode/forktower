@@ -383,7 +383,7 @@ func TestAStalledConsumerIsReportedOnceNotPerDrop(t *testing.T) {
 
 	said := 0
 	for range 100_000 {
-		s.note()
+		s.note(clock)
 		if say, _ := s.shouldSay(clock); say {
 			said++
 		}
@@ -396,7 +396,7 @@ func TestAStalledConsumerIsReportedOnceNotPerDrop(t *testing.T) {
 	// is stuck after the chain is caught up is a daemon that has stopped
 	// watching, and silence there would be the worse failure.
 	clock = clock.Add(stallReportInterval + time.Second)
-	s.note()
+	s.note(clock)
 	say, since := s.shouldSay(clock)
 	if !say {
 		t.Fatal("a stall that is still going was never mentioned again")
@@ -516,5 +516,37 @@ func TestTheMempoolBufferIsNotTheBlockBuffer(t *testing.T) {
 		t.Errorf("mempool buffer %d is not larger than the block buffer %d, so a "+
 			"node at the tip will overflow it continuously",
 			mempoolBuffer, subscriberBuffer)
+	}
+}
+
+// Falling behind has to have a way back.
+//
+// **The flag was set on the first drop and never cleared.** One dropped
+// notification marked a view degraded for the life of the process, and a burst
+// lasting a second was reported for ever after — which is the same defect as
+// every stale alert fixed this week, in the layer underneath them.
+func TestFallingBehindStopsBeingTrueOnceItStops(t *testing.T) {
+	t.Parallel()
+	var s stallState
+	at := time.Unix(1_790_000_000, 0)
+
+	s.note(at)
+	if !s.behind(at) {
+		t.Fatal("a drop just now was not reported as falling behind")
+	}
+	if !s.behind(at.Add(behindWindow - time.Second)) {
+		t.Error("a consumer that dropped something moments ago was reported as " +
+			"having caught up")
+	}
+	if s.behind(at.Add(behindWindow + time.Second)) {
+		t.Error("a consumer that has kept up for a whole window is still reported " +
+			"as falling behind, which it can then never stop being")
+	}
+
+	// And it starts again if it recurs.
+	later := at.Add(time.Hour)
+	s.note(later)
+	if !s.behind(later) {
+		t.Error("a fresh drop after a quiet period was not reported")
 	}
 }

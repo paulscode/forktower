@@ -535,3 +535,38 @@ func TestALightningNodeThatWasTriedAndFailedIsReported(t *testing.T) {
 		t.Errorf("the node's own account of the failure is not shown: %q", item.Detail)
 	}
 }
+
+// A mempool backlog is reported without changing what the setup wizard counts.
+//
+// **The near-miss:** the obvious way to write this item was to mark it
+// informational, since it reports a fact. But that flag is applied before the
+// wizard counts anything, so putting it on a *passing* check drops it from both
+// the numerator and the denominator — and "Step 8 of 8" would have become
+// "Step 7 of 7" and back again as the mempool ebbed and flowed.
+func TestAMempoolBacklogDoesNotChangeTheSetupCount(t *testing.T) {
+	h := newHarness(t, nil)
+
+	before := setupOf(t, h).Total
+
+	h.sen.mu.Lock()
+	h.sen.sqView = chainview.BackendHealth{
+		State: chainview.HealthOK, BehindOnMempool: true,
+	}
+	h.sen.mu.Unlock()
+
+	item := findCheck(t, h.srv.Readiness(context.Background()), CheckSQSynced)
+	if !item.OK {
+		t.Error("a chain that is being watched was reported as a failure because " +
+			"unconfirmed transactions were arriving faster than they could be read")
+	}
+	if item.Action != nil {
+		t.Error("a button was offered for something with nothing to do")
+	}
+	if !strings.Contains(item.Why, "until the block carrying it arrives") {
+		t.Errorf("the item does not say what is actually thinner: %q", item.Why)
+	}
+	if after := setupOf(t, h).Total; after != before {
+		t.Errorf("the wizard counted %d steps and then %d, so its denominator "+
+			"moves with the mempool", before, after)
+	}
+}

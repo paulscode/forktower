@@ -78,11 +78,37 @@ type stallState struct {
 	// saidAt is the running total at that moment, so the next line can say how
 	// many were lost in between rather than only how many in total.
 	saidAt atomic.Int64
+	// lastDropAt is when something was last dropped, so that falling behind can
+	// stop being true.
+	lastDropAt atomic.Int64
 }
 
-func (s *stallState) note() {
+func (s *stallState) note(now time.Time) {
 	s.stalled.Store(true)
 	s.dropped.Add(1)
+	s.lastDropAt.Store(now.UnixNano())
+}
+
+// behindWindow is how recently something must have been dropped for a consumer
+// to still count as falling behind.
+//
+// **Because "stalled" had no way back.** The flag was set on the first drop and
+// never cleared, so one dropped notification marked a view degraded for the
+// life of the process, and a burst that lasted a second was reported for ever
+// after. A consumer that has kept up for a minute is keeping up.
+const behindWindow = time.Minute
+
+// behind reports whether anything was dropped recently enough to still matter.
+//
+// Time-based rather than cleared on the next success, because most sends succeed
+// even while a consumer is badly behind: clearing on success would report a
+// backlog as absent almost all of the time it was present.
+func (s *stallState) behind(now time.Time) bool {
+	if !s.stalled.Load() {
+		return false
+	}
+	last := s.lastDropAt.Load()
+	return last != 0 && now.UnixNano()-last < int64(behindWindow)
 }
 
 // stallReportInterval is how often a continuing stall is worth repeating.
@@ -237,7 +263,7 @@ func (v *View) emitTip(out chan<- chainview.BlockMeta, meta chainview.BlockMeta)
 	select {
 	case out <- meta:
 	default:
-		v.stall.note()
+		v.stall.note(v.now())
 		if say, since := v.stall.shouldSay(v.now()); say {
 			v.log().Error("tip consumer is not keeping up; dropping notifications",
 				slog.String("latest_hash", meta.Hash.String()),
@@ -264,7 +290,7 @@ func (v *View) emitTx(out chan<- *wire.MsgTx, tx *wire.MsgTx) {
 	select {
 	case out <- tx:
 	default:
-		v.mempoolStall.note()
+		v.mempoolStall.note(v.now())
 		if say, since := v.mempoolStall.shouldSay(v.now()); say {
 			v.log().Warn("falling behind on unconfirmed transactions, so a spend "+
 				"may not be seen until it confirms",

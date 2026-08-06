@@ -331,7 +331,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 				mempool = nil
 				continue
 			}
-			w.handleMempoolTx(ctx, tx)
+			// Drained here too. This is the blocking select — the loop sits in it
+			// whenever there is no catch-up work — so it is where most
+			// transactions actually arrive, and handling one per wake-up here
+			// would leave the batching above doing nothing on an idle chain.
+			mempool = w.drainMempool(ctx, mempool, tx)
 		case <-w.nudge:
 		}
 	}

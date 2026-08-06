@@ -320,12 +320,19 @@ func (s *Server) checkSQSynced(v chainview.BackendHealth) ReadinessItem {
 			// **Watching, and worth saying what is thinner than usual.** Not a
 			// failure and not a task: unconfirmed transactions arriving faster
 			// than they can be read costs warning *before* a spend confirms, and
-			// every spend is still caught when it lands in a block. Informational
-			// so it neither holds up setup nor colours the dashboard, because the
-			// chain is being watched — which is exactly what the previous wording,
-			// "Forktower may not see everything happening there", denied.
+			// every spend is still caught when it lands in a block — which is
+			// exactly what the previous wording, "Forktower may not see
+			// everything happening there", denied.
+			//
+			// **Not marked informational**, even though it reports a fact. That
+			// flag is for *failing* checks that should not count, and it is
+			// applied before the setup wizard counts anything — so putting it on
+			// a passing check would drop it from both the numerator and the
+			// denominator, and "Step 8 of 8" would become "Step 7 of 7" and back
+			// again as the mempool ebbed. An OK item is never a blocking failure
+			// regardless, so the flag buys nothing and costs that.
 			return ReadinessItem{
-				ID: CheckSQSynced, OK: true, informational: true,
+				ID: CheckSQSynced, OK: true,
 				Label: labelWatchingOther,
 				Why: "Unconfirmed transactions are arriving faster than they can " +
 					"be read, so a spend of one of your channels may not be noticed " +
