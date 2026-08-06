@@ -225,7 +225,8 @@ func (w *Warden) pass(ctx context.Context) {
 				obs.UsedBytes>>20, obs.LimitBytes>>20),
 		})
 	}
-	concerns = append(concerns, w.checkCoverage(ctx, obs, now)...)
+	coverage, assessed := w.checkCoverage(ctx, obs, now)
+	concerns = append(concerns, coverage...)
 
 	for _, c := range concerns {
 		w.raise(c)
@@ -233,7 +234,16 @@ func (w *Warden) pass(ctx context.Context) {
 	// Anything that was a problem last time and is not one now is forgotten, so
 	// that a problem which clears and comes back is said again. Without this a
 	// tower could go bad, be fixed, go bad again, and be announced only once.
-	w.forgetResolved(concerns)
+	//
+	// **Only when the check reached a verdict.** An empty list can mean "nothing
+	// is wrong" or "could not tell", and the second is common: the tower's own
+	// RPC takes a while to come up after a restart. Since forgetting now says so
+	// out loud, treating the two alike would tell a user their watchtower client
+	// had been switched on every time the tower restarted, then warn them again a
+	// minute later.
+	if assessed {
+		w.forgetResolved(concerns)
+	}
 }
 
 // ConcernDiskFilling means the tower's storage is approaching the cap Forktower
@@ -369,22 +379,28 @@ func (w *Warden) announceHealth(obs Observation) {
 }
 
 // checkCoverage works out what is protected and records it.
-func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) []Concern {
+//
+// The second return says whether it got far enough to have an opinion. Several
+// of the early exits here are "ask again shortly" rather than "nothing is
+// wrong" — the tower's RPC still starting up is the common one — and a caller
+// that read an empty list as all-clear would announce that every concern had
+// been fixed, then raise them all again on the next pass.
+func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) (_ []Concern, assessed bool) {
 	if w.towerID.Load() == 0 {
-		return nil
+		return nil, false
 	}
 	if w.kind == store.TowerTeos {
 		return w.checkTeosCoverage(ctx, now)
 	}
 	if w.client == nil {
-		return nil
+		return nil, false
 	}
 	// Built on the first pass that learns the tower's own identity, and rebuilt
 	// when the registration age moves. Not at construction: the pubkey and the
 	// version both come from the tower, and a monitor built before it answered
 	// would be one that could not recognise it.
 	if obs.Identity.Pubkey == "" {
-		return nil
+		return nil, false
 	}
 	monitor, err := NewMonitor(MonitorOptions{
 		Client: w.client, TowerID: w.towerID.Load(),
@@ -395,7 +411,7 @@ func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) 
 	})
 	if err != nil {
 		w.log.Error("setting up the coverage check", slog.String("error", err.Error()))
-		return nil
+		return nil, false
 	}
 	w.monitor = monitor
 
@@ -403,16 +419,19 @@ func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) 
 	if listErr != nil {
 		w.log.Error("reading channels to check their protection",
 			slog.String("error", listErr.Error()))
-		return nil
+		return nil, false
 	}
 	if len(channels) == 0 {
-		return nil
+		// Nothing to have an opinion about. Not an all-clear: with no channels
+		// there is no way to tell whether the node's client is switched on, and
+		// saying so would be a guess dressed as good news.
+		return nil, false
 	}
 
 	pass, err := w.monitor.Check(ctx, channels, w.previous, now)
 	if err != nil {
 		w.log.Error("reading what your node is backing up", slog.String("error", err.Error()))
-		return nil
+		return nil, false
 	}
 
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
@@ -421,14 +440,14 @@ func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) 
 		if err := w.store.UpsertCoverage(writeCtx, c); err != nil {
 			w.log.Error("recording what this tower protects",
 				slog.String("error", err.Error()))
-			return nil
+			return nil, false
 		}
 	}
 
 	pass.Concerns = append(pass.Concerns, w.monitor.StalledBackups(
 		pass.Coverage, w.previous, advancedSince(w.previous, pass.Coverage))...)
 	w.previous = pass.Coverage
-	return pass.Concerns
+	return pass.Concerns, true
 }
 
 // checkTeosCoverage is the Core Lightning arm.
@@ -439,16 +458,16 @@ func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) 
 // there is no per-channel session to hold or to lack. What decides whether a
 // channel is protected is whether the *subscription* is alive and has room —
 // which is the same answer for every channel at once.
-func (w *Warden) checkTeosCoverage(ctx context.Context, now int64) []Concern {
+func (w *Warden) checkTeosCoverage(ctx context.Context, now int64) (_ []Concern, assessed bool) {
 	if w.clnClient == nil {
-		return nil
+		return nil, false
 	}
 
 	channels, err := w.store.ListChannels(ctx, store.ChannelFilter{OpenOnly: true})
 	if err != nil {
 		w.log.Error("reading channels to check their protection",
 			slog.String("error", err.Error()))
-		return nil
+		return nil, false
 	}
 
 	monitor, err := NewTeosMonitor(TeosMonitorOptions{
@@ -458,14 +477,14 @@ func (w *Warden) checkTeosCoverage(ctx context.Context, now int64) []Concern {
 	})
 	if err != nil {
 		w.log.Error("setting up the coverage check", slog.String("error", err.Error()))
-		return nil
+		return nil, false
 	}
 	w.teos = monitor
 
 	pass, err := monitor.Check(ctx, w.tipHeight)
 	if err != nil {
 		w.log.Error("reading what your node is backing up", slog.String("error", err.Error()))
-		return nil
+		return nil, false
 	}
 
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
@@ -497,10 +516,10 @@ func (w *Warden) checkTeosCoverage(ctx context.Context, now int64) []Concern {
 		if err := w.store.UpsertCoverage(writeCtx, cover); err != nil {
 			w.log.Error("recording what this tower protects",
 				slog.String("error", err.Error()))
-			return pass.Concerns
+			return pass.Concerns, false
 		}
 	}
-	return pass.Concerns
+	return pass.Concerns, true
 }
 
 // teosGapReason says why a Core Lightning channel is not covered.

@@ -571,3 +571,79 @@ func TestNameOrNumberIsToldApart(t *testing.T) {
 		}
 	}
 }
+
+// A concern that clears is said to have cleared.
+//
+// **Reported by a tester.** They turned their node's watchtower client on,
+// pasted in the address, came back, and found the same warning sitting there —
+// the warden had noticed the concern go away and forgotten it in silence, so the
+// one action a user takes here had no visible outcome.
+func TestAConcernThatClearsIsAnnouncedAsCleared(t *testing.T) {
+	t.Parallel()
+	h := newWardenHarness(t)
+	h.addChannel(store.ChanTaproot, "bb"+strings.Repeat("0", 62))
+
+	// The first pass registers the tower; nothing is said inside the grace
+	// period, so the clock moves past it before anything is expected.
+	h.pass()
+	h.drain()
+	h.clock.Store(1_790_000_000 + GracePeriodSeconds*2)
+	h.pass()
+	if countKind(h.drain(), bus.KindTowerConcern) == 0 {
+		t.Fatal("an uncovered channel produced no concern at all")
+	}
+
+	h.client.towers[0].Sessions = append(h.client.towers[0].Sessions,
+		Session{Policy: PolicyTaproot, NumBackups: 5, SweepSatPerVByte: 10})
+	h.pass()
+
+	var cleared int
+	for _, ev := range h.drain() {
+		if c, ok := ev.(bus.TowerConcern); ok && c.Cleared {
+			cleared++
+			if c.Concern == "" {
+				t.Error("a concern cleared without saying which one, so nothing " +
+					"downstream can match it to the warning it closes")
+			}
+		}
+	}
+	if cleared == 0 {
+		t.Error("the channel became covered and nothing said so, leaving the " +
+			"warning on the dashboard reading as current")
+	}
+}
+
+// Not knowing is not good news.
+//
+// **A gap in the change above, caught before it shipped.** The coverage check
+// gives up and returns an empty list for several transient reasons — the most
+// common being that the tower's own RPC is still starting up, which is what a
+// tester saw in their log. Announcing a clear for every standing concern each
+// time that happens would tell somebody their watchtower client had been
+// switched on, then warn them it was off again a minute later, on a loop.
+func TestATowerThatCannotBeReadClearsNothing(t *testing.T) {
+	t.Parallel()
+	h := newWardenHarness(t)
+	h.addChannel(store.ChanTaproot, "bb"+strings.Repeat("0", 62))
+
+	// The first pass registers the tower; nothing is said inside the grace
+	// period, so the clock moves past it before anything is expected.
+	h.pass()
+	h.drain()
+	h.clock.Store(1_790_000_000 + GracePeriodSeconds*2)
+	h.pass()
+	if countKind(h.drain(), bus.KindTowerConcern) == 0 {
+		t.Fatal("an uncovered channel produced no concern at all")
+	}
+
+	// The tower stops answering, so the check cannot tell what is covered.
+	h.client.towersErr = errors.New("the RPC server is in the process of starting up")
+	h.pass()
+
+	for _, ev := range h.drain() {
+		if c, ok := ev.(bus.TowerConcern); ok && c.Cleared {
+			t.Errorf("a tower that could not be read was reported as having "+
+				"fixed %q", c.Concern)
+		}
+	}
+}
