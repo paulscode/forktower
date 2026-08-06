@@ -164,6 +164,11 @@ type Watcher struct {
 	replaying     bool
 	replayingAt   time.Time
 	replayingSeen bool
+	// activeBest is the height the backend itself calls its best block, from the
+	// same cached read. Needed to tell a tip on the chain being watched from one
+	// belonging to some other chainstate the same node happens to be building.
+	activeBest int32
+	strayNoted bool
 	// sweep is the range of blocks behind the high-water mark still to be
 	// looked at, and blockedSweep says it hit something it could not read. The
 	// sweep is retried when the next block arrives rather than immediately, so a
@@ -385,27 +390,62 @@ const replayingCheckEvery = 30 * time.Second
 // reported elsewhere, and a watcher that stops watching because one status call
 // did not come back would turn a transient RPC blip into silent blindness. The
 // cost of being wrong the other way is some wasted scanning.
-func (w *Watcher) backendReplaying(ctx context.Context) bool {
+// backendState reads what the node says about itself, at most once every
+// replayingCheckEvery.
+//
+// Returns whether it is still working through history, and the height it calls
+// its own best block. Zero for that height means it could not be read, and every
+// caller treats that as "no opinion" rather than as a low tip.
+func (w *Watcher) backendState(ctx context.Context) (replaying bool, activeBest int32) {
 	now := w.now()
 
 	w.mu.Lock()
 	fresh := !w.replayingAt.IsZero() && now.Sub(w.replayingAt) < replayingCheckEvery
-	cached := w.replaying
+	cachedReplaying, cachedBest := w.replaying, w.activeBest
 	w.mu.Unlock()
 	if fresh {
-		return cached
+		return cachedReplaying, cachedBest
 	}
 
 	health, err := w.view.Health(ctx)
 	if err != nil {
-		return false
+		return false, 0
 	}
 
 	w.mu.Lock()
 	w.replaying = health.ReplayingHistory
+	w.activeBest = health.Tip.Height
 	w.replayingAt = now
 	w.mu.Unlock()
-	return health.ReplayingHistory
+	return health.ReplayingHistory, health.Tip.Height
+}
+
+// strayChainstate reports that a height cannot belong to the chain being
+// watched, because the node itself puts its best block far above it.
+//
+// **A node can be building more than one chain at a time.** After the snapshot
+// shortcut, Bitcoin Core keeps two chainstates: the one from the snapshot, at
+// the tip, and a background one validating from genesis. Both publish block
+// notifications on the same socket. Observed on real hardware: the watcher was
+// handed heights climbing from 176 at roughly a thousand blocks every five
+// seconds, interleaved with the real tip at 959,766 — and every alternation
+// between them read as the chain being replaced far deeper than any
+// reorganisation reaches. Fifteen thousand critical alerts, and scanning
+// stopped.
+//
+// The rule is to trust the node's own account of its active chain over an
+// unsolicited notification. Anything further below the best block than a
+// reorganisation could reach is not a reorganisation; it is a different chain
+// being built by the same process.
+//
+// Fails closed on no information: with no readable best height nothing is
+// treated as stray, because discarding a real tip would be silent blindness and
+// the cost the other way is one wasted comparison.
+func (w *Watcher) strayChainstate(activeBest, height int32) bool {
+	if activeBest <= 0 {
+		return false
+	}
+	return height < activeBest-w.cfg.MaxReorgDepth
 }
 
 // stopping reports that the daemon is shutting down, which makes every failure
@@ -516,7 +556,8 @@ func (w *Watcher) handleTip(ctx context.Context, tip chainview.BlockMeta) {
 	// Nothing is recorded either, so no mark is laid at a height that means
 	// nothing. Once the backend is caught up, the first tip starts watching from
 	// a real one.
-	if w.backendReplaying(ctx) {
+	replaying, activeBest := w.backendState(ctx)
+	if replaying {
 		w.mu.Lock()
 		noted := w.replayingSeen
 		w.replayingSeen = true
@@ -529,15 +570,52 @@ func (w *Watcher) handleTip(ctx context.Context, tip chainview.BlockMeta) {
 		}
 		return
 	}
+	// Not this chain's tip. Ignored rather than acted on, and *not* reported as a
+	// reorganisation, which is what it used to look like.
+	if w.strayChainstate(activeBest, tip.Height) {
+		w.mu.Lock()
+		noted := w.strayNoted
+		w.strayNoted = true
+		w.mu.Unlock()
+		if !noted {
+			w.log.Info("ignoring blocks from another chainstate the node is building",
+				slog.Int("their_height", int(tip.Height)),
+				slog.Int("best_height", int(activeBest)))
+		}
+		return
+	}
+
 	w.mu.Lock()
 	if w.replayingSeen {
 		w.replayingSeen = false
 		w.progress.Why = ""
 		w.log.Info("the other chain's node has caught up, so watching starts")
 	}
+	w.strayNoted = false
 	w.pausedNoted = false
 	last := w.last
 	w.mu.Unlock()
+
+	// **A mark that is not on the node's active chain is not a mark.** Installs
+	// that took the snapshot shortcut before this was understood recorded one
+	// from the background chainstate — height 11,173, from 2009, on a node whose
+	// best block was 959,766. Left alone it drives a nine-hundred-thousand-block
+	// catch-up through a chain nobody was watching.
+	//
+	// Discarding it is safe here in a way it is not in general: this is not "the
+	// mark is old", which would mean skipping blocks that genuinely needed
+	// scanning, but "the mark is on a different chain", where there is nothing to
+	// skip. History is the rescan's business either way, and it is anchored on
+	// the fork point rather than on wherever this happened to be.
+	if last.known() && w.strayChainstate(activeBest, last.Height) {
+		w.log.Warn("discarding a scan position recorded from another chainstate",
+			slog.Int("was_at_height", int(last.Height)),
+			slog.Int("best_height", int(activeBest)))
+		last = blockRef{}
+		w.mu.Lock()
+		w.last = last
+		w.mu.Unlock()
+	}
 
 	// Nothing scanned yet. Start from here rather than from the beginning of
 	// time: the historical sweep is the rescan's job, and it knows where to start

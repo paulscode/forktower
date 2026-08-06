@@ -1295,3 +1295,108 @@ func TestOneStallIsOneAlertHoweverTheHeightMoves(t *testing.T) {
 			"want one thread", stalls)
 	}
 }
+
+// Blocks from another chainstate the same node is building are not this chain.
+//
+// **Measured on hardware that had taken the snapshot shortcut.** Bitcoin Core
+// keeps two chainstates afterwards — the snapshot one at the tip, and a
+// background one validating from genesis — and both publish on the same socket.
+// The watcher was handed heights climbing from 176 at about a thousand blocks
+// every five seconds, interleaved with the real tip at 959,766. Every
+// alternation read as the chain being replaced deeper than any reorganisation
+// reaches: fifteen thousand critical alerts, and scanning stopped.
+func TestBlocksFromAnotherChainstateAreNotAReorganisation(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	h.run()
+
+	// Settle on the real chain first, high enough that a background block is
+	// unmistakably below it rather than merely earlier.
+	h.view.Extend("real", 1000)
+	tip := h.view.Tip()
+	h.waitFor("watching to start", func() bool {
+		return h.w.Progress().Height == tip.Height
+	})
+	h.view.SetHealth(chainview.BackendHealth{
+		State: chainview.HealthOK,
+		Tip:   chainview.BlockMeta{BlockRef: chainview.BlockRef{Height: tip.Height}},
+	})
+	h.clock.Add(int64(replayingCheckEvery/time.Second) + 1)
+
+	// A block from the background chainstate, far below what the node calls its
+	// own best block.
+	// A real block from the chain's own history, far enough below the mark that
+	// walking back from it exhausts the reorganisation limit before it could ever
+	// reach the mark. That is what made this look like the chain being replaced,
+	// and it is exactly what the background chainstate publishes: genuine blocks,
+	// at heights long since passed.
+	old, err := h.view.BlockHashByHeight(context.Background(), 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldMeta, err := h.view.BlockHeaderByHash(context.Background(), old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.w.handleTip(context.Background(), oldMeta)
+
+	alerts, err := h.store.ListAlerts(context.Background(), store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range alerts {
+		if a.Kind == DeepReorgAlertKind {
+			t.Errorf("a block from another chainstate was reported as the chain "+
+				"being replaced: %q", a.Message)
+		}
+	}
+	if got := h.w.Progress().Height; got != tip.Height {
+		t.Errorf("watching moved to height %d on the strength of a block from a "+
+			"chain it is not watching", got)
+	}
+}
+
+// A stored position from that other chainstate is discarded rather than caught
+// up from.
+//
+// Left alone it drives a nine-hundred-thousand-block sweep through a chain
+// nobody was watching. Safe to drop precisely because it is not on the active
+// chain: there is nothing being skipped.
+func TestAScanPositionFromAnotherChainstateIsDiscarded(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+
+	ctx := context.Background()
+	// Far below where the node says its best block is, as height 11,173 was
+	// against a best of 959,766 on the install this came from.
+	if err := h.store.SetMetaInt64(ctx, store.MetaLastScannedSQHeight, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetMeta(ctx, store.MetaLastScannedSQHash,
+		"000000001301e1732401ce61af458a78ca85309de905cebefb0be09499d16716"); err != nil {
+		t.Fatal(err)
+	}
+
+	h.view.Extend("real", 300)
+	tip := h.view.Tip()
+	h.view.SetHealth(chainview.BackendHealth{
+		State: chainview.HealthOK,
+		Tip:   chainview.BlockMeta{BlockRef: chainview.BlockRef{Height: tip.Height}},
+	})
+	h.run()
+
+	h.waitFor("watching to restart from the active chain", func() bool {
+		return h.w.Progress().Height == tip.Height
+	})
+
+	alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range alerts {
+		if a.Kind == DeepReorgAlertKind {
+			t.Error("discarding the stale position was reported to the user as a " +
+				"chain reorganisation")
+		}
+	}
+}
