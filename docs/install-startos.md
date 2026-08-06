@@ -94,6 +94,20 @@ starting before it has an identity, and the dashboard says so while that happens
   it on first and registering afterwards is not a thing you can do — which is why
   step 1 is getting the address rather than an afterthought.
 
+### If you already use a watchtower
+
+Register Forktower's as well, rather than instead. A watchtower somebody else
+runs watches whichever chain **their** node follows — which you cannot see from
+here and which changes, without telling you, the day they upgrade. It may happen
+to be watching the chain your own node cannot see. It may be watching the same
+chain your node already watches, in which case it duplicates protection you have
+and nothing at all is covering the other one.
+
+The tower Forktower runs is the one with a known view of the chain your node is
+not following, and the one Forktower can check is really receiving your backups,
+channel by channel. Keep the tower you have — LND is happy to back up to several,
+and more is better — and add this one to the list.
+
 **Do it sooner rather than later.** A watchtower can only punish a channel state
 it was given, and it is given them as they happen. States revoked before you
 registered are not covered by any tower, ever — so registering early is worth

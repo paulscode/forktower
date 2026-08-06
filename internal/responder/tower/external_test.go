@@ -11,6 +11,7 @@ import (
 
 	"github.com/paulscode/forktower/internal/bus"
 	"github.com/paulscode/forktower/internal/store"
+	"github.com/paulscode/forktower/internal/words"
 )
 
 type scoutHarness struct {
@@ -54,6 +55,19 @@ func newScoutHarness(t *testing.T, tweak ...func(*ScoutOptions)) *scoutHarness {
 	return &scoutHarness{
 		t: t, store: st, bus: b, client: client, scout: sc,
 		clock: clock, events: events,
+	}
+}
+
+// recordOurTower puts a managed tower in the store, standing in for the
+// companion tower having come up and reported its identity.
+func (h *scoutHarness) recordOurTower() {
+	h.t.Helper()
+	if _, _, err := h.store.UpsertTower(context.Background(), store.Tower{
+		Kind: store.TowerLND, Pubkey: ourTower, Managed: true,
+		URI: ourTower + "@abcdef.onion:9911", FirstSeenAt: h.clock.Load(),
+		UpdatedAt: h.clock.Load(),
+	}); err != nil {
+		h.t.Fatal(err)
 	}
 }
 
@@ -246,8 +260,17 @@ func TestBeingProtectedOnlyBySomebodyElsesTowerIsSaidOnce(t *testing.T) {
 	if !strings.Contains(said.Message, "register with another") {
 		t.Errorf("the message does not say what the remedy would be: %q", said.Message)
 	}
-	if !strings.Contains(said.Message, "That works") {
-		t.Errorf("the message reads as a fault rather than a description: %q", said.Message)
+	// **It used to open with "That works", and that was the bug.** It works for
+	// what a watchtower ordinarily does; it cannot be relied on for the thing
+	// this program is about, because the chain a tower somebody else runs is
+	// watching is neither visible from here nor fixed. Leading with reassurance
+	// talked a user out of the step that closes the gap.
+	if strings.Contains(said.Message, "That works") {
+		t.Errorf("the message reassures about a guarantee it cannot make: %q", said.Message)
+	}
+	if !strings.Contains(said.Message, "whichever chain their node follows") {
+		t.Errorf("the message does not say what an external tower cannot promise: %q",
+			said.Message)
 	}
 
 	h.pass()
@@ -395,5 +418,118 @@ func TestTheScoutLooksImmediatelyAndStopsWhenAsked(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the scout did not stop when asked")
+	}
+}
+
+// A tower this installation runs that has not answered yet is not an absent one.
+//
+// **Reported by a user on StartOS 0.3.5.1, where the companion tower is on by
+// default.** They had a third-party tower registered, and within seconds of
+// installing were told their arrangement was external-only and that it worked —
+// said once and never withdrawn — while the tower they should have registered
+// was still opening its listener. It is not recorded until it reports its own
+// pubkey, and reading that gap as "this installation runs no tower" is the whole
+// of the bug.
+func TestATowerOfOursThatHasNotAnsweredYetIsNotAnAbsentOne(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) { o.RunsOwnWatchtower = true })
+	h.addChannel(store.ChanAnchors, "aa"+strings.Repeat("0", 62))
+
+	// The node backs up to somebody else's tower. Ours has not answered, so
+	// nothing has been recorded for it.
+	h.client.towers = []RegisteredTower{{
+		Pubkey:    "02" + strings.Repeat("b", 62),
+		Addresses: []string{"somebody-else.onion:9911"},
+		Sessions:  []Session{anchorSession(40)},
+	}}
+
+	h.pass()
+	h.pass()
+
+	for _, e := range h.drain() {
+		c, ok := e.(bus.TowerConcern)
+		if !ok {
+			continue
+		}
+		if c.Concern == string(ConcernExternalOnly) {
+			t.Errorf("an installation that runs its own tower was described as "+
+				"external-only while that tower was still starting: %q", c.Message)
+		}
+		if c.Concern == string(ConcernOursNotRegistered) {
+			t.Errorf("the user was asked to register a tower that has not said "+
+				"who it is yet: %q", c.Message)
+		}
+	}
+}
+
+// Once ours is up and the node is not using it, say so — and say what it is for.
+func TestATowerOfOursThatIsUpAndUnregisteredIsAskedFor(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) { o.RunsOwnWatchtower = true })
+	h.addChannel(store.ChanAnchors, "aa"+strings.Repeat("0", 62))
+	h.recordOurTower()
+
+	h.client.towers = []RegisteredTower{{
+		Pubkey:    "02" + strings.Repeat("b", 62),
+		Addresses: []string{"somebody-else.onion:9911"},
+		Sessions:  []Session{anchorSession(40)},
+	}}
+
+	h.pass()
+
+	var said *bus.TowerConcern
+	for _, e := range h.drain() {
+		if c, ok := e.(bus.TowerConcern); ok && c.Concern == string(ConcernOursNotRegistered) {
+			said = &c
+		}
+	}
+	if said == nil {
+		t.Fatal("a third-party tower and an unregistered tower of our own " +
+			"produced no request to register it")
+	}
+	// The reason has to be in the message. "Register this too" without saying
+	// what it buys reads as housekeeping, and housekeeping gets postponed.
+	if !strings.Contains(said.Message, "whichever chain their node follows") {
+		t.Errorf("the message does not say what an external tower cannot "+
+			"promise: %q", said.Message)
+	}
+	if !strings.Contains(said.Message, words.OtherChain) {
+		t.Errorf("the message does not say which chain this is about: %q", said.Message)
+	}
+}
+
+// And when they go and do it, it is withdrawn.
+func TestRegisteringOurTowerWithdrawsTheRequest(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) { o.RunsOwnWatchtower = true })
+	h.addChannel(store.ChanAnchors, "aa"+strings.Repeat("0", 62))
+	h.recordOurTower()
+
+	h.client.towers = []RegisteredTower{{
+		Pubkey:    "02" + strings.Repeat("b", 62),
+		Addresses: []string{"somebody-else.onion:9911"},
+		Sessions:  []Session{anchorSession(40)},
+	}}
+	h.pass()
+	h.drain()
+
+	// They register ours alongside the one they had.
+	h.client.towers = append(h.client.towers, RegisteredTower{
+		Pubkey:    ourTower,
+		Addresses: []string{"abcdef.onion:9911"},
+		Sessions:  []Session{anchorSession(3)},
+	})
+	h.pass()
+
+	var cleared bool
+	for _, e := range h.drain() {
+		if c, ok := e.(bus.TowerConcern); ok &&
+			c.Concern == string(ConcernOursNotRegistered) && c.Cleared {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("the user registered the tower and the request for it was never " +
+			"withdrawn, so the dashboard still asks for something already done")
 	}
 }

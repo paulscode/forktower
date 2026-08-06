@@ -207,6 +207,18 @@ func mapTowerConcern(ev bus.TowerConcern) (Candidate, bool) {
 			Message:  ev.Message,
 		}, true
 
+	case tower.ConcernOursNotRegistered:
+		// **A warning rather than an aside, unlike external-only beside it.** This
+		// is the single registration the split-specific protection depends on, and
+		// the user is the only one who can make it: Forktower holds a read-only
+		// credential to their node and could not do it if it wanted to.
+		return Candidate{
+			Tier: store.TierWarning, Kind: KindTowerNotProtecting,
+			DedupKey: KindTowerNotProtecting + ":ours-not-registered",
+			Subject:  "Forktower's watchtower is not registered with your node",
+			Message:  ev.Message,
+		}, true
+
 	case tower.ConcernExternalOnly:
 		// A description of the deployment rather than a fault with it. Worth
 		// saying once because it changes what can be done when a tower stops —
@@ -327,6 +339,16 @@ func clearedConcern(ev bus.TowerConcern) (Candidate, bool) {
 			Subject:  "Your watchtower has your channels registered",
 			Message: "Your node has registered with the tower and is sending it " +
 				"channel states.",
+		}, true
+
+	case tower.ConcernOursNotRegistered:
+		return Candidate{
+			Tier: store.TierResolved, Kind: KindTowerProtecting,
+			DedupKey: KindTowerNotProtecting + ":ours-not-registered",
+			Subject:  "Forktower's watchtower is registered with your node",
+			Message: "Your node is backing up to the tower here, which watches " +
+				words.OtherChain + ". That was the one step Forktower could not " +
+				"take for you.",
 		}, true
 
 	case tower.ConcernChannelUncovered, tower.ConcernBackupsStalled,

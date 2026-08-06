@@ -58,6 +58,11 @@ func (a *App) buildWardens(cfg config.Config, log *slog.Logger, now func() time.
 		Store: a.store, Client: client, Bus: a.bus,
 		Log: log.With(slog.String("component", "tower")),
 		Now: now,
+		// Whether this installation runs a tower decides what the scout should
+		// say about a deployment whose only towers are somebody else's: "that is
+		// your arrangement" when there is nothing here to register, and "register
+		// ours" when there is.
+		RunsOwnWatchtower: cfg.Tower.LND.Enabled || cfg.Tower.TEOS.Enabled,
 	})
 	if err != nil {
 		return fmt.Errorf("setting up watching for towers you registered with: %w", err)

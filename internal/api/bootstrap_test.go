@@ -525,3 +525,85 @@ func TestTheOneSaveConstraintIsStated(t *testing.T) {
 			joined)
 	}
 }
+
+// Somebody else's watchtower must not mark this step done.
+//
+// **Reported by a user on StartOS 0.3.5.1.** They had a third-party tower
+// registered, so every branch of this check passed — reachable tower, covered
+// channels — and the setup step that would have walked them through registering
+// Forktower's address was counted as complete. Nothing ever asked them, and the
+// gap the whole program exists to close stayed open quietly.
+func TestSomebodyElsesTowerDoesNotSatisfyTheCheckWhereWeRunOne(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.RunsOwnWatchtower = true })
+	ctx := context.Background()
+
+	theirs := putTower(t, h, "02"+strings.Repeat("b", 62), false)
+	ours := putTower(t, h, "03"+strings.Repeat("c", 62), true)
+	ch := addChannel(t, h, "aa"+strings.Repeat("0", 62), nil)
+
+	// Their tower is protecting the channel; ours has been looked at and is not.
+	for _, c := range []store.Coverage{
+		{ChannelID: ch, TowerID: theirs, Coverable: true, Reason: "sessions exist"},
+		{ChannelID: ch, TowerID: ours, Coverable: false, Reason: "nothing registered"},
+	} {
+		if err := h.store.UpsertCoverage(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	item := findCheck(t, h.srv.Readiness(ctx), CheckTowerProtection)
+	if item.OK {
+		t.Fatal("a third-party tower marked the watchtower step done, so the " +
+			"user is never asked to register the one with a view of the other chain")
+	}
+	// **Naming it is the point.** This used to fall through to "Some channels
+	// are not covered by a watchtower" — true, and no help: it does not say
+	// which tower, does not say what to do, and offers nothing to click.
+	if !strings.Contains(item.Label, "Forktower's watchtower") {
+		t.Errorf("label = %q, which does not say which tower is missing", item.Label)
+	}
+	if item.Action == nil {
+		t.Error("no way offered to register it")
+	}
+	if waitingOn(item) {
+		t.Error("a registration only the user can make was presented as " +
+			"something that resolves itself")
+	}
+}
+
+// But not before the warden has looked.
+//
+// The seconds after our tower opens its listener have no coverage verdict at
+// all, and reading that as "not registered" would put a task in front of
+// somebody during a window where there is nothing to do.
+func TestOurTowerIsNotCalledUnregisteredBeforeAnyoneHasLooked(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.RunsOwnWatchtower = true })
+	ctx := context.Background()
+
+	putTower(t, h, "03"+strings.Repeat("c", 62), true)
+
+	item := findCheck(t, h.srv.Readiness(ctx), CheckTowerProtection)
+	if strings.Contains(item.Label, "not registered") {
+		t.Errorf("asked for a registration before anything had checked whether "+
+			"it was already done: %q", item.Label)
+	}
+}
+
+// putTower records a tower, ours or somebody else's, reachable either way.
+func putTower(t *testing.T, h *harness, pubkey string, managed bool) int64 {
+	t.Helper()
+	ctx := context.Background()
+	id, _, err := h.store.UpsertTower(ctx, store.Tower{
+		Kind: store.TowerLND, Pubkey: pubkey, URI: pubkey + "@somewhere.onion:9911",
+		Managed: managed, FirstSeenAt: 1_790_000_000, UpdatedAt: 1_790_000_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetTowerStatus(ctx, id,
+		store.TowerHealth{Status: store.TowerReachable, Detail: "answering"},
+		1_790_000_100); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}

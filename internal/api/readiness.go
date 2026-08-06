@@ -136,6 +136,49 @@ func (s *Server) checkTowerProtection(ctx context.Context) ReadinessItem {
 		}
 	}
 
+	// **Somebody else's tower must not satisfy this check where we run one.**
+	// A user with a third-party tower registered had every branch below pass —
+	// their tower was reachable, their channels covered — so the setup step that
+	// would have walked them through registering Forktower's address was marked
+	// done, and nothing ever asked. An external tower watches whichever chain its
+	// operator's node follows, which cannot be seen from here; the tower here is
+	// the one with a known view of the chain their own node cannot see. Counting
+	// the two as interchangeable is what left the gap open silently.
+	if s.cfg.RunsOwnWatchtower {
+		var ours, oursWorking int
+		for _, t := range towers {
+			if !t.Managed {
+				continue
+			}
+			ours++
+			if t.Status == store.TowerReachable {
+				oursWorking++
+			}
+		}
+		switch {
+		case ours == 0:
+			// Starting up, exactly as in the empty case above. Not a task.
+			return ReadinessItem{
+				ID: CheckTowerProtection, OK: false,
+				informational: true, settling: true,
+				Label: "Your watchtower is still starting",
+				Why: "Forktower runs one here, to watch " + words.OtherChain +
+					" for you. It is not ready yet, and there is nothing for you to " +
+					"do until it is — this finishes on its own.",
+			}
+		case oursWorking > 0 && s.notUsingOurs(ctx, towers):
+			return ReadinessItem{
+				ID: CheckTowerProtection, OK: false, informational: true,
+				Label: "Your node is not registered with Forktower's watchtower",
+				Why: "Whatever else you have registered watches whichever chain " +
+					"its operator's node follows, which cannot be seen from here. " +
+					"The tower Forktower runs is the one with a known view of " +
+					words.OtherChain + " — the chain your own node cannot see.",
+				Action: actionSetUpTower(),
+			}
+		}
+	}
+
 	uncovered, err := s.store.ListCoverage(ctx, store.CoverageFilter{UncoverableOnly: true})
 	if err == nil && len(uncovered) > 0 {
 		return ReadinessItem{
@@ -190,6 +233,39 @@ func (s *Server) checkTowerProtection(ctx context.Context) ReadinessItem {
 		ID: CheckTowerProtection, OK: true,
 		Label: "A watchtower is ready to answer a breach",
 	}
+}
+
+// notUsingOurs reports whether the node is demonstrably not backing up to a
+// tower this installation runs.
+//
+// **Absence of a verdict is not a verdict.** The warden writes a coverage row
+// per channel once it has looked, so no rows at all means it has not looked yet
+// — the seconds after the tower opens its listener — and reading that as "not
+// registered" would put a task in front of somebody during a window where there
+// is nothing to do and it would clear itself. Only a verdict that exists and
+// says no counts.
+func (s *Server) notUsingOurs(ctx context.Context, towers []store.Tower) bool {
+	rows, err := s.store.ListCoverage(ctx, store.CoverageFilter{})
+	if err != nil || len(rows) == 0 {
+		return false
+	}
+	ours := make(map[int64]bool, len(towers))
+	for _, t := range towers {
+		if t.Managed {
+			ours[t.ID] = true
+		}
+	}
+	var judged, covered int
+	for _, c := range rows {
+		if !ours[c.TowerID] {
+			continue
+		}
+		judged++
+		if c.Coverable {
+			covered++
+		}
+	}
+	return judged > 0 && covered == 0
 }
 
 // blockingFailures are the failing checks the headline should react to.
