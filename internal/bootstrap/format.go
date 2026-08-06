@@ -83,19 +83,26 @@ func HumanDuration(d time.Duration) string {
 
 // ETA estimates how long the rest of a transfer will take.
 //
+// Takes what moved **in this run** rather than what is on disk, and the two are
+// not the same after a resume. Measured on real hardware: the daemon restarted
+// with seven gigabytes already fetched, and dividing all seven by the fifteen
+// minutes since it came back produced "about 4 minutes to go" with forty
+// minutes of transfer left. An estimate that confident and that wrong is worse
+// than none, because the next one is not believed either.
+//
 // Returns zero when it has nothing to go on. A progress bar that shows a
-// confident time remaining after two seconds is wrong, is known to be wrong when
-// it is written, and costs the reader their trust in every later estimate — so
-// this declines to guess until enough has moved to mean something.
-func ETA(done, total int64, elapsed time.Duration) time.Duration {
+// confident time remaining after two seconds is wrong, is known to be wrong
+// when it is written, and costs the reader their trust in every later estimate
+// — so this declines to guess until enough has moved to mean something.
+func ETA(movedThisRun, remaining int64, elapsed time.Duration) time.Duration {
 	const enoughToJudge = 16 << 20
 
-	if done < enoughToJudge || done >= total || elapsed <= 0 {
+	if movedThisRun < enoughToJudge || remaining <= 0 || elapsed <= 0 {
 		return 0
 	}
-	rate := float64(done) / elapsed.Seconds()
+	rate := float64(movedThisRun) / elapsed.Seconds()
 	if rate <= 0 {
 		return 0
 	}
-	return time.Duration(float64(total-done)/rate) * time.Second
+	return time.Duration(float64(remaining)/rate) * time.Second
 }

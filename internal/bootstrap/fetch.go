@@ -191,6 +191,9 @@ func (f *Fetcher) Fetch(ctx context.Context) error {
 	}
 
 	started := f.now()
+	// What was already there when this run began. Not zero after a resume, and
+	// the rate must not pretend otherwise.
+	runStart := size
 	attempts := 0
 
 	for index < len(f.Snapshot.Parts) {
@@ -200,6 +203,7 @@ func (f *Fetcher) Fetch(ctx context.Context) error {
 			part:      part,
 			within:    within,
 			fileSize:  size,
+			runStart:  runStart,
 			digest:    digest,
 			started:   started,
 			partIndex: index,
@@ -318,6 +322,11 @@ type streamArgs struct {
 	within int64
 	// fileSize is the length of the assembled file, for progress reporting.
 	fileSize int64
+	// runStart is how long the file was when this run began. The difference
+	// between it and the current length is what this run has actually moved,
+	// which is the only honest basis for a rate — everything before it was
+	// fetched at some other time, possibly on some other day.
+	runStart int64
 	// digest carries the hash of this part's bytes so far. Owned by the caller so
 	// that it survives a retry without re-reading the disk.
 	digest hash.Hash
@@ -466,7 +475,7 @@ func (f *Fetcher) copyWatched(
 					Part:       a.partIndex + 1,
 					Parts:      len(f.Snapshot.Parts),
 					Elapsed:    elapsed,
-					Remaining:  ETA(done, total, elapsed),
+					Remaining:  ETA(done-a.runStart, total-done, elapsed),
 				})
 			}
 		}

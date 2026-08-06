@@ -89,28 +89,60 @@ func TestHumanDurationIsHonestlyVague(t *testing.T) {
 // is known to be wrong when it is written, and costs the reader their trust in
 // every later estimate.
 func TestETADeclinesToGuessTooEarly(t *testing.T) {
-	const total = 9 << 30
+	const remaining = 8 << 30
 
-	if got := ETA(1<<20, total, time.Second); got != 0 {
+	if got := ETA(1<<20, remaining, time.Second); got != 0 {
 		t.Errorf("an estimate was offered after one megabyte: %s", got)
 	}
-	if got := ETA(0, total, time.Minute); got != 0 {
+	if got := ETA(0, remaining, time.Minute); got != 0 {
 		t.Errorf("an estimate was offered before anything moved: %s", got)
 	}
-	if got := ETA(total, total, time.Minute); got != 0 {
+	if got := ETA(1<<30, 0, time.Minute); got != 0 {
 		t.Errorf("an estimate was offered for a finished transfer: %s", got)
 	}
-	if got := ETA(1<<30, total, 0); got != 0 {
+	if got := ETA(1<<30, remaining, 0); got != 0 {
 		t.Errorf("an estimate was offered with no time elapsed: %s", got)
 	}
 }
 
 func TestETAScalesWithTheObservedRate(t *testing.T) {
 	// A gigabyte in a hundred seconds, with eight to go.
-	got := ETA(1<<30, 9<<30, 100*time.Second)
+	got := ETA(1<<30, 8<<30, 100*time.Second)
 	want := 800 * time.Second
 	if got < want-2*time.Second || got > want+2*time.Second {
 		t.Errorf("ETA = %s, want about %s", got, want)
+	}
+}
+
+// The rate is what this run moved, not what is on disk.
+//
+// **This is the hardware failure, in numbers.** The daemon restarted with seven
+// gigabytes already fetched and came back with 1.7 GB left to go. Fifteen
+// minutes later it had moved 200 MB. Dividing all seven gigabytes by those
+// fifteen minutes said "about 4 minutes"; the transfer took another forty.
+func TestETAIgnoresBytesFetchedBeforeThisRun(t *testing.T) {
+	const (
+		alreadyOnDisk    = 7 << 30
+		movedSinceResume = 200 << 20
+		leftToGo         = 1_700 << 20
+	)
+	elapsed := 15 * time.Minute
+
+	got := ETA(movedSinceResume, leftToGo, elapsed)
+	if got < 60*time.Minute {
+		t.Errorf("ETA = %s from %s moved in %s; the honest answer is over an hour",
+			got, HumanBytes(movedSinceResume), elapsed)
+	}
+
+	// And what the old arithmetic produced, for contrast: everything on disk
+	// divided by the time since the restart.
+	optimistic := ETA(alreadyOnDisk+movedSinceResume, leftToGo, elapsed)
+	if optimistic > 10*time.Minute {
+		t.Skip("the contrast no longer holds; the guard above is what matters")
+	}
+	if got <= optimistic {
+		t.Errorf("counting bytes from before the run gave %s and counting only "+
+			"this run's gave %s — the fix changed nothing", optimistic, got)
 	}
 }
 
