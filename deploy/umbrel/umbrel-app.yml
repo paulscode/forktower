@@ -57,8 +57,9 @@ description: >-
   💾 DISK AND BANDWIDTH
 
 
-  The second Bitcoin node is pruned and will use roughly 20 GB, plus the
-  bandwidth of an initial sync. It reaches the other chain over Tor.
+  The second Bitcoin node is pruned and will use roughly 30 GB — a 20 GB block
+  store plus the record of unspent coins, which pruning does not shrink — along
+  with the bandwidth of an initial sync. It reaches the other chain over Tor.
 
 
   📖 More: https://github.com/paulscode/forktower

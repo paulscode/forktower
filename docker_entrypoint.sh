@@ -168,7 +168,7 @@ onlynet=onion"
   # at scale, so the node says what it is and anyone counting can filter it out.
   #
   # `uacomment` is the mechanism Bitcoin Core provides for this, and the result
-  # is `/Satoshi:31.1.0(forktower-0.5.0)/` — the client and its version still
+  # is `/Satoshi:31.1.0(forktower-0.6.0)/` — the client and its version still
   # read exactly as they would otherwise, which is the point. Patching the binary
   # to mimic the `/Satoshi:.../Knots:.../` shape was considered and rejected: it
   # would mean building Core from source and giving up verification against the

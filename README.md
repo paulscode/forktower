@@ -76,7 +76,9 @@ a revoked state stops being a gamble and becomes a free option.
 **Forktower runs a second Bitcoin node**, following the chain your own node does
 not. That is the whole trick, and it is worth knowing before you install: it is
 another Bitcoin node on your machine, with its own disk and its own bandwidth.
-Pruned by default, around 20 GB.
+Pruned by default, and about **30 GB** once it has caught up: 20 GB of blocks,
+plus the record of unspent coins, which is around 11 GB today and is not
+something pruning shrinks.
 
 It reads your Lightning node — read-only, with the credential that node already
 wrote for itself — to learn which channels you have. Then it watches the other
@@ -90,8 +92,9 @@ be waiting: an 8.7 GB UTXO snapshot that brings the wait down to under an hour o
 decent hardware, and a few hours on a small appliance.
 
 It is offered rather than assumed. This is the only thing Forktower ever
-downloads, nothing is fetched until you press the button, and the request goes
-through the same Tor proxy the second node peers over. Bitcoin Core checks the
+downloads, nothing is fetched until you press the button, and the request
+follows whatever you chose for the second node's peering — which is Tor unless
+you changed it. Bitcoin Core checks the
 snapshot against a hash compiled into Bitcoin Core itself and refuses anything
 else, so you are not required to trust whoever hosted it — and everything below
 the snapshot's height is still verified in full, in the background, afterwards.

@@ -14,7 +14,7 @@ services:
     # bump: umbreld pulls every image in this file on install and on update, and
     # a tag is re-checked against the registry each time.
     #
-    # **Pin the digest at release** (`:0.5.0@sha256:...`). A moving tag is
+    # **Pin the digest at release** (`:0.6.0@sha256:...`). A moving tag is
     # convenient for us and wrong for a user, who should get the bits that were
     # tested rather than whatever the tag points at today.
     image: paulscode/forktower:dev

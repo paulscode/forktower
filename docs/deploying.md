@@ -11,11 +11,20 @@ a seed or a recovery phrase.
 
 ## What it costs
 
-About **10 GB of disk** and a spare CPU core, for the second node. That node is
+About **21 GB of disk** and a spare CPU core, for the second node. That node is
 pruned and holds no wallet — it exists to answer questions about blocks.
 
-The first sync takes a while: a day or two on a Raspberry Pi, a few hours on
-anything faster. Start it before you need it.
+The 21 GB is two things, and only one of them is what `prune` controls: about
+10 GB of blocks under the default prune setting, plus the record of unspent
+coins, which is around 11 GB today, grows with the chain, and is not something
+pruning shrinks. The packaged apps set a 20 GB prune target instead of 10, so
+budget about 31 GB there.
+
+**The first sync takes about three days from scratch**, and until it finishes
+Forktower cannot see the other chain at all. There is a shortcut — see below —
+that brings that down to under an hour on decent hardware. While it runs it
+needs headroom on top of the figures above: the download is staged on disk
+before it is loaded, and deleted immediately afterwards.
 
 ## docker compose
 
@@ -225,7 +234,7 @@ file on disk, and everything else is worked out from that.
 Forktower's second node identifies itself on the peer-to-peer network like this:
 
 ```
-/Satoshi:31.1.0(forktower-0.5.0)/
+/Satoshi:31.1.0(forktower-0.6.0)/
 ```
 
 It is ordinary Bitcoin Core, and the client and version read exactly as they

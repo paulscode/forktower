@@ -14,8 +14,9 @@ chains and tells you when they separate. With one, it can also tell you *which o
 your channels* would be exposed and how long you have — which is the part most
 people install it for.
 
-Expect the second Bitcoin node to use around **20 GB of disk** and the bandwidth
-of an initial sync. It is pruned by default, which is enough for everything
+Expect the second Bitcoin node to use around **30 GB of disk** and the bandwidth
+of an initial sync. That is the 20 GB pruned block store plus the record of
+unspent coins, which is about 11 GB today and is not something pruning shrinks. It is pruned by default, which is enough for everything
 Forktower does.
 
 ## Install
@@ -52,7 +53,7 @@ Both offer the same things:
 | | |
 |---|---|
 | Second node storage | Pruned (recommended), Full, or Blocks only |
-| Pruned size | 20 GB by default |
+| Pruned size | 20 GB by default — blocks only, so the node's total is about 10 GB more |
 | Reach the other chain directly | Off. Forktower uses Tor, because the traffic says which side of a contested upgrade you are watching |
 | Talk only to onion peers | Off, and off is right for almost everybody — see below |
 | Extra peers | Normally blank |
