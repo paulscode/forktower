@@ -377,3 +377,79 @@ func (h *harness) seedChannel() int64 {
 	}
 	return id
 }
+
+// A tower that has never come up has no protection to lose.
+//
+// **Seen on a fresh install**: lnd took a few seconds to open its listener, this
+// fired, and "your watchtower is not answering" then sat on the dashboard for
+// days. It is the mirror of the rule that coming up for the first time is not
+// recovery — going down for the first time, having never been up, is not a loss.
+func TestATowerStartingUpIsNotReportedAsLost(t *testing.T) {
+	t.Parallel()
+	for _, previous := range []string{"", string(store.TowerStatusUnknown)} {
+		_, raised := mapTowerHealth(bus.TowerHealthChanged{
+			TowerID:  1,
+			Status:   string(store.TowerUnreachable),
+			Previous: previous,
+			Detail:   "connection refused",
+		})
+		if raised {
+			t.Errorf("a tower whose previous status was %q raised a warning while "+
+				"it was still starting", previous)
+		}
+	}
+}
+
+// A tower that really was working and then stopped is still reported.
+func TestATowerThatWasWorkingAndStoppedIsStillReported(t *testing.T) {
+	t.Parallel()
+	got, raised := mapTowerHealth(bus.TowerHealthChanged{
+		TowerID:  1,
+		Status:   string(store.TowerUnreachable),
+		Previous: string(store.TowerReachable),
+	})
+	if !raised {
+		t.Fatal("a tower that stopped answering raised nothing")
+	}
+	if got.Kind != KindTowerDown || got.Tier != store.TierWarning {
+		t.Errorf("got %s at %s", got.Kind, got.Tier)
+	}
+}
+
+// Coming back as "settling" closes the warning.
+//
+// The resolve used to fire only on fully reachable, which a tower cannot reach
+// until its own chain backend has caught up — days, on a node syncing from
+// nothing. So the warning stayed up, true for the seconds it described and false
+// for every one after.
+func TestATowerBackButStillCatchingUpClosesTheWarning(t *testing.T) {
+	t.Parallel()
+	got, raised := mapTowerHealth(bus.TowerHealthChanged{
+		TowerID:  1,
+		Status:   string(store.TowerTemporarilyUnreachable),
+		Previous: string(store.TowerUnreachable),
+		Detail:   "its node is still catching up with the chain",
+	})
+	if !raised {
+		t.Fatal("a tower that came back left its warning standing")
+	}
+	if got.Tier != store.TierResolved {
+		t.Errorf("tier = %s, want %s", got.Tier, store.TierResolved)
+	}
+	// Same key as the warning, or it closes nothing.
+	if got.DedupKey != "tower_down:1" {
+		t.Errorf("dedup key = %q, which does not match the warning it should close",
+			got.DedupKey)
+	}
+}
+
+// And an ordinary settle from nothing still says nothing.
+func TestATowerSettlingFromStartupSaysNothing(t *testing.T) {
+	t.Parallel()
+	if _, raised := mapTowerHealth(bus.TowerHealthChanged{
+		TowerID: 1,
+		Status:  string(store.TowerTemporarilyUnreachable),
+	}); raised {
+		t.Error("a tower settling on first sight woke somebody")
+	}
+}

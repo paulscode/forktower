@@ -50,6 +50,16 @@ func mapTowerHealth(ev bus.TowerHealthChanged) (Candidate, bool) {
 		}, true
 
 	case store.TowerUnreachable:
+		// **Never having come up is not the same as having gone down**, and this
+		// is the mirror of the rule two cases above. A tower that has not been
+		// reachable yet is starting; saying its protection "has stopped" would
+		// tell a user something has been lost when nothing was ever there.
+		//
+		// Seen on a fresh install: lnd took a few seconds to open its listener,
+		// this fired, and the warning then sat on the dashboard for days.
+		if neverReachable(ev.Previous) {
+			return Candidate{}, false
+		}
 		return Candidate{
 			Tier: store.TierWarning, Kind: KindTowerDown, DedupKey: key,
 			Subject: "Your watchtower is not answering",
@@ -80,9 +90,28 @@ func mapTowerHealth(ev bus.TowerHealthChanged) (Candidate, bool) {
 				"one.",
 		}, true
 
-	case store.TowerTemporarilyUnreachable, store.TowerStatusUnknown:
-		// Starting up, or still being asked. Neither is worth waking anybody for,
-		// and both resolve on their own within a poll or two.
+	case store.TowerTemporarilyUnreachable:
+		// **A tower that was down and is now merely settling has come back**, and
+		// the standing warning has to be closed or it never will be.
+		//
+		// The resolve used to fire only on fully reachable, which a tower cannot
+		// reach until its own chain backend has caught up — days, on a node
+		// syncing from nothing. So "your watchtower is not answering" stayed on
+		// the dashboard, true for the few seconds it described and false for
+		// every one after.
+		if store.TowerStatus(ev.Previous) == store.TowerUnreachable {
+			return Candidate{
+				Tier: store.TierResolved, Kind: KindTowerRecovered, DedupKey: key,
+				Subject: "Your watchtower is answering again",
+				Message: "It is running and answering. It cannot see " +
+					words.OtherChain + " yet, so it could not act on a breach there — " +
+					"that finishes on its own. " + detailSentence(ev.Detail),
+			}, true
+		}
+		// Otherwise: starting up, or still being asked. Not worth waking anybody.
+		return Candidate{}, false
+
+	case store.TowerStatusUnknown:
 		return Candidate{}, false
 
 	default:
@@ -207,4 +236,22 @@ func detailSentence(detail string) string {
 		return ""
 	}
 	return "What Forktower saw: " + detail + "."
+}
+
+// neverReachable reports whether a tower has yet been seen working.
+//
+// An empty previous status is a tower whose first observation this is; unknown
+// is one that has been looked at and never answered. Neither has protection to
+// lose.
+func neverReachable(previous string) bool {
+	switch store.TowerStatus(previous) {
+	case "", store.TowerStatusUnknown:
+		return true
+	case store.TowerReachable, store.TowerTemporarilyUnreachable,
+		store.TowerUnreachable, store.TowerSubscriptionError,
+		store.TowerMisbehaving:
+		return false
+	default:
+		return false
+	}
 }
