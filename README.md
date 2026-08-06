@@ -11,10 +11,14 @@ chains, your Lightning node can only see one of them. Forktower watches the othe
 one on your behalf, tells you if a channel is being closed there, and works out
 how long you have to respond.
 
-> **Status: early development.** Not usable yet. If you are looking for what to
-> do about the RDTS activation right now, read
-> [Lightning channels and the RDTS activation](docs/lightning-and-the-rdts-activation.md) —
-> the decisions available to you today need none of this software.
+> **Status: first release (0.6.0), and a beta.** It detects a split, reports what
+> it means for your channels, and has been run end to end against real nodes on
+> real hardware. Nobody outside this project has installed it yet, and it has not
+> had a third-party security review.
+>
+> If you are deciding what to do about your channels before the RDTS activation,
+> read [Lightning channels and the RDTS activation](docs/lightning-and-the-rdts-activation.md)
+> first — the decisions available to you this week need none of this software.
 
 ## The problem, briefly
 
