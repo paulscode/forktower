@@ -306,4 +306,14 @@ var (
 	ErrNotFound = errors.New("chainview: not found")
 	// ErrWrongNetwork means the backend is on a different network entirely.
 	ErrWrongNetwork = errors.New("chainview: backend is on the wrong network")
+	// ErrWarmingUp means the backend is still starting and has not answered.
+	//
+	// **Not a failure, and specifically not a wrong answer.** A node loading its
+	// block index refuses every call until it is done, which on a large index and
+	// a slow disk is minutes. Read as a failed check it looked exactly like a
+	// misconfiguration: Forktower refused to start, was restarted a second later,
+	// asked too early again, and crash-looped for as long as the node took —
+	// serving nothing, and reporting that the node was "not on the expected
+	// network" while it was on the right one all along.
+	ErrWarmingUp = errors.New("chainview: backend is still starting up")
 )

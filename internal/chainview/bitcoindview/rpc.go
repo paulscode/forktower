@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/paulscode/forktower/internal/chainview"
 )
 
 // rpcError is the error object a node returns inside an otherwise successful
@@ -42,6 +44,10 @@ const (
 	// codeMethodNotFound means this node is too old for the call, or was built
 	// without it.
 	codeMethodNotFound = -32601
+	// codeInWarmup means the node is loading and will answer nothing until it
+	// has finished. Temporary, and the one code that must never be read as an
+	// answer about the chain.
+	codeInWarmup = -28
 )
 
 // client is a minimal JSON-RPC client for a Bitcoin node.
@@ -235,6 +241,13 @@ func (c *client) post(
 		return nil, fmt.Errorf("decoding %s response: %w", method, jsonErr)
 	}
 	if parsed.Error != nil {
+		// **Warmup is marked at the point it is recognised**, so that no caller
+		// has to know the numeric code, and none can mistake "has not answered"
+		// for an answer. Wrapped rather than replaced: the node's own wording is
+		// what tells a reader which part of startup it is in.
+		if parsed.Error.Code == codeInWarmup {
+			return nil, fmt.Errorf("%w: %w", chainview.ErrWarmingUp, parsed.Error)
+		}
 		return nil, parsed.Error
 	}
 	if resp.StatusCode != http.StatusOK {

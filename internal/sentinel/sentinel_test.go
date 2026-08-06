@@ -525,3 +525,53 @@ func TestConfigRequirements(t *testing.T) {
 		t.Errorf("poll interval = %v, want the default", sen.cfg.PollInterval)
 	}
 }
+
+// A node that has not finished starting is waited for, not accused.
+//
+// **Reported from a live install, and the whole of the outage.** The second
+// Bitcoin node was loading its block index, which makes it refuse every call
+// with "Loading block index…". Preflight read that as a failed network check,
+// the daemon exited, the platform restarted it a second later, and it asked too
+// early again — crash-looping for as long as the node took to load, serving no
+// dashboard at all, and reporting that the node was "not on the expected
+// network" while it was on the right one throughout.
+func TestANodeStillStartingIsWaitedForRatherThanFailed(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil)
+
+	warmup := errors.New("bitcoind rpc error -28: Loading block index…")
+	warmup = errors.Join(chainview.ErrWarmingUp, warmup)
+	h.sq.Fail("BlockHashByHeight", warmup)
+
+	// It clears while preflight is waiting, exactly as a node finishes loading.
+	go func() {
+		time.Sleep(50 * time.Millisecond) //nolint:forbidigo // standing in for a real node
+		h.sq.Fail("BlockHashByHeight", nil)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := h.sen.Preflight(ctx); err != nil {
+		t.Fatalf("a node that was merely still starting failed the checks: %v", err)
+	}
+}
+
+// A node genuinely on the wrong network still fails immediately. That is the
+// misconfiguration this check exists for, and waiting on it would be waiting
+// for something that will never change.
+func TestANodeOnTheWrongNetworkStillFailsAtOnce(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil)
+
+	h.sq.Fail("BlockHashByHeight", chainview.ErrWrongNetwork)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := h.sen.Preflight(ctx); err == nil {
+		t.Fatal("a node on the wrong network passed the checks")
+	}
+	if waited := time.Since(start); waited > 2*time.Second {
+		t.Errorf("waited %v on a condition that will never clear", waited)
+	}
+}

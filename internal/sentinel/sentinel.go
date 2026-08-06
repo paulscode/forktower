@@ -211,6 +211,57 @@ func (s *Sentinel) Paused() bool {
 	return s.paused
 }
 
+// warmupPoll is how often a node that is still starting is asked again.
+//
+// Short, because the wait is invisible to the user beyond a log line and the
+// dashboard already being up, and because a node that finishes loading should
+// not then sit idle waiting to be noticed.
+const warmupPoll = 2 * time.Second
+
+// verifyNetworkWhenReady checks the network, waiting out a node that has not
+// finished starting.
+//
+// **"Has not answered" is not "answered wrongly".** This check exists to catch a
+// node pointed at the wrong network — a real misconfiguration, and fatal,
+// because such a node answers every request plausibly and diverges for ever.
+// A node still loading its block index has said nothing of the sort. Treating
+// the two alike meant Forktower refused to start, was restarted a second later
+// by its platform, asked too early again, and crash-looped for as long as the
+// node took to load — serving no dashboard, and blaming the network the whole
+// time.
+//
+// Bounded by the caller's context, which carries the startup timeout, so a node
+// that never becomes ready still fails rather than hanging for ever.
+func (s *Sentinel) verifyNetworkWhenReady(
+	ctx context.Context, view chainview.ChainView, which string,
+) error {
+	var waited bool
+	for {
+		err := chainview.VerifyNetwork(ctx, view, s.cfg.Network)
+		switch {
+		case err == nil:
+			if waited {
+				s.log.Info("the node has finished starting, and is on the expected network",
+					slog.String("view", which))
+			}
+			return nil
+		case !errors.Is(err, chainview.ErrWarmingUp):
+			return fmt.Errorf("%s is not on the expected network: %w", which, err)
+		}
+
+		if !waited {
+			waited = true
+			s.log.Info("waiting for a node to finish starting before checking it",
+				slog.String("view", which), slog.String("detail", err.Error()))
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s did not finish starting in time: %w", which, ctx.Err())
+		case <-time.After(warmupPoll):
+		}
+	}
+}
+
 // Preflight runs the checks that must pass before anything is watched.
 //
 // Two of them, both guarding against failures that are otherwise silent and would
@@ -225,11 +276,11 @@ func (s *Sentinel) Paused() bool {
 //     unrepresentable. Fatal when proven; reported as an unavailable check when the
 //     backends cannot say.
 func (s *Sentinel) Preflight(ctx context.Context) error {
-	if err := chainview.VerifyNetwork(ctx, s.sf, s.cfg.Network); err != nil {
-		return fmt.Errorf("the Bitcoin node Forktower reads from is not on the expected network: %w", err)
+	if err := s.verifyNetworkWhenReady(ctx, s.sf, "the Bitcoin node Forktower reads from"); err != nil {
+		return err
 	}
-	if err := chainview.VerifyNetwork(ctx, s.sq, s.cfg.Network); err != nil {
-		return fmt.Errorf("the second view is not on the expected network: %w", err)
+	if err := s.verifyNetworkWhenReady(ctx, s.sq, "the second view"); err != nil {
+		return err
 	}
 
 	s.mu.Lock()

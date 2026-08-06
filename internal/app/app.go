@@ -43,7 +43,18 @@ const (
 	// which is what stops an idle connection holding a slot open indefinitely.
 	ReadHeaderTimeout = 10 * time.Second
 	// startupTimeout bounds the checks that run before anything is watched.
-	startupTimeout = 60 * time.Second
+	//
+	// **Generous, because most of it is spent waiting for a node to finish
+	// starting.** The checks themselves are two RPC calls with their own client
+	// timeouts; what dominates is a Bitcoin node loading its block index, which
+	// answers nothing until it is done and takes minutes on a large index and a
+	// slow disk. Sixty seconds was enough for a fast machine and not for an
+	// appliance, and falling short here does not mean failing once — the platform
+	// restarts the daemon, which asks too early again.
+	//
+	// Nothing is hidden during the wait: the dashboard is already serving, and
+	// the log says which node is being waited for and what it said.
+	startupTimeout = 10 * time.Minute
 	// bytesPerMB converts the configured timeline limit, which is written in
 	// megabytes because that is the unit a person thinks about disk in.
 	bytesPerMB = 1024 * 1024
