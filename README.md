@@ -78,7 +78,7 @@ not. That is the whole trick, and it is worth knowing before you install: it is
 another Bitcoin node on your machine, with its own disk and its own bandwidth.
 Pruned by default, and about **31 GB** once it has caught up: 20 GB of blocks,
 plus the record of unspent coins, which is around 11 GB today and is not
-something pruning shrinks.
+something pruning shrinks. The watchtower it runs adds up to 2 GB more.
 
 It reads your Lightning node — read-only, with the credential that node already
 wrote for itself — to learn which channels you have. Then it watches the other

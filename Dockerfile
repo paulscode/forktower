@@ -142,7 +142,6 @@ RUN set -eux; \
     mkdir -p /out; \
     tar -xzf /tmp/lnd.tar.gz -C /tmp; \
     cp "/tmp/lnd-linux-${TARGETARCH}-${LND_VERSION}/lnd" /out/lnd-tower; \
-    cp "/tmp/lnd-linux-${TARGETARCH}-${LND_VERSION}/lncli" /out/lncli-tower; \
     rm -rf /tmp/lnd.tar.gz "/tmp/lnd-linux-${TARGETARCH}-${LND_VERSION}"
 
 # ── The image ─────────────────────────────────────────────────────────────────
@@ -202,8 +201,10 @@ COPY --from=bitcoin /out/bitcoin-cli /usr/local/bin/bitcoin-cli
 # The companion watchtower. Named for what it is rather than what it runs, so
 # that nothing here can be mistaken for the user's own Lightning node — this one
 # holds no channels, no money, and no seed worth writing down.
+# Only the daemon. lncli was carried for a while and used by nothing: Forktower
+# reads the tower over its REST interface, so the command-line client was tens
+# of megabytes shipped to every user to be executed by no one.
 COPY --from=lnd     /out/lnd-tower   /usr/local/bin/lnd-tower
-COPY --from=lnd     /out/lncli-tower /usr/local/bin/lncli-tower
 
 COPY rootfs/ /
 COPY deploy/compose/sq-anchors.txt /usr/share/forktower/sq-anchors.txt

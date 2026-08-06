@@ -16,6 +16,7 @@ chains. With one, it can tell you which of your channels a split would expose.
 Expect the second Bitcoin node to use around **31 GB of disk** and the bandwidth
 of an initial sync. That is the 20 GB pruned block store plus the record of
 unspent coins, which is about 11 GB today and is not something pruning shrinks.
+The watchtower adds up to 2 GB on top of that, and can be switched off.
 
 ## Add the store
 

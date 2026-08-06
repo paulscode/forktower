@@ -162,28 +162,35 @@ func (s *Server) stepFor(item ReadinessItem) *SetupStep {
 //
 // Empty for an unknown platform. A self-hoster knows where their own lnd.conf
 // is, and guessing at it would be worse than the silence.
+//
+// **All three now end by pointing at an address on this page rather than
+// telling somebody to go and find one.** They used to say "register a
+// watchtower with your node", which was the whole of the advice and none of the
+// help: the packaged builds ran no tower, shipped no list, and left the single
+// most valuable step in the setup as an exercise.
 func watchtowerGuidance(platform config.Platform) []string {
 	switch platform {
 	case config.PlatformStartOS04:
 		return []string{
 			"Open the LND service in StartOS.",
 			"Go to Actions → Watchtower → Watchtower Client Settings.",
-			"Add a watchtower's address. LND turns its watchtower client on by " +
-				"itself once there is one in the list — there is no separate switch.",
+			"Paste the address from the watchtower card on this page. LND turns " +
+				"its watchtower client on by itself once there is one in the list " +
+				"— there is no separate switch.",
 		}
 	case config.PlatformStartOS035:
 		return []string{
 			"Open the LND service in StartOS.",
 			"Go to Config, and turn on the watchtower client (wtclient.active).",
 			"Save, and restart LND so the setting takes effect.",
-			"Then register a watchtower with your node.",
+			"Then register the address from the watchtower card on this page.",
 		}
 	case config.PlatformUmbrel:
 		return []string{
 			"Open the Lightning app in Umbrel.",
 			"Go to Advanced Settings, and turn on wtclient.active.",
 			"Restart the Lightning app so the setting takes effect.",
-			"Then register a watchtower with your node.",
+			"Then register the address from the watchtower card on this page.",
 		}
 	case config.PlatformUnknown:
 		return nil

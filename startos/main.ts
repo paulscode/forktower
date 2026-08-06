@@ -19,6 +19,7 @@ import {
   lndProbeMount,
   lndRestPort,
   sqPeerPort,
+  towerHost,
   towerPort,
 } from './utils'
 
@@ -266,31 +267,6 @@ export const main = sdk.setupMain(async ({ effects }) => {
     'forktower-tower',
   )
 
-  // The address the tower tells clients to use.
-  //
-  // **Read from the platform rather than constructed.** The onion is assigned
-  // by StartOS and nothing in this package can derive it; guessing would
-  // produce a URI the dashboard shows confidently and nobody can dial.
-  //
-  // An empty result is not an error. On a first start the address may not exist
-  // yet, and lnd is then started without advertising one rather than
-  // advertising a wrong one — the dashboard shows a tower with no address to
-  // register, which is true, and the next start fixes it.
-  const towerAddress = await effects
-    .getHostInfo({ hostId: 'tower' })
-    .then((host) => {
-      const bindings = (host?.bindings ?? {}) as Record<
-        string,
-        { hostnames?: Array<{ hostname: string; port: number | null }> }
-      >
-      const hostnames = Object.values(bindings).flatMap((b) => b.hostnames ?? [])
-      // Onion first, because that is the address a client on another machine
-      // can actually reach and the one that says least about this one.
-      const onion = hostnames.find((h) => h.hostname.endsWith('.onion'))
-      return onion ?? hostnames[0] ?? null
-    })
-    .catch(() => null)
-
   // The environment the entrypoint renders `forktower.toml` from. The daemon
   // never sees these names and the user never sees the TOML.
   const env: Record<string, string> = {
@@ -319,12 +295,19 @@ export const main = sdk.setupMain(async ({ effects }) => {
     // user was told to register one and given nowhere to get one.
     FORKTOWER_TOWER_LND_ENABLED: cfg.towerEnabled ? 'true' : 'false',
     FORKTOWER_TOWER_LND_LISTEN: `0.0.0.0:${towerPort}`,
-    // What clients are told to dial. Empty when the platform has not assigned
-    // the address yet, which is honest: the dashboard then shows a tower with
-    // no address to register rather than one nobody can reach.
-    FORKTOWER_TOWER_LND_EXTERNAL_ADDR: towerAddress
-      ? `${towerAddress.hostname}:${towerAddress.port ?? towerPort}`
-      : '',
+    // **The address a sibling service dials, not an onion.**
+    //
+    // The first version of this read an onion back from the platform, which was
+    // wrong twice over. It was a shape read from type definitions and never run
+    // against a real system, and it answered a question nobody asked: the client
+    // is the user's own Lightning node, on this machine, and every other service
+    // here is addressed by exactly this convention.
+    //
+    // It is also the safer answer. An LND watchtower accepts a session from
+    // anyone who can reach it and has no allowlist, so an address reachable only
+    // from this machine is a smaller thing to be running than one on the public
+    // internet.
+    FORKTOWER_TOWER_LND_EXTERNAL_ADDR: `${towerHost}:${towerPort}`,
     FORKTOWER_SQ_BLOCKSONLY: cfg.sqMode === 'blocksonly' ? '1' : '0',
     // `prune=0` is Bitcoin Core for "keep everything", which is what Full
     // means. Blocks-only is still pruned — skipping the memory pool is a

@@ -20,6 +20,9 @@ around 11 GB today, grows with the chain, and is not something pruning shrinks.
 Lowering `FORKTOWER_SQ_PRUNE_MB` reduces the first number only; Bitcoin Core
 refuses anything below about 5,000.
 
+The companion watchtower, where it is enabled, adds up to 2 GB more — a cap
+rather than a usage, and one this daemon watches and reports on.
+
 **The first sync takes about three days from scratch**, and until it finishes
 Forktower cannot see the other chain at all. There is a shortcut — see below —
 that brings that down to under an hour on decent hardware. While it runs it

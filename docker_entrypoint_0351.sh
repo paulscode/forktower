@@ -100,17 +100,16 @@ export FORKTOWER_SQ_P2P_PORT=8433
 
 # ── The companion watchtower ─────────────────────────────────────────────────
 #
-# The address clients dial is the package's own Tor hostname, which this
-# platform writes into the data volume for exactly this purpose. Without it the
-# tower advertises nothing and the dashboard shows a tower with no address to
-# register — true, and better than a URI nobody can reach.
+# The address the user's Lightning node dials. Sibling services on this platform
+# reach each other at their `.embassy` hostnames — the same convention this file
+# already uses for bitcoind and lnd above — so the tower is reachable from the
+# node without Tor and without being exposed beyond this machine.
+#
+# That last part matters more than the convenience: an LND watchtower accepts a
+# session from anyone who can reach it and has no allowlist.
 export FORKTOWER_TOWER_LND_ENABLED="$(cfg '.watchtower.enabled' 'true')"
 export FORKTOWER_TOWER_LND_LISTEN="0.0.0.0:9911"
-if [ -f /root/.tor_hostname ]; then
-  export FORKTOWER_TOWER_LND_EXTERNAL_ADDR="$(cat /root/.tor_hostname):9911"
-elif [ -n "${TOR_ADDRESS:-}" ]; then
-  export FORKTOWER_TOWER_LND_EXTERNAL_ADDR="${TOR_ADDRESS}:9911"
-fi
+export FORKTOWER_TOWER_LND_EXTERNAL_ADDR="${FORKTOWER_HOST:-forktower.embassy}:9911"
 export FORKTOWER_LOG_LEVEL="$(cfg '.advanced.log-level' 'info')"
 
 NTFY_URL="$(cfg '.notifications.ntfy-url' '')"

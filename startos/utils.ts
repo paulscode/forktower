@@ -26,6 +26,12 @@ export const towerPort = 9911
 
 /** The user's own Bitcoin node. */
 export const bitcoindHost = 'bitcoind.startos'
+
+/**
+ * This package's own hostname, which is how the user's Lightning node reaches
+ * the watchtower running here. Same convention as every sibling above.
+ */
+export const towerHost = 'forktower.startos'
 export const bitcoindRpcPort = 8332
 export const bitcoindZmqRawBlockPort = 28332
 export const bitcoindZmqRawTxPort = 28333
