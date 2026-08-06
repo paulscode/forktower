@@ -1,7 +1,7 @@
 id: forktower
 title: "Forktower"
-version: 0.6.3
-release-notes: "Fixes for what Forktower says to a user who already has a watchtower. On a fresh install it could report that your channels were protected by somebody else's watchtower and that this works — said once, before the watchtower Forktower runs here had even finished starting. A tower somebody else runs watches whichever chain their node follows, which cannot be seen from here and changes when they upgrade; the tower here is the one with a known view of the chain your own node cannot see. Forktower now asks you to register it, alongside whatever you already use rather than instead of it, and the setup list no longer counts a third-party tower as having covered that step."
+version: 0.6.4
+release-notes: "Two fixes for Forktower blaming the wrong thing while it starts up. If your channels were reported as not protected because your node had not negotiated a session with the watchtower, that was wrong: your node was asking, correctly and repeatedly, and Forktower's own watchtower cannot accept a session until the second Bitcoin node has finished syncing. That is now what it says, and it no longer raises an alert about it. The faster first sync is the way to shorten it. Separately, a Lightning node that had not been read yet was reported in red as one that could not be read, from the moment the app started until the first poll returned."
 license: MIT
 wrapper-repo: "https://github.com/paulscode/forktower"
 upstream-repo: "https://github.com/paulscode/forktower"
