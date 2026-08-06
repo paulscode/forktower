@@ -315,6 +315,16 @@ var (
 	ErrNotFound = errors.New("chainview: not found")
 	// ErrWrongNetwork means the backend is on a different network entirely.
 	ErrWrongNetwork = errors.New("chainview: backend is on the wrong network")
+	// ErrUnreachable means the backend could not be contacted at all: nothing is
+	// listening, the name does not resolve, the connection was refused.
+	//
+	// **Distinct from a wrong answer, and that is the whole point.** In a
+	// container where the daemon and its node start together, the node's RPC
+	// socket is routinely not open for the first second or two. Read as a failed
+	// check it looked identical to a misconfiguration — and the startup check
+	// said the node was "not on the expected network", which is a claim about a
+	// node that had said nothing at all.
+	ErrUnreachable = errors.New("chainview: backend could not be reached")
 	// ErrWarmingUp means the backend is still starting and has not answered.
 	//
 	// **Not a failure, and specifically not a wrong answer.** A node loading its

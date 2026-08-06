@@ -211,7 +211,9 @@ func (c *client) post(
 
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("calling %s: %w", method, err)
+		// Marked where it is recognised, as warmup is, so that callers deciding
+		// whether to wait do not have to inspect network error types.
+		return nil, fmt.Errorf("calling %s: %w: %w", method, chainview.ErrUnreachable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 

@@ -245,13 +245,18 @@ func (s *Sentinel) verifyNetworkWhenReady(
 					slog.String("view", which))
 			}
 			return nil
-		case !errors.Is(err, chainview.ErrWarmingUp):
+		case errors.Is(err, chainview.ErrWarmingUp), errors.Is(err, chainview.ErrUnreachable):
+			// Both mean "ask again shortly", and neither is an answer about the
+			// network. Unreachable is the second or two before a node's RPC socket
+			// opens, which in a container starting both processes together is
+			// every single start.
+		default:
 			return fmt.Errorf("%s is not on the expected network: %w", which, err)
 		}
 
 		if !waited {
 			waited = true
-			s.log.Info("waiting for a node to finish starting before checking it",
+			s.log.Info("waiting for a node to become answerable before checking it",
 				slog.String("view", which), slog.String("detail", err.Error()))
 		}
 		select {

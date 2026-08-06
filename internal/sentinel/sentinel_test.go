@@ -556,6 +556,33 @@ func TestANodeStillStartingIsWaitedForRatherThanFailed(t *testing.T) {
 	}
 }
 
+// A node whose RPC socket has not opened yet is waited for too.
+//
+// **Observed on hardware, after the warmup fix had already shipped.** In a
+// container that starts the daemon and its node together, the node is not
+// listening for the first second or two — which is connection-refused, not the
+// warmup code, so it was still fatal. The daemon exited once and was restarted;
+// the message blamed the network, about a node that had said nothing at all.
+func TestANodeWhoseSocketIsNotOpenYetIsWaitedFor(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil)
+
+	refused := errors.Join(chainview.ErrUnreachable,
+		errors.New(`dial tcp 127.0.0.1:8432: connect: connection refused`))
+	h.sq.Fail("BlockHashByHeight", refused)
+
+	go func() {
+		time.Sleep(50 * time.Millisecond) //nolint:forbidigo // standing in for a real node
+		h.sq.Fail("BlockHashByHeight", nil)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := h.sen.Preflight(ctx); err != nil {
+		t.Fatalf("a node that had not opened its socket yet failed the checks: %v", err)
+	}
+}
+
 // A node genuinely on the wrong network still fails immediately. That is the
 // misconfiguration this check exists for, and waiting on it would be waiting
 // for something that will never change.
