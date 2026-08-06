@@ -1,7 +1,7 @@
 id: forktower
 title: "Forktower"
-version: 0.6.4
-release-notes: "Two fixes for Forktower blaming the wrong thing while it starts up. If your channels were reported as not protected because your node had not negotiated a session with the watchtower, that was wrong: your node was asking, correctly and repeatedly, and Forktower's own watchtower cannot accept a session until the second Bitcoin node has finished syncing. That is now what it says, and it no longer raises an alert about it. The faster first sync is the way to shorten it. Separately, a Lightning node that had not been read yet was reported in red as one that could not be read, from the moment the app started until the first poll returned."
+version: 0.6.5
+release-notes: "Forktower no longer watches the other chain until that chain's node has caught up. On a fresh install the second Bitcoin node is still doing its initial sync, and Forktower was taking its position in that sync as a starting point and following the download forward — scanning blocks from years before any of your channels existed, competing for disk with the sync itself, and raising an urgent 'scanning has stopped' alert every time a read hiccupped under the load. Those alerts were also keyed so that one problem became a new urgent alert each time the height moved. Nothing was at risk: during that sync the second node cannot see the other chain anyway. Nothing on the dashboard should have suggested otherwise."
 license: MIT
 wrapper-repo: "https://github.com/paulscode/forktower"
 upstream-repo: "https://github.com/paulscode/forktower"
