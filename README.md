@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="Pickhash" width="480">
+  <img src="logo.png" alt="Forktower" width="480">
 </p>
 
 # Forktower
@@ -47,6 +47,24 @@ a revoked state stops being a gamble and becomes a free option.
   channel of your choosing — and tests that the alarm works, because an untested
   alarm is not one.
 
+## How it works, briefly
+
+**Forktower runs a second Bitcoin node**, following the chain your own node does
+not. That is the whole trick, and it is worth knowing before you install: it is
+another Bitcoin node on your machine, with its own disk and its own bandwidth.
+Pruned by default, around 20 GB.
+
+It reads your Lightning node — read-only, with the credential that node already
+wrote for itself — to learn which channels you have. Then it watches the other
+chain for anything that starts a clock against one of them, and tells you what is
+at stake and how many blocks you have.
+
+The catch is the second node's first sync, which takes days from scratch. Each
+release ships a UTXO snapshot that skips most of it, bringing that down to under
+an hour on decent hardware and a few hours on a small appliance. Bitcoin Core
+verifies the snapshot against a hash compiled into itself, so you are not
+required to trust whoever hosted it.
+
 It never holds your channel keys, your seed, or anything that can spend your
 money. It cannot sign a transaction, and no part of it will ever ask you for a
 recovery phrase.
@@ -70,7 +88,7 @@ Start at [docs/index.md](docs/index.md), or go straight to what you need:
 
 ## Building
 
-Requires Go 1.25 or newer. `./scripts/dev-setup.sh` installs a pinned toolchain
+Requires Go 1.26.5 or newer. `./scripts/dev-setup.sh` installs a pinned toolchain
 with checksum verification if you would rather not do it by hand.
 
 ```sh
