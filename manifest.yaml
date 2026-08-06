@@ -1,7 +1,7 @@
 id: forktower
 title: "Forktower"
-version: 0.6.5
-release-notes: "Forktower no longer watches the other chain until that chain's node has caught up. On a fresh install the second Bitcoin node is still doing its initial sync, and Forktower was taking its position in that sync as a starting point and following the download forward — scanning blocks from years before any of your channels existed, competing for disk with the sync itself, and raising an urgent 'scanning has stopped' alert every time a read hiccupped under the load. Those alerts were also keyed so that one problem became a new urgent alert each time the height moved. Nothing was at risk: during that sync the second node cannot see the other chain anyway. Nothing on the dashboard should have suggested otherwise."
+version: 0.6.6
+release-notes: "Two fixes. If you used the faster first sync, Forktower could report that the other chain had been replaced and stop watching it — repeatedly. Bitcoin Core keeps a second chainstate after that shortcut, validating history in the background, and both publish blocks on the same channel; Forktower was reading the background one as the chain it watches, and every alternation looked like a chain replacement. It now trusts your node's own account of which chain is active, and discards a scanning position recorded from the other one. On Umbrel, having nowhere to send alerts is no longer shown as a setup step you cannot complete: that platform gives an app no settings screen, so it is now stated as a fact — alerts appear on Forktower's page and nowhere else — rather than asking you to edit a compose file by hand."
 license: MIT
 wrapper-repo: "https://github.com/paulscode/forktower"
 upstream-repo: "https://github.com/paulscode/forktower"
