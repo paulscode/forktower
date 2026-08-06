@@ -1128,11 +1128,15 @@ func TestAChainRacingAheadIsNotReportedAsReplaced(t *testing.T) {
 
 	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
 
-	// Far beyond the reorg depth, every block extending the same chain.
-	h.view.Extend("catching-up", 500)
+	// Far beyond the reorg depth of 3, every block extending the same chain.
+	// Forty rather than five hundred: the old code walked back three and gave
+	// up, so anything past that proves the point, and reading five hundred
+	// blocks one at a time made this the slowest test in the package and the
+	// first to time out when the machine was busy.
+	h.view.Extend("catching-up", 40)
 
 	h.waitFor("the reader to follow", func() bool {
-		return h.w.Progress().Height >= 500 || h.w.Progress().Stalled
+		return h.w.Progress().Height >= 40 || h.w.Progress().Stalled
 	})
 
 	if h.w.Progress().Stalled {
@@ -1145,7 +1149,7 @@ func TestAChainRacingAheadIsNotReportedAsReplaced(t *testing.T) {
 	}
 	for _, a := range alerts {
 		if a.Kind == DeepReorgAlertKind {
-			t.Fatalf("a chain that grew by 500 blocks was reported as replaced: %s",
+			t.Fatalf("a chain that grew by 40 blocks was reported as replaced: %s",
 				a.Message)
 		}
 	}
@@ -1167,9 +1171,9 @@ func TestAChainThatOutrunsTheReaderIsRejoinedAtItsTip(t *testing.T) {
 
 	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
 
-	h.view.Extend("initial-sync", 400)
+	h.view.Extend("initial-sync", 120)
 
-	h.waitFor("the reader to rejoin", func() bool { return h.w.Progress().Height >= 400 })
+	h.waitFor("the reader to rejoin", func() bool { return h.w.Progress().Height >= 120 })
 
 	if h.w.Progress().Stalled {
 		t.Error("the watcher stalled on a chain that had simply outrun it")
