@@ -99,6 +99,52 @@ RUN set -eux; \
     cp "/tmp/bitcoin-${BITCOIN_VERSION}/bin/bitcoin-cli" /out/; \
     rm -rf /tmp/bitcoin.tar.gz "/tmp/bitcoin-${BITCOIN_VERSION}"
 
+# ── The watchtower ────────────────────────────────────────────────────────────
+#
+# **The tower server is not a separate program.** LND ships it inside `lnd`
+# itself, so running one means running a second lnd — which is why this is the
+# largest thing in the image and why it was worth arguing about before adding.
+#
+# It is worth it. A watchtower is the difference between being told about a
+# breach and something being done about it, and the tower this runs watches the
+# *second* node — the chain the user's own node cannot see, which is where a
+# breach against them would be published. Every other arrangement asks the user
+# to find a stranger's tower and hope it is looking the right way.
+#
+# It holds no money. The wallet exists because lnd requires one, is created with
+# --noseedbackup, and has never had an address handed to it.
+#
+# Checksums from the release's own signed manifest, committed here rather than
+# fetched beside the download — a checksum an attacker can replace along with
+# the file is not a check. Same rule as Bitcoin Core above.
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS lnd
+
+ARG LND_VERSION=v0.18.5-beta
+ARG LND_SHA256_AMD64=ffffa63b28a031a330eae4db234ada1bd27003059757c1a0d3aeb0d8d7351c4f
+ARG LND_SHA256_ARM64=2b3512746a1583c67c585436282ab84fb483bdee3815954d170e39ccfbb3942c
+ARG TARGETARCH
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) sha="${LND_SHA256_AMD64}" ;; \
+      arm64) sha="${LND_SHA256_ARM64}" ;; \
+      *) echo "no pinned lnd build for ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    tarball="lnd-linux-${TARGETARCH}-${LND_VERSION}.tar.gz"; \
+    curl -fsSL --retry 3 \
+      "https://github.com/lightningnetwork/lnd/releases/download/${LND_VERSION}/${tarball}" \
+      -o /tmp/lnd.tar.gz; \
+    echo "${sha}  /tmp/lnd.tar.gz" | sha256sum -c -; \
+    mkdir -p /out; \
+    tar -xzf /tmp/lnd.tar.gz -C /tmp; \
+    cp "/tmp/lnd-linux-${TARGETARCH}-${LND_VERSION}/lnd" /out/lnd-tower; \
+    cp "/tmp/lnd-linux-${TARGETARCH}-${LND_VERSION}/lncli" /out/lncli-tower; \
+    rm -rf /tmp/lnd.tar.gz "/tmp/lnd-linux-${TARGETARCH}-${LND_VERSION}"
+
 # ── The image ─────────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
@@ -153,6 +199,11 @@ RUN set -eux; \
 COPY --from=build   /out/forktowerd  /usr/local/bin/forktowerd
 COPY --from=bitcoin /out/bitcoind    /usr/local/bin/bitcoind
 COPY --from=bitcoin /out/bitcoin-cli /usr/local/bin/bitcoin-cli
+# The companion watchtower. Named for what it is rather than what it runs, so
+# that nothing here can be mistaken for the user's own Lightning node — this one
+# holds no channels, no money, and no seed worth writing down.
+COPY --from=lnd     /out/lnd-tower   /usr/local/bin/lnd-tower
+COPY --from=lnd     /out/lncli-tower /usr/local/bin/lncli-tower
 
 COPY rootfs/ /
 COPY deploy/compose/sq-anchors.txt /usr/share/forktower/sq-anchors.txt

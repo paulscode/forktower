@@ -1,0 +1,24 @@
+#!/command/with-contenv sh
+#
+# The companion watchtower: a second lnd, run only as a tower.
+#
+# **Its chain backend is the second Bitcoin node, and that is the whole point.**
+# A tower is only useful if it is watching the chain a breach would be published
+# on, and for somebody whose own node enforces the new rules that is the chain
+# their node cannot see. Pointing it at the second node makes it watch the right
+# one by construction rather than by hoping.
+#
+# It holds no money. The wallet exists because lnd requires one, is created with
+# --noseedbackup so there is no seed to write down, and is never given an
+# address.
+
+if [ "${FORKTOWER_TOWER_LND_ENABLED:-false}" != "true" ]; then
+  echo "the companion watchtower is switched off" >&2
+  # Down rather than exiting: a longrun that exits is a longrun s6 restarts, and
+  # a service respawning every second for the life of an installation is noise
+  # that buries whatever else the log had to say.
+  exec /command/s6-svc -d /run/service/tower-lnd
+fi
+
+exec s6-setuidgid forktower \
+  /usr/local/bin/lnd-tower --configfile="${FORKTOWER_DATA_DIR}/tower/lnd.conf"
