@@ -266,7 +266,7 @@ func (a *Alerter) put(ctx context.Context, candidate Candidate, keepAck bool) {
 	// their own, and they are the best news this program has to give. Treating
 	// "nothing to close" as "nothing to say" would have silenced all three.
 	if candidate.Tier == store.TierResolved {
-		id, resolveErr := a.store.ResolveAlert(wctx, record)
+		id, resolveErr := a.store.ResolveAlert(wctx, record, candidate.Closes...)
 		if resolveErr != nil {
 			a.log.Error("could not resolve an alert",
 				slog.String("kind", candidate.Kind),

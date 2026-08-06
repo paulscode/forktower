@@ -685,3 +685,40 @@ func TestAResolutionWithNothingToCloseIsStillAnnounced(t *testing.T) {
 			"recorded, so the dashboard will not show it")
 	}
 }
+
+// A chain coming back must close the notice that it had gone.
+//
+// **The same complaint a tester made about the watchtower, in the place it would
+// be most alarming.** "Forktower cannot see the status-quo chain" is the warning
+// that says protection is paused. Announcing the recovery beside it, with the
+// warning still reading as current, tells a user whose setup is now fine that
+// half of it is still broken.
+func TestAViewComingBackClosesTheWarningThatItWasGone(t *testing.T) {
+	t.Parallel()
+	rec := newRecorder("phone")
+	h := newHarness(t, []Route{{Transport: rec, MinTier: config.MinTierInfo}}, nil)
+	h.start(t)
+
+	h.bus.Publish(bus.ViewHealthChanged{View: "sq", Old: "OK", New: "DOWN"})
+	waitFor(t, "the view going down", func() bool {
+		return rec.countKind(KindViewDegraded) > 0
+	})
+	h.bus.Publish(bus.ViewHealthChanged{View: "sq", Old: "DOWN", New: "OK"})
+	waitFor(t, "the view coming back", func() bool {
+		return rec.countKind(KindViewRecovered) > 0
+	})
+
+	alerts, err := h.store.ListAlerts(t.Context(), store.AlertFilter{})
+	if err != nil {
+		t.Fatalf("reading the alerts back: %v", err)
+	}
+	for _, a := range alerts {
+		if a.Tier != store.TierResolved {
+			t.Errorf("%q is still standing at %s after the chain came back",
+				a.Message, a.Tier)
+		}
+	}
+	if len(alerts) != 1 {
+		t.Errorf("%d entries for one chain going away and coming back", len(alerts))
+	}
+}

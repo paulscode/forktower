@@ -470,3 +470,59 @@ func TestResolvingSomethingNeverRaisedChangesNothing(t *testing.T) {
 		t.Errorf("%d rows exist after resolving something never raised", len(rows))
 	}
 }
+
+// The same trouble happening twice must not read as resolved the second time.
+//
+// **A bug introduced by the fix above and caught before it shipped.** Closing an
+// alert left its dedup key on the row, so the next occurrence found that row and
+// bumped it — and UpsertAlert deliberately keeps the existing tier and message.
+// A watchtower that went down, came back and went down again would have sat on
+// the dashboard saying "answering again" while it was not answering.
+func TestTroubleReturningAfterAResolutionRaisesItAgain(t *testing.T) {
+	t.Parallel()
+	st := openTemp(t)
+	ctx := t.Context()
+
+	down := Alert{
+		Tier: TierWarning, Kind: "tower_down", DedupKey: "tower_down:1",
+		Subject: "Your watchtower is not answering", Message: "It stopped replying.",
+		CreatedAt: 100, LastRaisedAt: 100,
+	}
+	if _, err := st.UpsertAlert(ctx, down); err != nil {
+		t.Fatalf("raising the warning: %v", err)
+	}
+	if _, err := st.ResolveAlert(ctx, Alert{
+		Tier: TierResolved, Kind: "tower_recovered", DedupKey: "tower_down:1",
+		Subject: "Your watchtower is answering again", Message: "It is back.",
+		LastRaisedAt: 200,
+	}); err != nil {
+		t.Fatalf("resolving: %v", err)
+	}
+
+	down.CreatedAt, down.LastRaisedAt = 300, 300
+	if _, err := st.UpsertAlert(ctx, down); err != nil {
+		t.Fatalf("raising the warning a second time: %v", err)
+	}
+
+	rows, err := st.ListAlerts(ctx, AlertFilter{})
+	if err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	var standing *Alert
+	for i := range rows {
+		if rows[i].Tier == TierWarning {
+			standing = &rows[i]
+		}
+	}
+	if standing == nil {
+		t.Fatalf("the tower is down again and nothing on the dashboard says so; "+
+			"%d rows, all resolved", len(rows))
+	}
+	if standing.Message != "It stopped replying." {
+		t.Errorf("the standing warning reads %q", standing.Message)
+	}
+	if standing.AckedAt != 0 {
+		t.Error("the new warning arrived pre-dismissed, inheriting the " +
+			"acknowledgement of the resolution that closed the last one")
+	}
+}

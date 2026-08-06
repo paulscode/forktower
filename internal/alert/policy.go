@@ -43,6 +43,13 @@ type Candidate struct {
 	DedupKey string
 	Subject  string
 	Message  string
+	// Closes names further threads this news retires, when it retires any beyond
+	// its own key. A view coming back ends both "cannot see it" and "it is on
+	// the wrong branch", and a resolution that closed only one of them would
+	// leave the other reading as current directly beside the news that it is not.
+	//
+	// Only meaningful on a resolved candidate; ignored elsewhere.
+	Closes []string
 }
 
 // tierRank ranks the five alert tiers onto the three severities `min_tier`
@@ -236,19 +243,27 @@ func mapViewHealth(ev bus.ViewHealthChanged) (Candidate, bool) {
 	view := chainview.Branch(ev.View)
 	label := viewLabel(view)
 
-	// The dedup key names the condition, not just the view. A view that degrades,
-	// recovers and degrades again must reuse the *degraded* row rather than
-	// overwrite the recovery notice with it — the store keeps an alert's original
-	// message, so one key per view would leave a row whose text no longer
-	// describes what it is reporting.
+	// The dedup key names the condition, not just the view: the store keeps an
+	// alert's original message, so one key per view would leave a row whose text
+	// no longer describes what it is reporting.
+	//
+	// **Which is why the recovery has to say what it closes.** Its own key names
+	// nothing that was ever raised, so it would announce that Forktower can see
+	// the chain again and leave "Forktower cannot see the status-quo chain"
+	// sitting above it, unchanged and reading as current — the same complaint a
+	// tester made about the watchtower warning.
 	switch chainview.HealthState(ev.New) {
 	case chainview.HealthOK:
 		return Candidate{
 			Tier:     store.TierResolved,
 			Kind:     KindViewRecovered,
 			DedupKey: fmt.Sprintf("%s:%s", KindViewRecovered, ev.View),
-			Subject:  label,
-			Message:  fmt.Sprintf("Forktower can see %s again.", label),
+			Closes: []string{
+				fmt.Sprintf("%s:%s", KindViewWrongBranch, ev.View),
+				fmt.Sprintf("%s:%s", KindViewDegraded, ev.View),
+			},
+			Subject: label,
+			Message: fmt.Sprintf("Forktower can see %s again.", label),
 		}, true
 
 	case chainview.HealthWrongBranch:

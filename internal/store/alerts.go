@@ -250,25 +250,57 @@ func (s *Store) GetAlert(ctx context.Context, id int64) (Alert, error) {
 // Returns the closed alert's id, or zero when there was nothing standing under
 // that key. A resolution for something never raised is not news, and the caller
 // drops it rather than announcing relief from a problem the user never had.
-func (s *Store) ResolveAlert(ctx context.Context, a Alert) (id int64, err error) {
+// Closes may name further keys the same news retires — a chain view coming back
+// ends both "cannot see it" and "it is on the wrong branch", and only one of
+// those can be the entry that turns over. The first standing key in order carries
+// the resolution's words; any others are retired where they are, keeping their
+// own text, so the history reads as two warnings that closed rather than two
+// copies of the same sentence.
+func (s *Store) ResolveAlert(ctx context.Context, a Alert, closes ...string) (id int64, err error) {
 	if a.DedupKey == "" {
 		return 0, errors.New("store: alert needs a dedup key")
 	}
+	keys := append([]string{a.DedupKey}, closes...)
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
 		id = 0
-		row := tx.QueryRowContext(ctx,
-			`SELECT id FROM alerts WHERE dedup_key = ? AND tier != ?`,
-			a.DedupKey, TierResolved)
-		switch e := row.Scan(&id); {
-		case errors.Is(e, sql.ErrNoRows):
-			return nil
-		case e != nil:
-			return fmt.Errorf("resolving alert %q: %w", a.DedupKey, e)
+		for _, key := range keys {
+			var found int64
+			row := tx.QueryRowContext(ctx,
+				`SELECT id FROM alerts WHERE dedup_key = ? AND tier != ?`,
+				key, TierResolved)
+			switch e := row.Scan(&found); {
+			case errors.Is(e, sql.ErrNoRows):
+				continue
+			case e != nil:
+				return fmt.Errorf("resolving alert %q: %w", key, e)
+			}
+			if id == 0 {
+				id = found
+				continue
+			}
+			if _, e := tx.ExecContext(ctx,
+				`UPDATE alerts
+				    SET tier = ?, last_raised_at = ?, acked_at = ?,
+				        dedup_key = dedup_key || ':closed:' || id
+				  WHERE id = ?`,
+				TierResolved, a.LastRaisedAt, a.LastRaisedAt, found); e != nil {
+				return fmt.Errorf("retiring alert %q: %w", key, e)
+			}
 		}
+		if id == 0 {
+			return nil
+		}
+		// **The key is retired with the row.** Leaving it in place means the next
+		// occurrence finds this row and bumps it — and UpsertAlert keeps the
+		// existing tier and words, so a watchtower that went down, came back and
+		// went down again would sit on the dashboard reading "answering again"
+		// while it was not answering. The closed row keeps a readable key so the
+		// history still says what it was about.
 		if _, e := tx.ExecContext(ctx,
 			`UPDATE alerts
 			    SET tier = ?, kind = ?, subject = ?, message = ?,
-			        last_raised_at = ?, acked_at = ?
+			        last_raised_at = ?, acked_at = ?,
+			        dedup_key = dedup_key || ':closed:' || id
 			  WHERE id = ?`,
 			a.Tier, a.Kind, nullString(a.Subject), a.Message,
 			a.LastRaisedAt, a.LastRaisedAt, id); e != nil {
