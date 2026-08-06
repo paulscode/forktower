@@ -8,7 +8,7 @@ export const current = VersionInfo.of({
       'Two fixes for Forktower blaming the wrong thing while it starts up. If ' +
       'your channels were reported as not protected because your node had not ' +
       'negotiated a session with the watchtower, that was wrong: your node was ' +
-      'asking, correctly and repeatedly, and Forktower's own watchtower ' +
+      'asking, correctly and repeatedly, and Forktower\'s own watchtower ' +
       'cannot accept a session until the second Bitcoin node has finished ' +
       'syncing. That is now what it says, and it no longer raises an alert ' +
       'about it — the faster first sync is the way to shorten it. Separately, ' +

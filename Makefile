@@ -27,6 +27,7 @@ GOLANGCI   ?= golangci-lint
         forkbench-up forkbench-split forkbench-status forkbench-down \
         forkbench-ln-up forkbench-ln-status forkbench-fixtures demo-s1-detect \
         check check-boundary check-artifacts check-no-rdts check-clone check-versions \
+        check-startos \
         cover-check cover tidy-check vuln tidy clean help \
         vendor-teos teos-image
 
@@ -36,7 +37,7 @@ GOLANGCI   ?= golangci-lint
 # workflow in .github/ has never run. Until it does, this target is the whole
 # safety net, which is why it includes the two checks that would otherwise only
 # happen on a build server — module tidiness and the vulnerability database.
-check: build lint test cover-check tidy-check vuln check-no-rdts check-clone verify-release-selftest
+check: build lint test cover-check tidy-check vuln check-no-rdts check-clone verify-release-selftest check-startos
 	@printf '\n  all checks passed\n'
 
 ## build: compile all binaries into bin/
@@ -46,6 +47,23 @@ build:
 	  echo "  build  $$b"; \
 	  $(GO_ENV) go build $(GO_FLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$$b ./cmd/$$b || exit 1; \
 	done
+
+## check-startos: typecheck the StartOS 0.4.x package definition
+#
+# **The gate did not look at this, and it ships.** A syntax error in the
+# package's TypeScript passed `make check` cleanly and only surfaced when the
+# release recipe tried to build the JavaScript bundle from it — the same shape
+# as the version bug in 0.6.1, where every check examined the inputs and none
+# examined what users would install.
+#
+# Skipped, out loud, when the toolchain is not installed. A check that quietly
+# passes because it did not run is worse than one that is not there.
+check-startos:
+	@if [ -d node_modules ]; then \
+	  npx tsc --noEmit && printf '  startos package typechecks\n'; \
+	else \
+	  printf '  startos package NOT checked: run npm install first\n'; \
+	fi
 
 ## test: unit and component tests, with the race detector
 test:
