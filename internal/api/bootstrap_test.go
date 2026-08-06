@@ -304,3 +304,29 @@ func findCheck(t *testing.T, items []ReadinessItem, id string) ReadinessItem {
 	t.Fatalf("no readiness item with id %q", id)
 	return ReadinessItem{}
 }
+
+// The card must not promise a time the default configuration cannot keep.
+//
+// The shortcut was measured at 48 minutes over a direct connection, and the
+// download goes through the same Tor proxy the second node peers over unless
+// somebody changed that. On real hardware over Tor it ran to several hours.
+// Quoting the fast figure alone quotes the configuration almost nobody has.
+func TestTheOfferDoesNotPromiseAnHourItCannotKeep(t *testing.T) {
+	h := newHarness(t, nil)
+	h.srv.MountBootstrap(newFakeBootstrap(bootstrap.PhaseOffered))
+
+	view := h.srv.bootstrapView()
+	prose := strings.ToLower(view.Title + " " + view.Detail)
+
+	if strings.Contains(prose, "within the hour") {
+		t.Errorf("the card promises the hour: %q", prose)
+	}
+	// Where an hour is mentioned it has to be qualified by how you are connected.
+	if strings.Contains(prose, "hour") && !strings.Contains(prose, "direct") {
+		t.Errorf("the card quotes an hour without saying it needs a direct "+
+			"connection: %q", prose)
+	}
+	if !strings.Contains(prose, "three days") {
+		t.Errorf("the card no longer says what the alternative costs: %q", prose)
+	}
+}

@@ -119,10 +119,16 @@ func (s *Server) bootstrapView() BootstrapView {
 		view.Detail = st.Assessment.Reason
 
 	case bootstrap.PhaseOffered:
-		view.Title = "Start watching the other chain within the hour"
+		view.Title = "Start watching the other chain today, not in three days"
+		// **Both figures, because the default is the slow one.** The shortcut was
+		// measured at 48 minutes end to end over a direct connection, and this
+		// runs through the same Tor proxy the second node peers over unless the
+		// user changed that — where it is several hours. Quoting only the fast
+		// number would be quoting the configuration almost nobody has.
 		view.Detail = "Left to itself, the second Bitcoin node takes about three " +
 			"days to catch up, and until it has, Forktower cannot see the other " +
-			"chain at all. There is a shortcut that takes under an hour."
+			"chain at all. The shortcut takes a few hours through Tor, or under " +
+			"an hour on a direct connection."
 		view.Why = bootstrapOfferReasons(st)
 		view.Action = &Action{Label: "Use the faster sync", Endpoint: PathBootstrapStart}
 

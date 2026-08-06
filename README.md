@@ -88,8 +88,9 @@ at stake and how many blocks you have.
 The catch is the second node's first sync, which takes about three days from
 scratch — three days during which Forktower cannot see the other chain at all.
 So it offers a shortcut, on the dashboard, at the point where you would otherwise
-be waiting: an 8.7 GB UTXO snapshot that brings the wait down to under an hour on
-decent hardware, and a few hours on a small appliance.
+be waiting: an 8.7 GB UTXO snapshot that brings the wait down to a few hours,
+or under an hour if you have chosen a direct connection rather than Tor. The
+network path is what decides that, not the hardware.
 
 It is offered rather than assumed. This is the only thing Forktower ever
 downloads, nothing is fetched until you press the button, and the request

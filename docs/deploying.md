@@ -25,7 +25,7 @@ rather than a usage, and one this daemon watches and reports on.
 
 **The first sync takes about three days from scratch**, and until it finishes
 Forktower cannot see the other chain at all. There is a shortcut — see below —
-that brings that down to under an hour on decent hardware. While it runs it
+that brings that down to a few hours over Tor, or under an hour direct. While it runs it
 needs headroom on top of the figures above: the download is staged on disk
 before it is loaded, and deleted immediately afterwards.
 
@@ -179,8 +179,13 @@ exactly the exposure it was installed to prevent, which is worth knowing before
 you plan around it.
 
 The shortcut is a UTXO snapshot of about 8.7 GB, published on this project's
-releases page. Loading it takes the wait down to under an hour on decent hardware
-and a few hours on a small appliance. It is offered on the dashboard at the point
+releases page.
+
+**What decides how long it takes is the network path, not the hardware.** Over a
+direct connection the whole thing was measured at 48 minutes. Through Tor — which
+is the default here, because it follows the second node's peering — it is several
+hours: measured at rather more than the download alone on a fast machine with a
+good link. Both are a great deal less than three days. It is offered on the dashboard at the point
 where you would otherwise be waiting, and nothing is downloaded until you accept.
 
 ```
