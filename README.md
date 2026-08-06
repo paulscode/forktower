@@ -45,7 +45,7 @@ a revoked state stops being a gamble and becomes a free option.
   your node’s chain  ──────────────────┼───────────────────────────────────►
   you see this                         │     the channel still looks open here
                                        │
-  the other chain                      ┼───────●───────────────────✗───────►
+  the other chain                      └───────●───────────────────✗───────►
   you see none of it                           │                   │
                                        partner publishes    the window closes,
                                        a revoked state      balance is theirs
