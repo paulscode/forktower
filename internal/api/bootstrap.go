@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/paulscode/forktower/internal/bootstrap"
 )
@@ -141,8 +142,16 @@ func (s *Server) bootstrapView() BootstrapView {
 
 	case bootstrap.PhaseLoading:
 		view.Title = "Handing the head start to the second node"
-		view.Detail = "This takes several minutes, and the node will not answer " +
-			"anything while it reads. That is expected."
+		// **"Several minutes" was measured on a fast machine and quoted
+		// everywhere.** It took twenty minutes there and over half an hour on an
+		// appliance, during which the card said the same eight words and showed
+		// nothing else — so the only way to tell a slow read from a hung one was
+		// to go and look at the node's log.
+		view.Detail = "The node is reading the whole file and rebuilding its " +
+			"record of unspent coins. Twenty minutes or so on a fast machine, and " +
+			"longer on a small appliance. It will not answer anything until it " +
+			"has finished, which is expected."
+		view.Human = loadingFor(st, s.now())
 		view.Percent = 100
 
 	case bootstrap.PhaseDone:
@@ -224,3 +233,20 @@ func (s *Server) bootstrapOffered() bool {
 // is not about it, and threading a nil through ten positional arguments teaches
 // nobody anything.
 func (s *Server) MountBootstrap(b Bootstrap) { s.bootstrap = b }
+
+// loadingFor says how long the node has been reading.
+//
+// The one number available: the node answers nothing while it works, so there is
+// no progress to poll. It is still worth showing, because "started forty minutes
+// ago" and "started four hours ago" call for different reactions and the card
+// otherwise reads identically in both cases.
+func loadingFor(st bootstrap.State, now time.Time) string {
+	if st.LoadStartedAt == 0 {
+		return ""
+	}
+	elapsed := now.Sub(time.Unix(st.LoadStartedAt, 0))
+	if elapsed < time.Minute {
+		return "Just started."
+	}
+	return "Reading for " + bootstrap.HumanDuration(elapsed) + " so far."
+}

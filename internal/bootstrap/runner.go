@@ -96,6 +96,15 @@ type State struct {
 	Error string
 	// LoadedAt is when the node accepted the snapshot, or zero.
 	LoadedAt int64
+	// LoadStartedAt is when the node was handed the file, or zero.
+	//
+	// **Reported because the reading is the one part with nothing to show.** The
+	// node does not answer while it works, so there is no progress to poll and
+	// no percentage to draw — and a card that says "several minutes" and then
+	// says nothing else for an hour is indistinguishable from one that has hung.
+	// How long it has been going is the only honest signal available, and it is
+	// enough for somebody to tell patience from trouble.
+	LoadStartedAt int64
 	// StagedBytes is how much of the file is on disk. Shown while stopped, so
 	// somebody who cancelled can see that resuming would not start over.
 	StagedBytes int64
@@ -453,8 +462,12 @@ func (r *Runner) work(ctx context.Context, info ChainInfo) error {
 		return err
 	}
 
-	r.setPhase(PhaseLoading)
-	r.log.Info("handing the snapshot to the second node — this takes several minutes")
+	r.mu.Lock()
+	r.state.Phase = PhaseLoading
+	r.state.LoadStartedAt = r.now().Unix()
+	r.mu.Unlock()
+	r.log.Info("handing the snapshot to the second node — it will not answer " +
+		"anything until it has finished reading, which takes tens of minutes")
 
 	loaded, err := r.node.LoadSnapshot(workCtx, r.StagedPath())
 	if err != nil {
@@ -484,6 +497,7 @@ func (r *Runner) work(ctx context.Context, info ChainInfo) error {
 	r.state.Phase = PhaseDone
 	r.state.Error = ""
 	r.state.LoadedAt = r.now().Unix()
+	r.state.LoadStartedAt = 0
 	r.state.StagedBytes = 0
 	r.mu.Unlock()
 	return nil
@@ -507,12 +521,6 @@ func (r *Runner) awaitHeaders(ctx context.Context, info ChainInfo) error {
 		}
 		info = next
 	}
-}
-
-func (r *Runner) setPhase(p Phase) {
-	r.mu.Lock()
-	r.state.Phase = p
-	r.mu.Unlock()
 }
 
 // fail records a failure without disarming.

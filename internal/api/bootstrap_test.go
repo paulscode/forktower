@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/paulscode/forktower/internal/bootstrap"
 	"github.com/paulscode/forktower/internal/chainview"
@@ -369,5 +370,56 @@ func TestATowerWhoseNodeIsBehindIsNotCalledUnresponsive(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(item.Why), "on its own") {
 		t.Errorf("the reason %q does not say this resolves without the user", item.Why)
+	}
+}
+
+// The reading phase says how long it has been reading.
+//
+// **It is the one part of the shortcut with nothing to show.** The node answers
+// nothing while it works, so there is no progress to poll — and a card that says
+// "several minutes" and then says nothing else for half an hour is
+// indistinguishable from one that has hung. Seen on an appliance, where the read
+// took considerably longer than the fast machine the figure came from.
+func TestTheReadingPhaseSaysHowLongItHasBeenReading(t *testing.T) {
+	h := newHarness(t, nil)
+	fake := newFakeBootstrap(bootstrap.PhaseLoading)
+	fake.state.LoadStartedAt = h.clock.Load() - int64(37*time.Minute/time.Second)
+	h.srv.MountBootstrap(fake)
+
+	view := h.srv.bootstrapView()
+	if view.Human == "" {
+		t.Fatal("the reading phase reports nothing at all about how long it has run")
+	}
+	if !strings.Contains(view.Human, "37 minutes") {
+		t.Errorf("elapsed reads %q, which does not say how long", view.Human)
+	}
+	// And the figure quoted is no longer the fast machine's alone.
+	if strings.Contains(view.Detail, "several minutes") {
+		t.Errorf("the detail still promises several minutes: %q", view.Detail)
+	}
+	if !strings.Contains(view.Detail, "appliance") {
+		t.Errorf("the detail does not say it is slower on small hardware: %q",
+			view.Detail)
+	}
+}
+
+// Just handed over is not "reading for 0 minutes".
+func TestAReadThatHasJustBegunSaysSo(t *testing.T) {
+	h := newHarness(t, nil)
+	fake := newFakeBootstrap(bootstrap.PhaseLoading)
+	fake.state.LoadStartedAt = h.clock.Load()
+	h.srv.MountBootstrap(fake)
+
+	if got := h.srv.bootstrapView().Human; got != "Just started." {
+		t.Errorf("Human = %q at the moment of handover", got)
+	}
+}
+
+// A phase that never recorded a start says nothing rather than inventing one.
+func TestNoStartTimeProducesNoElapsedClaim(t *testing.T) {
+	h := newHarness(t, nil)
+	h.srv.MountBootstrap(newFakeBootstrap(bootstrap.PhaseLoading))
+	if got := h.srv.bootstrapView().Human; got != "" {
+		t.Errorf("Human = %q with no recorded start", got)
 	}
 }
