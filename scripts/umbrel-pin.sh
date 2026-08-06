@@ -26,8 +26,15 @@ compose="deploy/umbrel/docker-compose.yml"
 repo="${IMAGE_NAME:-paulscode/forktower}"
 tag="${1:-}"
 
+# **The `v` matters, and this used to get it wrong every time.** `make
+# image-push` tags from `git describe`, which yields `v0.6.2`; manifest.yaml
+# holds the bare `0.6.2`. So the derived default named an image that had just
+# been pushed under a different name, and the script correctly reported it was
+# not in the registry — sending whoever was cutting the release off to check a
+# push that had in fact worked.
 if [ -z "${tag}" ]; then
   tag="$(yq e '.version' manifest.yaml 2>/dev/null || true)"
+  [ -n "${tag}" ] && [ "${tag}" != "null" ] && tag="v${tag}"
 fi
 [ -n "${tag}" ] && [ "${tag}" != "null" ] || {
   printf '  could not work out which tag to pin\n' >&2; exit 1; }

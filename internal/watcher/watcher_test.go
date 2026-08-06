@@ -75,9 +75,17 @@ func (h *liveHarness) run() {
 	})
 }
 
+// waitFor blocks until cond holds, or gives up.
+//
+// **The deadline is generous on purpose.** These conditions are normally met in
+// well under a second, so the limit is not measuring anything — it only decides
+// how a genuine hang is reported. Five seconds was tight enough that a build
+// host busy with something else failed the gate on a test that was working, and
+// a gate that cries wolf under load is one people re-run rather than read. The
+// passing case returns as soon as the condition holds and costs nothing extra.
 func (h *liveHarness) waitFor(what string, cond func() bool) {
 	h.t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
