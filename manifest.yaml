@@ -1,7 +1,7 @@
 id: forktower
 title: "Forktower"
-version: 0.6.6
-release-notes: "Two fixes. If you used the faster first sync, Forktower could report that the other chain had been replaced and stop watching it — repeatedly. Bitcoin Core keeps a second chainstate after that shortcut, validating history in the background, and both publish blocks on the same channel; Forktower was reading the background one as the chain it watches, and every alternation looked like a chain replacement. It now trusts your node's own account of which chain is active, and discards a scanning position recorded from the other one. On Umbrel, having nowhere to send alerts is no longer shown as a setup step you cannot complete: that platform gives an app no settings screen, so it is now stated as a fact — alerts appear on Forktower's page and nowhere else — rather than asking you to edit a compose file by hand."
+version: 0.6.7
+release-notes: "Alerts that were never separate problems are cleared away, and the ones that describe scanning having stopped now say when it has started again. If a per-block dedup fault had filled your list with thousands of copies of the same urgent alert, upgrading collapses them into the single entry a correct version would have written — and that entry closes itself as soon as Forktower reads a block, so there is nothing left to dismiss. Also fixes a crash loop on start: a Bitcoin node loading its block index answers nothing, and Forktower read that as the node being on the wrong network, so it exited and was restarted about once a second until the node finished, serving no dashboard the whole time."
 license: MIT
 wrapper-repo: "https://github.com/paulscode/forktower"
 upstream-repo: "https://github.com/paulscode/forktower"

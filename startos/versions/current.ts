@@ -5,17 +5,17 @@ export const current = VersionInfo.of({
   version: `${appVersion}:${packageRevision}`,
   releaseNotes: {
     en_US:
-      'If you used the faster first sync, Forktower could report that the ' +
-      'other chain had been replaced and stop watching it — repeatedly. ' +
-      'Bitcoin Core keeps a second chainstate after that shortcut, validating ' +
-      'history in the background, and both publish blocks on the same ' +
-      'channel; Forktower was reading the background one as the chain it ' +
-      'watches, and every alternation between them looked like a chain ' +
-      'replacement. It now trusts your node\'s own account of which chain is ' +
-      'active, and discards a scanning position recorded from the other one. ' +
-      'Separately, on platforms that give an app no settings screen, having ' +
-      'nowhere to send alerts is no longer presented as a setup step that ' +
-      'cannot be completed.',
+      'Alerts that were never separate problems are cleared away. If a ' +
+      'per-block dedup fault had filled your list with thousands of copies of ' +
+      'the same urgent alert, upgrading collapses them into the single entry a ' +
+      'correct version would have written — and that entry closes itself as ' +
+      'soon as Forktower reads a block, so there is nothing left to dismiss. ' +
+      'Alerts about scanning having stopped now also say when it has started ' +
+      'again, which none of them previously did. Also fixes a crash loop on ' +
+      'start: a Bitcoin node loading its block index answers nothing, and ' +
+      'Forktower read that as the node being on the wrong network, so it ' +
+      'exited and was restarted about once a second until the node finished — ' +
+      'serving no dashboard the whole time.',
   },
   migrations: {
     up: async ({ effects }) => {},
