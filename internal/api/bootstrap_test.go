@@ -10,6 +10,7 @@ import (
 
 	"github.com/paulscode/forktower/internal/bootstrap"
 	"github.com/paulscode/forktower/internal/chainview"
+	"github.com/paulscode/forktower/internal/store"
 )
 
 // fakeBootstrap is a scripted snapshot shortcut.
@@ -328,5 +329,45 @@ func TestTheOfferDoesNotPromiseAnHourItCannotKeep(t *testing.T) {
 	}
 	if !strings.Contains(prose, "three days") {
 		t.Errorf("the card no longer says what the alternative costs: %q", prose)
+	}
+}
+
+// "Not answering" and "answering, but blind" are different things.
+//
+// A watchtower whose chain backend is still catching up answers every request
+// perfectly and simply cannot see the other chain yet. Reported as "not
+// answering" — which is what shipped — it sends the user looking for a fault in
+// a component that is working, at the one moment they are least able to tell.
+func TestATowerWhoseNodeIsBehindIsNotCalledUnresponsive(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+
+	id, _, err := h.store.UpsertTower(ctx, store.Tower{
+		Kind:   store.TowerLND,
+		Pubkey: "02aa",
+		URI:    "02aa@forktower.startos:9911",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Status is written by the warden through its own call, not by the upsert —
+	// which is how the real one gets there.
+	if err := h.store.SetTowerStatus(ctx, id, store.TowerHealth{
+		Status: store.TowerTemporarilyUnreachable,
+		Detail: "the tower is running but its node is still catching up with " +
+			"the chain (height 938061), so it would not see a breach yet",
+	}, h.clock.Load()); err != nil {
+		t.Fatal(err)
+	}
+
+	item := findCheck(t, h.srv.Readiness(ctx), CheckTowerProtection)
+	if strings.Contains(strings.ToLower(item.Label), "not answering") {
+		t.Errorf("a tower that is answering was labelled %q", item.Label)
+	}
+	if !strings.Contains(item.Why, "running") {
+		t.Errorf("the reason %q does not say the tower is working", item.Why)
+	}
+	if !strings.Contains(strings.ToLower(item.Why), "on its own") {
+		t.Errorf("the reason %q does not say this resolves without the user", item.Why)
 	}
 }

@@ -27,10 +27,10 @@ const (
 // Where an action sends the user. Fragments rather than paths: the dashboard is
 // one page, and everything here is a section of it.
 const (
-	anchorSetup         = "#setup"
-	anchorNotifications = "#notifications"
-	anchorTower         = "#towers-card"
-	anchorExposure      = "#exposure"
+	anchorSetup      = "#setup"
+	anchorSetupGuide = "#setup-guide"
+	anchorTower      = "#towers-card"
+	anchorExposure   = "#exposure"
 )
 
 // titleAttention is shared by every situation that needs a look but not a hurry.
@@ -42,9 +42,22 @@ const titleAttention = "Something needs a look — not urgent."
 // user-facing wording, so that two places offering the same step cannot label it
 // two different ways.
 var (
-	actionFixSetup    = func() *Action { return &Action{Label: "Fix the setup", Href: anchorSetup} }
+	actionFixSetup = func() *Action { return &Action{Label: "Fix the setup", Href: anchorSetup} }
+	// Sends the user to the setup card, which carries the platform's own
+	// directions for this — not to `#notifications`, which is where this pointed
+	// for a release and which configures nothing. That card lists what has
+	// happened and can send a test; on a screen where it was already visible,
+	// pressing the button did nothing whatsoever.
+	//
+	// The setup card is the right destination because where this setting lives
+	// differs per platform, and on one of them there is no settings screen at
+	// all. Directions are the honest answer, and alertsGuidance writes them.
+	//
+	// It is always on screen when this action is offered: an unconfigured
+	// notification path is a blocking check, so setup cannot be complete while
+	// this is the advice.
 	actionSetUpAlerts = func() *Action {
-		return &Action{Label: "Set up notifications", Href: anchorNotifications}
+		return &Action{Label: "Set up notifications", Href: anchorSetupGuide}
 	}
 	actionTestAlerts = func() *Action {
 		return &Action{Label: "Send a test alert", Endpoint: "/api/v1/alerts/test"}

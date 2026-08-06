@@ -143,6 +143,7 @@ func (s *Server) stepFor(item ReadinessItem) *SetupStep {
 			"the response."
 
 	case CheckAlertTransports:
+		step.Guidance = alertsGuidance(s.cfg.Platform)
 		step.Skippable = true
 		step.SkipCost = "Alerts will still appear on this dashboard. They will " +
 			"only reach you if you are looking at it, and the ones that matter " +
@@ -191,6 +192,45 @@ func watchtowerGuidance(platform config.Platform) []string {
 			"Go to Advanced Settings, and turn on wtclient.active.",
 			"Restart the Lightning app so the setting takes effect.",
 			"Then register the address from the watchtower card on this page.",
+		}
+	case config.PlatformUnknown:
+		return nil
+	default:
+		return nil
+	}
+}
+
+// alertsGuidance is where to set a notification up, per platform.
+//
+// **The action beside this used to be a button that scrolled to the alerts
+// card**, which lists what has happened and can send a test — and configures
+// nothing. On a screen where that card was already visible the button did
+// nothing at all, which is precisely how it was reported.
+//
+// Saying where the setting lives is the smallest honest thing that helps.
+func alertsGuidance(platform config.Platform) []string {
+	switch platform {
+	case config.PlatformStartOS04:
+		return []string{
+			"Open Forktower's own settings in StartOS.",
+			"Fill in an ntfy address or a webhook URL, and save.",
+			"Forktower sends itself a test message on the next start, so you " +
+				"find out the path works while nothing is wrong.",
+		}
+	case config.PlatformStartOS035:
+		return []string{
+			"Open Forktower's Config screen in StartOS.",
+			"Fill in an ntfy address or a webhook URL under Notifications, and save.",
+			"Restart Forktower so the setting takes effect.",
+		}
+	case config.PlatformUmbrel:
+		return []string{
+			"Umbrel gives an app no settings screen, so this one is edited by hand.",
+			"In the Forktower app's docker-compose.yml, set FORKTOWER_NTFY_URL or " +
+				"FORKTOWER_WEBHOOK_URL.",
+			"Restart the app.",
+			"If that is more than you want to do, the dashboard still shows " +
+				"everything — it just cannot come and find you.",
 		}
 	case config.PlatformUnknown:
 		return nil

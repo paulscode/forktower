@@ -42,6 +42,18 @@ main:
     # packages do, would make a Forktower compromise a node compromise by mount,
     # which no amount of care about macaroons afterwards can undo.
     lnd: /mnt/lnd
+    # The Bitcoin node's exported properties, read-only — and **only its
+    # `start9` subdirectory**, for the same reason as the mount above.
+    #
+    # This is where that package publishes its RPC username and password, and it
+    # is the only route to them on this platform: there is no cookie file, and
+    # nothing injects them into a dependant's environment. Forktower spent a
+    # release believing otherwise and could not authenticate at all.
+    #
+    # Not the volume root, which is the whole chain plus whatever else that
+    # package keeps. A credential is what is needed and a credential is what is
+    # mounted.
+    bitcoind: /mnt/bitcoind
   gpu-acceleration: false
 hardware-requirements:
   arch:
@@ -86,6 +98,14 @@ volumes:
     volume-id: main
     # Not "/". See the mount comment above — the difference is the wallet seed.
     path: "/public"
+    readonly: true
+  bitcoind:
+    type: pointer
+    package-id: bitcoind
+    volume-id: main
+    # Not "/". The RPC credentials are published under start9/, and the rest of
+    # that volume is several hundred gigabytes of chain this has no use for.
+    path: "/start9"
     readonly: true
 interfaces:
   main:

@@ -231,3 +231,73 @@ func TestThePlatformSurvivesALightningNodeBeingConfigured(t *testing.T) {
 		})
 	}
 }
+
+// The 0.3.5.1 package has to end up with credentials for the user's node.
+//
+// **It shipped without any.** That entrypoint read BITCOIND_RPC_USER and
+// BITCOIND_RPC_PASSWORD from the environment, on the belief that the platform
+// set them for a declared dependency. It does not, there is no cookie file on
+// that platform either, and the result was a configuration with an RPC address
+// and no way to authenticate to it: the daemon refused to start, restarted,
+// refused again, and "Launch UI" opened a page nothing was serving.
+//
+// This runs that entrypoint against the file the Bitcoin package actually
+// publishes, and asserts the credentials come out the other end.
+func TestTheEmbassyEntrypointFindsTheNodesCredentials(t *testing.T) {
+	entrypoint, err := filepath.Abs("../../docker_entrypoint_0351.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(entrypoint); err != nil {
+		t.Skipf("no entrypoint to run: %v", err)
+	}
+	if _, err := exec.LookPath("yq"); err != nil {
+		t.Skip("yq is not on PATH; the image has it")
+	}
+
+	// Exactly the shape that package writes, keys and spaces included.
+	stats := filepath.Join(t.TempDir(), "stats.yaml")
+	if err := os.WriteFile(stats, []byte(`version: 2
+data:
+  RPC Username:
+    type: string
+    value: "bitcoin"
+  RPC Password:
+    type: string
+    value: "s3cr3t-from-the-node"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	cmd := exec.Command("sh", entrypoint, "--render-only")
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"FORKTOWER_DATA_DIR=" + dir,
+		"BITCOIND_STATS=" + stats,
+		// The shared renderer this hands over to, and the platform's data
+		// directory, both of which are container paths in production.
+		"FORKTOWER_ENTRYPOINT=" + mustAbs(t, "../../docker_entrypoint.sh"),
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the entrypoint failed: %v\n%s", err, out)
+	}
+
+	cfg, err := Load(filepath.Join(dir, "forktower.toml"))
+	if err != nil {
+		t.Fatalf("the daemon would refuse to start: %v", err)
+	}
+	if cfg.SF.RPCUser != "bitcoin" || cfg.SF.RPCPass != "s3cr3t-from-the-node" {
+		t.Errorf("sf credentials = %q/%q; without them the daemon crash-loops and "+
+			"the dashboard is never served", cfg.SF.RPCUser, cfg.SF.RPCPass)
+	}
+}
+
+func mustAbs(t *testing.T, path string) string {
+	t.Helper()
+	p, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}

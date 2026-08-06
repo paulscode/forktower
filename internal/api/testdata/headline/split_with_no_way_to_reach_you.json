@@ -4,7 +4,7 @@
   "detail": "The chains have separated — and Forktower has no way to reach you, so you would only find out by looking at this page.",
   "action": {
     "label": "Set up notifications",
-    "href": "#notifications"
+    "href": "#setup-guide"
   },
   "since": 1790000000
 }

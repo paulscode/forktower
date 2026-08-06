@@ -15,7 +15,13 @@
 
 set -eu
 
-CONFIG_YAML=/data/start9/config.yaml
+# The platform mounts the data volume at /data and writes the settings screen's
+# answers here. Overridable so this script can be run against a directory, which
+# is what lets a test drive it: the version of this file that could not
+# authenticate to the user's node was untestable outside a container, and that
+# is most of why nobody noticed.
+DATA_DIR="${FORKTOWER_DATA_DIR:-/data}"
+CONFIG_YAML="${FORKTOWER_CONFIG_YAML:-${DATA_DIR}/start9/config.yaml}"
 
 log() { printf '%s\n' "$*" >&2; }
 
@@ -34,7 +40,7 @@ cfg() {
 }
 
 FORKTOWER_PLATFORM=startos-0.3
-FORKTOWER_DATA_DIR=/data
+FORKTOWER_DATA_DIR="${DATA_DIR}"
 FORKTOWER_SQ_MODE=all-in-one
 FORKTOWER_UI_LISTEN=0.0.0.0:8330
 FORKTOWER_UI_AUTH=platform
@@ -49,8 +55,46 @@ export FORKTOWER_PLATFORM FORKTOWER_DATA_DIR FORKTOWER_SQ_MODE \
 # are what there is.
 SF_HOST="${BITCOIND_HOST:-bitcoind.embassy}"
 export FORKTOWER_SF_RPC_URL="http://${SF_HOST}:8332"
+
+# **Read from the node's published properties, because nothing hands them over.**
+#
+# This used to read BITCOIND_RPC_USER and BITCOIND_RPC_PASSWORD from the
+# environment, on the belief that the platform set them for a declared
+# dependency. It does not, and never did. There is no cookie file on this
+# platform either, so the result was a configuration with an RPC address and no
+# way to authenticate to it — the daemon refused to start, restarted, refused
+# again, and the dashboard the user clicked "Launch UI" for was never served by
+# anything.
+#
+# What does exist is `start9/stats.yaml` in the node's own volume, where that
+# package publishes "RPC Username" and "RPC Password" for exactly this purpose.
+# It is mounted read-only and scoped to that subdirectory; see manifest.yaml.
+BITCOIND_STATS="${BITCOIND_STATS:-/mnt/bitcoind/stats.yaml}"
+if [ -f "${BITCOIND_STATS}" ]; then
+  # Bracket syntax, not `.data."RPC Username"`. The keys have spaces in them and
+  # the dot-quote form this yq does not accept — it parses as far as the space
+  # and reports a syntax error, which as a `2>/dev/null` command substitution is
+  # indistinguishable from a node that published nothing.
+  SF_RPC_USER="$(yq e '.data["RPC Username"].value // ""' "${BITCOIND_STATS}" 2>/dev/null || printf '')"
+  SF_RPC_PASS="$(yq e '.data["RPC Password"].value // ""' "${BITCOIND_STATS}" 2>/dev/null || printf '')"
+  if [ -n "${SF_RPC_USER}" ] && [ -n "${SF_RPC_PASS}" ]; then
+    export FORKTOWER_SF_RPC_USER="${SF_RPC_USER}"
+    export FORKTOWER_SF_RPC_PASS="${SF_RPC_PASS}"
+  else
+    echo "Forktower: your Bitcoin node's properties are readable but carry no RPC
+  username and password. Forktower cannot read your node without them." >&2
+  fi
+else
+  echo "Forktower: cannot read your Bitcoin node's published properties at
+  ${BITCOIND_STATS}, so there are no credentials to connect with. If the Bitcoin
+  service is still starting, this resolves itself once it has." >&2
+fi
+
+# Still honoured where somebody sets them deliberately — a hand-run container, or
+# a node that is not the one this platform installed.
 [ -n "${BITCOIND_RPC_USER:-}" ] && export FORKTOWER_SF_RPC_USER="${BITCOIND_RPC_USER}"
 [ -n "${BITCOIND_RPC_PASSWORD:-}" ] && export FORKTOWER_SF_RPC_PASSWORD="${BITCOIND_RPC_PASSWORD}"
+:
 export FORKTOWER_SF_ZMQ_RAWBLOCK="tcp://${SF_HOST}:28332"
 export FORKTOWER_SF_ZMQ_RAWTX="tcp://${SF_HOST}:28333"
 
@@ -121,6 +165,8 @@ fi
 WEBHOOK_URL="$(cfg '.notifications.webhook-url' '')"
 [ -n "${WEBHOOK_URL}" ] && export FORKTOWER_WEBHOOK_URL="${WEBHOOK_URL}"
 
-mkdir -p /data/start9
+mkdir -p "${DATA_DIR}/start9"
 
-exec /usr/local/bin/docker_entrypoint.sh "$@"
+# The shared renderer. Its path is overridable for the same reason the data
+# directory is: so this file can be exercised without an image around it.
+exec "${FORKTOWER_ENTRYPOINT:-/usr/local/bin/docker_entrypoint.sh}" "$@"

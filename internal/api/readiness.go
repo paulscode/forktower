@@ -117,10 +117,34 @@ func (s *Server) checkTowerProtection(ctx context.Context) ReadinessItem {
 		}
 	}
 
-	working := 0
+	working, settling := 0, 0
 	for _, t := range towers {
-		if t.Status == store.TowerReachable {
+		switch t.Status {
+		case store.TowerReachable:
 			working++
+		case store.TowerTemporarilyUnreachable:
+			settling++
+		case store.TowerUnreachable, store.TowerSubscriptionError,
+			store.TowerMisbehaving, store.TowerStatusUnknown:
+			// Genuinely not protecting anything, and the sentence below says so.
+			// Listed rather than defaulted so that a status added later has to be
+			// classified here on purpose.
+		}
+	}
+	// **"Not answering" and "answering, but blind" are different things, and
+	// saying the first when the second is true is a lie about a healthy
+	// component.** A tower whose chain backend is still catching up answers
+	// every request perfectly and cannot see a breach yet; the warden already
+	// says exactly that in its detail, and the label used to flatten it into a
+	// fault the user would go looking for.
+	if working == 0 && settling > 0 {
+		return ReadinessItem{
+			ID: CheckTowerProtection, OK: false, informational: true,
+			Label: "Your watchtower is not watching yet",
+			Why: "It is running and answering. It cannot see " + words.OtherChain +
+				" yet, so it could not act on a breach there. This finishes on " +
+				"its own.",
+			Detail: towers[0].StatusDetail,
 		}
 	}
 	if working == 0 {
