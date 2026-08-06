@@ -39,14 +39,17 @@ export const setInterfaces = sdk.setupInterfaces(async ({ effects }) => {
    * this machine is defending Lightning channels across a split. The user
    * reveals it when they are ready to paste it.
    *
-   * **Open question, and it needs hardware to settle.** What the tower actually
-   * advertises is `forktower.startos:9911` — the sibling-service convention the
-   * rest of this package uses — so the client is expected to reach it without
-   * leaving the machine. This declaration exists because an undeclared port may
-   * not be reachable at all. If it turns out to also publish a public address,
-   * that is worth removing rather than keeping: an LND watchtower accepts a
-   * session from anyone who can reach it and has no allowlist, so the smaller
-   * the set of people who can reach it, the better.
+   * **Checked on hardware, because the answer mattered.** An LND watchtower
+   * accepts a session from anyone who can reach it and has no allowlist, so
+   * whether declaring this publishes it was worth knowing rather than assuming.
+   * On StartOS 0.4.0.1 the declaration produces a port binding and an empty
+   * address list — no public gateway and no onion — so the tower is reachable
+   * on the internal network and nowhere else.
+   *
+   * That is what the package wants and it is why the address advertised is
+   * `forktower.startos:9911`, the sibling-service convention the rest of this
+   * file's neighbours use. The declaration stays because the binding is what
+   * opens the port; it is not what exposes it.
    */
   const towerMulti = sdk.MultiHost.of(effects, 'tower')
   const towerOrigin = await towerMulti.bindPort(towerPort, {

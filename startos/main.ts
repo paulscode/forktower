@@ -294,7 +294,10 @@ export const main = sdk.setupMain(async ({ effects }) => {
     // The companion watchtower. On by default: until it existed, a packaged
     // user was told to register one and given nowhere to get one.
     FORKTOWER_TOWER_LND_ENABLED: cfg.towerEnabled ? 'true' : 'false',
-    FORKTOWER_TOWER_LND_LISTEN: `0.0.0.0:${towerPort}`,
+    // The socket lnd binds inside the container. **Not ..._LISTEN**, which the
+    // daemon reads as the address to advertise and rightly refuses as a
+    // wildcard.
+    FORKTOWER_TOWER_LND_BIND: `0.0.0.0:${towerPort}`,
     // **The address a sibling service dials, not an onion.**
     //
     // The first version of this read an onion back from the platform, which was

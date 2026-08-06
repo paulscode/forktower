@@ -108,7 +108,7 @@ export FORKTOWER_SQ_P2P_PORT=8433
 # That last part matters more than the convenience: an LND watchtower accepts a
 # session from anyone who can reach it and has no allowlist.
 export FORKTOWER_TOWER_LND_ENABLED="$(cfg '.watchtower.enabled' 'true')"
-export FORKTOWER_TOWER_LND_LISTEN="0.0.0.0:9911"
+export FORKTOWER_TOWER_LND_BIND="0.0.0.0:9911"
 export FORKTOWER_TOWER_LND_EXTERNAL_ADDR="${FORKTOWER_HOST:-forktower.embassy}:9911"
 export FORKTOWER_LOG_LEVEL="$(cfg '.advanced.log-level' 'info')"
 

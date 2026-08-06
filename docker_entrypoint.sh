@@ -283,6 +283,16 @@ CONF
 
 # ── The companion watchtower's configuration ─────────────────────────────────
 #
+# **FORKTOWER_TOWER_LND_BIND, not ..._LISTEN.** The daemon already reads
+# ..._LISTEN as an override for `tower.lnd.listen`, which is the address it tells
+# a user to register — and it refuses a wildcard there, correctly, because an
+# LND watchtower accepts a session from anyone who can reach it.
+#
+# Setting the socket lnd binds under that name meant the environment quietly
+# overwrote the good value this file had just written, and the daemon refused to
+# start at all. It cost an install on real hardware to find, because reading the
+# rendered file proves nothing about what is layered on top of it afterwards.
+#
 # A second lnd, run only as a tower, with the second Bitcoin node as its chain
 # backend. That last part is the point: a tower is worth having only if it is
 # watching the chain a breach would land on, and for somebody whose own node
@@ -338,7 +348,7 @@ bitcoind.zmqpubrawtx=tcp://127.0.0.1:${FORKTOWER_SQ_ZMQ_TX_PORT:-28433}
 [Watchtower]
 watchtower.active=true
 watchtower.towerdir=${tower_dir}/towerdata
-watchtower.listen=${FORKTOWER_TOWER_LND_LISTEN:-0.0.0.0:9911}
+watchtower.listen=${FORKTOWER_TOWER_LND_BIND:-0.0.0.0:9911}
 CONF
 
     # The address clients are told to use. Where the platform knows it — a Tor
@@ -363,6 +373,21 @@ write_forktower_conf() {
 
   {
     printf '%s\n\n' "${GENERATED_BY}"
+
+    # Which packaging this is, declared rather than guessed — it decides which
+    # "how to turn on your watchtower client" directions the setup guidance
+    # shows, and the three platforms have three different answers.
+    #
+    # **First, before any table is opened.** This used to sit near the end, after
+    # the optional `[[ln.lnd]]` block — where TOML reads a bare key as belonging
+    # to the table above it. So on every install with a Lightning node
+    # configured, which is most of them, it was parsed as `ln.lnd.platform`,
+    # ignored with a warning nobody reads, and the setup wizard silently offered
+    # no platform directions at all. A top-level key has to be written while the
+    # document is still top level.
+    if [ -n "${FORKTOWER_PLATFORM:-}" ]; then
+      printf 'platform = "%s"\n\n' "${FORKTOWER_PLATFORM}"
+    fi
 
     printf '[sf]\n'
     printf 'rpc_url = "%s"\n' "${FORKTOWER_SF_RPC_URL}"
@@ -496,13 +521,6 @@ write_forktower_conf() {
         printf 'rune_path = "%s"\n' "${FORKTOWER_CLN_RUNE_PATH}"
       [ -n "${FORKTOWER_CLN_TLS_PATH:-}" ] && \
         printf 'tls_cert_path = "%s"\n' "${FORKTOWER_CLN_TLS_PATH}"
-    fi
-
-    # Which packaging this is, declared rather than guessed — it decides which
-    # "how to turn on your watchtower client" directions the setup guidance
-    # shows, and the three platforms have three different answers.
-    if [ -n "${FORKTOWER_PLATFORM:-}" ]; then
-      printf '\nplatform = "%s"\n' "${FORKTOWER_PLATFORM}"
     fi
 
     # ── The companion watchtower ──────────────────────────────────────────

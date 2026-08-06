@@ -110,7 +110,7 @@ services:
       # anything to the LAN — and it is the address the dashboard tells the user
       # to paste, so it has to be the one that works from another container
       # rather than from inside this one.
-      FORKTOWER_TOWER_LND_LISTEN: 0.0.0.0:9911
+      FORKTOWER_TOWER_LND_BIND: 0.0.0.0:9911
       FORKTOWER_TOWER_LND_EXTERNAL_ADDR: $APP_FORKTOWER_IP:9911
       FORKTOWER_TOWER_LND_MAX_DISK_MB: ${FORKTOWER_TOWER_LND_MAX_DISK_MB:-2048}
 
