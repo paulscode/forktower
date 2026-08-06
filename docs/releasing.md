@@ -107,6 +107,32 @@ release must pin `image: paulscode/forktower:<version>@sha256:...` so that
 whoever installs it gets the bits that were tested rather than whatever the tag
 happens to point at that day.
 
+## Publishing a UTXO snapshot
+
+Separate from a software release, and on a different schedule: the snapshot's
+height is fixed by Bitcoin Core's own hardcoded assumeutxo values, so it moves
+when Core does and not when we do. It lives on its own tag —
+`utxo-snapshot-935000` — published as a pre-release so it does not compete for
+"Latest" with an actual version.
+
+The parts and their checksums are compiled into the daemon, in
+`internal/bootstrap/snapshot.go`, and every one of those values was transcribed
+by hand. **A digit dropped from a part length is not a compile error and no
+offline test can see it** — it is a download that runs for hours and fails at the
+end, on somebody else's machine. So after publishing, ask the release:
+
+```
+FORKTOWER_LIVE=1      go test -run TestLive ./internal/bootstrap/
+FORKTOWER_LIVE_FULL=1 go test -run TestLive ./internal/bootstrap/   # ~2 GB
+```
+
+The first checks every part's name, size and URL against what GitHub actually
+serves, and runs a small real transfer through the redirect and range handling.
+The second fetches a whole part and checks it against its compiled-in digest.
+Neither runs under `make check`, deliberately: a gate that depends on a network
+turns a GitHub outage into a failing build, and a build that fails for reasons
+unrelated to the code stops meaning anything.
+
 ## What is deliberately not automated
 
 **Signing.** Covered above.

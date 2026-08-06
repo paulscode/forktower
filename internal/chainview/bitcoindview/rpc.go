@@ -58,6 +58,10 @@ type client struct {
 	// a human noticing.
 	credMu sync.RWMutex
 	cred   string
+
+	// long is the timeout-free client used by callLong, built on first use.
+	longOnce sync.Once
+	long     *http.Client
 }
 
 func newClient(opts Options) (*client, error) {
@@ -124,14 +128,46 @@ type rpcResponse struct {
 // On an authentication rejection it re-reads the credentials once and retries,
 // which is what makes a node restart survivable rather than terminal.
 func (c *client) call(ctx context.Context, out any, method string, params ...any) error {
+	return c.callWith(ctx, c.http, out, method, params...)
+}
+
+// callLong makes a request with no client-side timeout, for the handful of calls
+// that legitimately take minutes.
+//
+// **The ordinary timeout is a ceiling on how long a node may take to answer a
+// question about itself, and that is the right ceiling for every call but one.**
+// `loadtxoutset` reads nine gigabytes and rebuilds a chainstate; it was measured
+// at six minutes on fast hardware and will be considerably longer on an
+// appliance. Under the usual thirty-second limit the client would give up while
+// the node worked on perfectly happily, and the caller would retry — handing the
+// same enormous file to a node already busy reading it.
+//
+// The context remains the bound, so a shutdown still ends the call promptly.
+func (c *client) callLong(ctx context.Context, out any, method string, params ...any) error {
+	return c.callWith(ctx, c.longHTTP(), out, method, params...)
+}
+
+// longHTTP is the timeout-free client, built once on first use. It shares nothing
+// with the ordinary one except its defaults, so a long call cannot occupy a
+// connection the health checks are waiting on.
+func (c *client) longHTTP() *http.Client {
+	c.longOnce.Do(func() {
+		c.long = &http.Client{Timeout: 0}
+	})
+	return c.long
+}
+
+func (c *client) callWith(
+	ctx context.Context, hc *http.Client, out any, method string, params ...any,
+) error {
 	body, err := encodeParams(method, params)
 	if err != nil {
 		return err
 	}
 
-	raw, err := c.post(ctx, method, body, false)
+	raw, err := c.post(ctx, hc, method, body, false)
 	if errors.Is(err, errUnauthorized) {
-		raw, err = c.post(ctx, method, body, true)
+		raw, err = c.post(ctx, hc, method, body, true)
 	}
 	if err != nil {
 		return err
@@ -150,7 +186,9 @@ func (c *client) call(ctx context.Context, out any, method string, params ...any
 // re-reading once before giving up.
 var errUnauthorized = errors.New("bitcoindview: credentials refused")
 
-func (c *client) post(ctx context.Context, method string, body []byte, reloadCreds bool) (json.RawMessage, error) {
+func (c *client) post(
+	ctx context.Context, hc *http.Client, method string, body []byte, reloadCreds bool,
+) (json.RawMessage, error) {
 	cred, err := c.credentials(reloadCreds)
 	if err != nil {
 		return nil, err
@@ -165,7 +203,7 @@ func (c *client) post(ctx context.Context, method string, body []byte, reloadCre
 	user, pass, _ := strings.Cut(cred, ":")
 	req.SetBasicAuth(user, pass)
 
-	resp, err := c.http.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("calling %s: %w", method, err)
 	}

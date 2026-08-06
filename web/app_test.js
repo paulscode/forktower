@@ -788,3 +788,132 @@ test('a platform Forktower does not know gets no invented directions', () => {
   });
   assert.strictEqual(byID['setup-guidance'].children.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// The faster first sync.
+// ---------------------------------------------------------------------------
+
+// A card nobody needs is a card nobody should see. Most installations reach this
+// page long after the shortcut stopped being relevant, and a permanent panel
+// explaining why a shortcut is unnecessary is one more thing to read on a page
+// whose whole job is to be read quickly.
+test('the faster-sync card is hidden when there is nothing to offer', () => {
+  for (const view of [null, undefined, { available: false, phase: 'unavailable' }]) {
+    app.renderBootstrap(view);
+    assert.strictEqual(byID['bootstrap'].className.includes('hidden'), true,
+      'the faster-sync card is showing when it has nothing to say');
+  }
+});
+
+// The offer states its costs before anybody agrees to it. Putting the benefit
+// first and the costs in a footnote is how consent forms are written by people
+// who do not want them read.
+test('the offer lists what it costs, not only what it saves', () => {
+  app.renderBootstrap({
+    available: true,
+    phase: 'offered',
+    title: 'Start watching the other chain within the hour',
+    detail: 'Left to itself the second node takes about three days.',
+    why: [
+      'Downloads about 8.7 GB, which is deleted as soon as it has been used.',
+      'Fetched from this project’s release page.',
+      'This is the only thing Forktower ever downloads.',
+    ],
+    action: { label: 'Use the faster sync', endpoint: '/api/v1/bootstrap/start' },
+  });
+
+  assert.strictEqual(byID['bootstrap'].className.includes('hidden'), false);
+  assert.strictEqual(byID['bootstrap-why'].children.length, 3,
+    'the costs of the offer were not shown');
+  assert.strictEqual(byID['bootstrap-action'].className.includes('hidden'), false,
+    'the offer has no button');
+  // No progress bar before anything is running.
+  assert.strictEqual(byID['bootstrap-bar'].className.includes('hidden'), true);
+});
+
+// While it runs there is a bar and a sentence saying the same thing, because a
+// bar alone tells a screen reader nothing.
+test('a running transfer shows both a bar and a sentence', () => {
+  app.renderBootstrap({
+    available: true,
+    phase: 'downloading',
+    title: 'Fetching the head start',
+    detail: 'The second node keeps catching up on its own while this runs.',
+    percent: 42.5,
+    bytes_done: 4 * 1024 * 1024 * 1024,
+    bytes_total: 9 * 1024 * 1024 * 1024,
+    human: '4.0 GB of 8.7 GB, part 3 of 5, about 2 hours to go.',
+    action: { label: 'Stop and sync the slow way', endpoint: '/api/v1/bootstrap/cancel' },
+  });
+
+  assert.strictEqual(byID['bootstrap-bar'].className.includes('hidden'), false);
+  assert.strictEqual(byID['bootstrap-fill'].style.width, '42.5%');
+  assert.strictEqual(byID['bootstrap-bar'].getAttribute('aria-valuenow'), '43');
+  assert.match(byID['bootstrap-progress'].textContent, /4\.0 GB of 8\.7 GB/);
+  assert.match(byID['bootstrap-progress'].textContent, /2 hours to go/);
+});
+
+// A percentage outside the bar is a rendering bug that reads as a data bug.
+test('a percentage outside the bar is clamped rather than drawn', () => {
+  for (const [percent, want] of [[-10, '0.0%'], [140, '100.0%'], ['nonsense', '0.0%']]) {
+    app.renderBootstrap({
+      available: true, phase: 'downloading', title: 'x', percent,
+    });
+    assert.strictEqual(byID['bootstrap-fill'].style.width, want,
+      'a percent of ' + percent + ' was drawn as ' + byID['bootstrap-fill'].style.width);
+  }
+});
+
+// A failure says so and offers the way back, rather than sitting on a bar that
+// has stopped moving.
+test('a failed transfer reports the reason and offers a retry', () => {
+  app.renderBootstrap({
+    available: true,
+    phase: 'failed',
+    title: 'The faster sync did not finish',
+    detail: 'Forktower will try again shortly, resuming from where it stopped.',
+    error: 'the connection was reset',
+    human: '3.1 GB of 8.7 GB already fetched.',
+    action: { label: 'Try again now', endpoint: '/api/v1/bootstrap/start' },
+  });
+
+  assert.match(byID['bootstrap-error'].textContent, /connection was reset/);
+  assert.strictEqual(byID['bootstrap-action'].className.includes('hidden'), false);
+  // And it says what would not be lost by retrying.
+  assert.match(byID['bootstrap-progress'].textContent, /3\.1 GB/);
+  assert.strictEqual(byID['bootstrap-bar'].className.includes('hidden'), true,
+    'a stopped transfer is still showing a progress bar');
+});
+
+// Nothing from the server becomes markup here either. The shim refuses
+// innerHTML, so this fails loudly rather than subtly if that ever changes.
+test('hostile text in the faster-sync card stays text', () => {
+  app.renderBootstrap({
+    available: true,
+    phase: 'failed',
+    title: HOSTILE,
+    detail: HOSTILE,
+    error: HOSTILE,
+    why: [HOSTILE],
+  });
+  assert.strictEqual(byID['bootstrap-title'].textContent, HOSTILE);
+  assert.strictEqual(byID['bootstrap-error'].textContent, HOSTILE);
+  assert.strictEqual(byID['bootstrap-why'].children[0].textContent, HOSTILE);
+});
+
+// A previous run's error must not survive into a clean state, or a user who has
+// retried successfully is still looking at the last thing that went wrong.
+test('an earlier error is cleared once it no longer applies', () => {
+  app.renderBootstrap({
+    available: true, phase: 'failed', title: 'It broke', error: 'a bad thing',
+  });
+  assert.match(byID['bootstrap-error'].textContent, /bad thing/);
+
+  app.renderBootstrap({
+    available: true, phase: 'done', title: 'The second node took the shortcut',
+  });
+  assert.strictEqual(byID['bootstrap-error'].textContent, '',
+    'a stale error is still on screen after the shortcut succeeded');
+  assert.strictEqual(byID['bootstrap-why'].children.length, 0,
+    'the offer’s small print is still showing after it was accepted');
+});

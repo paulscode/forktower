@@ -129,6 +129,36 @@ data_dir = ""
 max_disk_mb = 2048
 
 # ── Independent second opinions about the other chain (not used yet) ──────────
+# ── The faster first sync ────────────────────────────────────────────────────
+# From nothing, the second node takes about three days to catch up, and until it
+# has, Forktower cannot see the other chain at all. The shortcut is a UTXO
+# snapshot of about 8.7 GB that brings that down to under an hour.
+#
+# Offered rather than assumed: with enabled = true the dashboard offers it and
+# nothing is downloaded until somebody accepts. This is the only thing Forktower
+# ever downloads.
+#
+# You are not trusting whoever hosted it. The snapshot's base block hash is
+# compiled into Bitcoin Core, which recomputes it and refuses anything that does
+# not match — and everything below that height is still validated in full,
+# afterwards, in the background.
+#
+# Only useful when the second node can read a file this daemon wrote, which in
+# this compose file means giving both containers the same directory.
+[sq.snapshot]
+enabled = false
+# Take it without waiting to be asked. For a deployment with nobody at a screen.
+auto_start = false
+# Where the download is assembled. Deleted as soon as the node has read it.
+dir = ""
+# A SOCKS5 proxy for the download. The hostname is resolved by the proxy, never
+# here — a request for this particular file from your address says that whoever
+# lives there runs Lightning channels and is defending them across a split.
+proxy = ""
+# A mirror. Changes only where the parts come from: the checksums are compiled
+# into the binary, so a mirror can be faster and cannot be different.
+base_url = ""
+
 [sq.witnesses]
 neutrino_headers = false
 electrum = []

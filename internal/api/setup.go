@@ -79,7 +79,7 @@ func (s *Server) setupState(r *http.Request) SetupState {
 			out.Done++
 			continue
 		}
-		if waitingOn(item.ID) {
+		if waitingOn(item) {
 			out.Waiting = append(out.Waiting, item.Label)
 			out.Done++
 			continue
@@ -99,8 +99,18 @@ func (s *Server) setupState(r *http.Request) SetupState {
 // A chain that has not finished syncing is not a task. Presenting it as one
 // leaves a user clicking at something they cannot affect, and eventually
 // concluding the software is broken.
-func waitingOn(id string) bool {
-	switch id {
+//
+// **An action changes that answer, whatever the check is.** "Waiting" and "there
+// is a button" are contradictory claims, and the case that forced this was the
+// snapshot shortcut: the second node syncing is normally nothing to do, and for
+// the first hour of an installation's life it is the single most useful thing a
+// user could act on. Keying off the action rather than adding an exception keeps
+// the two from drifting apart the next time something similar appears.
+func waitingOn(item ReadinessItem) bool {
+	if item.Action != nil {
+		return false
+	}
+	switch item.ID {
 	case CheckSQSynced, CheckWatcherProgressing, CheckChannelsInventoried:
 		return true
 	default:

@@ -406,6 +406,53 @@ function renderSetup(setup) {
   }
 }
 
+// The faster first sync.
+//
+// Shown only while it is worth showing: the offer, the transfer, and the short
+// window after it succeeds. An installation past all of that never sees this
+// card again, which is why it can afford to sit above the headline.
+function renderBootstrap(view) {
+  const card = el('bootstrap');
+  if (!card) return;
+
+  // Absent, switched off, or not applicable to this node. Nothing to say, and a
+  // card explaining why a shortcut is unnecessary would be one more thing to
+  // read on a page whose whole job is to be read quickly.
+  if (!view || !view.available) {
+    show(card, false);
+    return;
+  }
+
+  show(card, true);
+  setText(el('bootstrap-title'), view.title || '');
+  setText(el('bootstrap-detail'), view.detail || '');
+  setText(el('bootstrap-error'), view.error || '');
+
+  // What the offer costs, listed before anybody agrees to it rather than after.
+  const why = el('bootstrap-why');
+  clear(why);
+  for (const line of view.why || []) {
+    why.appendChild(make('li', null, line));
+  }
+
+  const running = view.phase === 'downloading' || view.phase === 'loading';
+  const bar = el('bootstrap-bar');
+  show(bar, running);
+  if (running) {
+    // Clamped, because a percentage outside the bar is a rendering bug that
+    // looks like a data bug.
+    const percent = Math.max(0, Math.min(100, Number(view.percent) || 0));
+    el('bootstrap-fill').style.width = percent.toFixed(1) + '%';
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-valuenow', String(Math.round(percent)));
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', '100');
+  }
+  setText(el('bootstrap-progress'), view.human || '');
+
+  renderAction(el('bootstrap-action'), view.action);
+}
+
 function renderAdvanced(status) {
   const branches = el('branches');
   clear(branches);
@@ -868,6 +915,9 @@ async function refresh() {
     const setup = await api('GET', '/api/v1/setup');
     renderSetup(setup);
 
+    const bootstrap = await api('GET', '/api/v1/bootstrap');
+    renderBootstrap(bootstrap);
+
     const alerts = await api('GET', '/api/v1/alerts');
     renderAlerts(alerts);
 
@@ -921,7 +971,7 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined' && window.d
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     renderHeadline, renderReadiness, renderAlerts, renderTimeline, renderAdvanced,
-    renderSetup,
+    renderSetup, renderBootstrap,
     renderChannels, renderDetails, renderTowers, renderMirror,
     renderFundingOptIn, renderStandDown, formatSats,
     describeTestResults, formatDuration, formatPercent, setText, KNOWN_STATES,

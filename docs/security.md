@@ -39,7 +39,7 @@ web interface for the rest of the installation's life, never has the seed within
 reach. On Umbrel the two files are bound individually rather than the directory
 holding them.
 
-## It does not fetch anything
+## It fetches exactly one thing, and only if you ask
 
 There is no update check, no telemetry, no analytics, and no code path that
 downloads configuration. A program that downloads its own configuration has
@@ -47,7 +47,52 @@ configuration belonging to whoever holds the other end of that connection.
 
 Forktower talks to: your Bitcoin node, its own second Bitcoin node, your
 Lightning node if you configured one, and whatever notification transports you
-set up. That is the complete list.
+set up. There is one exception, and this section exists to describe it rather
+than to bury it.
+
+**The faster first sync downloads a file.** Left to itself the second Bitcoin
+node takes about three days to catch up, and for those three days Forktower
+cannot see the other chain at all — which is three days of the exact exposure it
+was installed to prevent. The shortcut is a UTXO snapshot of about 8.7 GB,
+fetched from this project's release page, which brings that down to under an
+hour.
+
+It is offered, never assumed. Nothing is downloaded until you press the button;
+an installation whose owner never does makes no outbound request at all. The
+`auto_start` setting exists for deployments with nobody at a screen, and it is
+off unless somebody sets it.
+
+### Why you are not trusting whoever hosts it
+
+The snapshot's base block hash is compiled into **Bitcoin Core**. When the file
+is loaded, Core recomputes the hash of the UTXO set it has just read and compares
+it against its own built-in value. A corrupted download, a botched reassembly and
+a deliberately altered file all produce the same outcome: the node refuses it.
+Whoever serves the file cannot make your node accept a state Core does not
+already agree with.
+
+The per-part checksums Forktower carries are a convenience on top of that — they
+catch a bad part after two gigabytes instead of after nine. They are compiled
+into the binary rather than downloaded, because a checksum fetched from the same
+host as the file it vouches for is not a check. The same is true of the mirror
+setting: it changes *where* the parts are fetched from and cannot change what
+they must contain.
+
+### What it costs you, stated plainly
+
+The request goes through the same Tor proxy the second node uses for its peering,
+and the hostname is sent to the proxy unresolved — so no DNS query for the
+download host leaves your network either. That is not decoration. A direct
+request for this specific file, from a residential address, says that whoever
+lives there runs Lightning channels and is preparing to defend them across a
+split, which is targeting information.
+
+If you have turned clearnet peering on for the second node, the download follows
+that decision and goes direct, and the daemon says so in its log on every start.
+
+Everything below the snapshot's height is still validated in full, in the
+background, after the shortcut — the node is not being asked to skip verification,
+only to defer it.
 
 ## The limits are enforced, not just intended
 

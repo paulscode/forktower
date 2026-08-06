@@ -16,6 +16,7 @@ import (
 
 	"github.com/paulscode/forktower/internal/alert"
 	"github.com/paulscode/forktower/internal/api"
+	"github.com/paulscode/forktower/internal/bootstrap"
 	"github.com/paulscode/forktower/internal/bus"
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/chainview/bitcoindview"
@@ -65,6 +66,7 @@ type App struct {
 	scouts    []*tower.Scout
 	mirrors   []*mirror.Runner
 	standDown *standdown.Switch
+	bootstrap *bootstrap.Runner
 	alerter   *alert.Alerter
 	timeline  *store.TimelineSubscriber
 	api       *api.Server
@@ -256,6 +258,14 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 		return nil, err
 	}
 
+	// The snapshot shortcut, if it is switched on. Built before the API so the
+	// dashboard can offer it, and after the chain views because whether it can
+	// run at all depends on what the second one turns out to be.
+	if err := a.buildBootstrap(cfg, log, now); err != nil {
+		a.closeOnFailure()
+		return nil, err
+	}
+
 	a.api, err = api.New(st, a.sentinel, a.alerter, a.registry, a.deadline,
 		a.watcher, a.standDown, api.Config{
 			Auth:                  cfg.UI.Auth,
@@ -270,6 +280,9 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 		return nil, fmt.Errorf("setting up the dashboard: %w", err)
 	}
 	a.api.MountUI()
+	if a.bootstrap != nil {
+		a.api.MountBootstrap(a.bootstrap)
+	}
 
 	a.listener = deps.Listener
 	if a.listener == nil {
@@ -456,6 +469,9 @@ func (a *App) Run(ctx context.Context) error {
 	group.Go(func() error { return a.registry.Run(groupCtx) })
 	group.Go(func() error { return a.watcher.Run(groupCtx) })
 	group.Go(func() error { return a.deadline.Run(groupCtx) })
+	if a.bootstrap != nil {
+		group.Go(func() error { return a.bootstrap.Run(groupCtx) })
+	}
 	for _, w := range a.wardens {
 		group.Go(func() error { return w.Run(groupCtx) })
 	}

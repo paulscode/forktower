@@ -71,6 +71,7 @@ func (c Config) validateSQ() []string {
 			p = append(p, fmt.Sprintf("sq.bitcoind.rpc_url is not a usable URL: %v", err))
 		}
 		p = append(p, validateRPCAuth("sq.bitcoind", c.SQ.Bitcoind)...)
+		p = append(p, c.validateSnapshot()...)
 	case TierNeutrino, TierElectrum:
 		p = append(p, fmt.Sprintf(
 			"sq.tier %q is not implemented yet; only %q is accepted", c.SQ.Tier, TierBitcoind))
@@ -79,6 +80,47 @@ func (c Config) validateSQ() []string {
 	default:
 		p = append(p, fmt.Sprintf(
 			"sq.tier %q is not a known tier; only %q is accepted", c.SQ.Tier, TierBitcoind))
+	}
+	return p
+}
+
+// validateSnapshot checks the UTXO-snapshot shortcut's settings.
+//
+// Only reached when the shortcut could actually run, so that somebody who has
+// left the whole section switched off is never stopped by a typo in a field
+// nothing reads.
+func (c Config) validateSnapshot() []string {
+	s := c.SQ.Snapshot
+	if !s.Enabled && !s.AutoStart {
+		return nil
+	}
+
+	var p []string
+	if s.Proxy != "" {
+		if _, _, err := net.SplitHostPort(s.Proxy); err != nil {
+			p = append(p, fmt.Sprintf(
+				"sq.snapshot.proxy should look like host:port, for example "+
+					"127.0.0.1:9050 — %v", err))
+		}
+	}
+	if s.BaseURL != "" {
+		u, err := url.Parse(s.BaseURL)
+		switch {
+		case err != nil:
+			p = append(p, fmt.Sprintf("sq.snapshot.base_url is not a usable URL: %v", err))
+		case u.Scheme != "http" && u.Scheme != "https":
+			p = append(p, fmt.Sprintf(
+				"sq.snapshot.base_url must be http or https, not %q", u.Scheme))
+		case u.Host == "":
+			p = append(p, "sq.snapshot.base_url has no host")
+		case !strings.HasSuffix(s.BaseURL, "/"):
+			// The part names are appended directly, so a missing slash silently
+			// produces a URL one directory up with the filename glued onto the
+			// last path element — which 404s in a way that reads like the release
+			// is missing rather than like a setting is wrong.
+			p = append(p, "sq.snapshot.base_url must end with a slash, because the "+
+				"file names are appended to it")
+		}
 	}
 	return p
 }

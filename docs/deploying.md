@@ -159,6 +159,67 @@ comma-separated list. These are added to ordinary peer discovery rather than
 replacing it — a node restricted to a handful of addresses has swapped one way of
 being isolated for another.
 
+## The second node's first sync, and the shortcut
+
+From nothing, the second node takes about **three days** to catch up — and until
+it has, Forktower cannot see the other chain at all. That is three days of
+exactly the exposure it was installed to prevent, which is worth knowing before
+you plan around it.
+
+The shortcut is a UTXO snapshot of about 8.7 GB, published on this project's
+releases page. Loading it takes the wait down to under an hour on decent hardware
+and a few hours on a small appliance. It is offered on the dashboard at the point
+where you would otherwise be waiting, and nothing is downloaded until you accept.
+
+```
+FORKTOWER_SQ_SNAPSHOT=offer     # available, taken when you ask (the default)
+FORKTOWER_SQ_SNAPSHOT=auto      # taken without asking
+FORKTOWER_SQ_SNAPSHOT=off       # never offered, never mentioned
+```
+
+`auto` is for a deployment with nobody at a screen — an unattended rebuild, a
+compose file brought up by a script — where "wait to be asked" means "wait
+forever".
+
+**Only in `all-in-one` mode.** The node reads the file itself, from a path, so a
+second node running as somebody else's service cannot see what this container
+wrote. In `external` mode the setting is not rendered at all rather than offering
+something that would fail after a nine-gigabyte download.
+
+**You are not trusting whoever hosted it.** The snapshot's base block hash is
+compiled into Bitcoin Core. Your node recomputes the hash of what it just read
+and compares it against that built-in value, so a corrupted, truncated or altered
+file is refused by your own node. Everything below the snapshot's height is still
+validated in full, in the background, afterwards — the verification is deferred,
+not skipped.
+
+The per-part checksums Forktower carries are compiled into the binary rather than
+downloaded, because a checksum fetched from the same host as the file it vouches
+for is not a check.
+
+**It follows your peering decision.** The download goes through the same Tor
+proxy the second node peers over, with the hostname resolved by the proxy rather
+than on your network. A direct request for this particular file from a
+residential address says that whoever lives there runs Lightning channels and is
+preparing to defend them across a split. If you set
+`FORKTOWER_SQ_CLEARNET=true`, the download goes direct too, and the log says so
+on every start.
+
+Two more settings, both rarely needed:
+
+```
+FORKTOWER_SQ_SNAPSHOT_PROXY=127.0.0.1:9050    # override the proxy
+FORKTOWER_SQ_SNAPSHOT_BASE_URL=https://.../   # fetch the parts from a mirror
+```
+
+A mirror changes only *where* the parts come from. The checksums and the base
+block hash stay exactly as compiled in, so a mirror can be faster and cannot be
+different.
+
+An interrupted transfer resumes from where it stopped, across restarts of the
+daemon and of the machine — the only state that survives is the length of the
+file on disk, and everything else is worked out from that.
+
 ## What the second node tells other people
 
 Forktower's second node identifies itself on the peer-to-peer network like this:

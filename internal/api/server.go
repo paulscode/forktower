@@ -123,6 +123,7 @@ type Server struct {
 	deadlines Deadlines
 	watcher   Watcher
 	standDown StandDown
+	bootstrap Bootstrap
 	cfg       Config
 	now       func() time.Time
 	log       *slog.Logger
@@ -188,6 +189,9 @@ func (s *Server) routes() {
 
 	s.mux.Handle("GET /api/v1/status", s.guard(s.handleStatus))
 	s.mux.Handle("GET /api/v1/setup", s.guard(s.handleSetup))
+	s.mux.Handle("GET /api/v1/bootstrap", s.guard(s.handleBootstrap))
+	s.mux.Handle("POST "+PathBootstrapStart, s.guard(s.handleBootstrapStart))
+	s.mux.Handle("POST "+PathBootstrapCancel, s.guard(s.handleBootstrapCancel))
 	s.mux.Handle("GET /api/v1/timeline", s.guard(s.handleTimeline))
 	s.mux.Handle("GET /api/v1/channels", s.guard(s.handleChannels))
 	s.mux.Handle("GET /api/v1/spends", s.guard(s.handleSpends))

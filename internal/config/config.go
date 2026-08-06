@@ -135,6 +135,53 @@ type SQConfig struct {
 	Bitcoind  RPCEndpoint     `toml:"bitcoind"`
 	Witnesses WitnessesConfig `toml:"witnesses"`
 	Neutrino  NeutrinoConfig  `toml:"neutrino"`
+	Snapshot  SnapshotConfig  `toml:"snapshot"`
+}
+
+// SnapshotConfig controls the UTXO-snapshot shortcut for the second node's first
+// sync.
+//
+// **Off unless somebody turns it on, and that is a deliberate cost.** Forktower
+// otherwise fetches nothing at all, and this is the single code path that reaches
+// out to a machine the user does not own. Making it opt-in keeps that property
+// something a user grants rather than something the software assumes — see
+// docs/security.md, which says so in the same words.
+//
+// The countervailing cost is real and worth stating: a user who never finds this
+// setting waits about three days for the second node to sync, during which they
+// have no protection at all. That is why the dashboard offers it prominently at
+// exactly the moment it would help, rather than leaving it to be discovered.
+type SnapshotConfig struct {
+	// Enabled makes the shortcut available. False means it is never offered and
+	// never mentioned.
+	Enabled bool `toml:"enabled"`
+
+	// AutoStart takes the shortcut without waiting to be asked.
+	//
+	// For deployments with nobody at a screen — a compose file, an unattended
+	// rebuild — where "wait to be asked" means "wait for ever". Implies Enabled;
+	// setting this alone is enough.
+	AutoStart bool `toml:"auto_start"`
+
+	// Dir is where the download is assembled. Empty means beside the second
+	// node's data, which is the volume sized for a blockchain and therefore the
+	// one most likely to have room.
+	Dir string `toml:"dir"`
+
+	// Proxy is a SOCKS5 address the download goes through, e.g.
+	// "127.0.0.1:9050".
+	//
+	// Set to the second node's own Tor proxy by the packaging, because a clearnet
+	// request for this specific file from a residential address says that whoever
+	// lives there runs Lightning channels and is preparing to defend them across
+	// a split. Empty means a direct connection, which is a choice the user makes
+	// rather than a default they fall into.
+	Proxy string `toml:"proxy"`
+
+	// BaseURL overrides where the parts are fetched from, for somebody hosting
+	// their own mirror. The checksums are compiled in and are not overridable, so
+	// a mirror can serve the file faster but cannot serve a different one.
+	BaseURL string `toml:"base_url"`
 }
 
 // WitnessesConfig configures independent second opinions about the other chain's

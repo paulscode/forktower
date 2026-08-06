@@ -188,12 +188,27 @@ func (s *Server) checkSQSynced(v chainview.BackendHealth) ReadinessItem {
 		return ReadinessItem{ID: CheckSQSynced, OK: true, Label: "Watching the other chain"}
 
 	case chainview.HealthSyncing:
-		return ReadinessItem{
+		item := ReadinessItem{
 			ID: CheckSQSynced, OK: false,
 			Label:  "Still catching up with the other chain",
 			Why:    "Forktower cannot see the whole picture yet. This usually finishes on its own.",
 			Detail: syncDetail(v.SyncProgress),
 		}
+		// **The one place where "still syncing" stops being something to wait
+		// out.** Three days of catching up is three days with no protection at
+		// all, and if the shortcut is available then this is the moment it is
+		// worth taking — which is also the only moment the user is looking at
+		// this line. An offer made later would be an offer made after the wait it
+		// would have saved.
+		if s.bootstrapOffered() {
+			item.Why = "Forktower cannot see the other chain until this finishes, " +
+				"which takes about three days on its own. There is a faster way."
+			item.Action = &Action{
+				Label:    "Start watching sooner",
+				Endpoint: PathBootstrapStart,
+			}
+		}
+		return item
 
 	case chainview.HealthDown:
 		return ReadinessItem{

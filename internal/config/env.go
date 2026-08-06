@@ -123,6 +123,12 @@ func envBindings() []envBinding {
 		str("SQ_BITCOIND_ZMQ_RAWBLOCK", func(c *Config, v string) { c.SQ.Bitcoind.ZMQRawBlock = v }),
 		str("SQ_BITCOIND_ZMQ_RAWTX", func(c *Config, v string) { c.SQ.Bitcoind.ZMQRawTx = v }),
 
+		yesNo("SQ_SNAPSHOT_ENABLED", func(c *Config, b bool) { c.SQ.Snapshot.Enabled = b }),
+		yesNo("SQ_SNAPSHOT_AUTO_START", func(c *Config, b bool) { c.SQ.Snapshot.AutoStart = b }),
+		str("SQ_SNAPSHOT_DIR", func(c *Config, v string) { c.SQ.Snapshot.Dir = v }),
+		str("SQ_SNAPSHOT_PROXY", func(c *Config, v string) { c.SQ.Snapshot.Proxy = v }),
+		str("SQ_SNAPSHOT_BASE_URL", func(c *Config, v string) { c.SQ.Snapshot.BaseURL = v }),
+
 		str("FORK_NAME", func(c *Config, v string) { c.Fork.Name = v }),
 		num32("FORK_SIGNAL_BIT", func(c *Config, n int32) { c.Fork.SignalBit = n }),
 		num32("FORK_DIVERGENCE_HEIGHT", func(c *Config, n int32) { c.Fork.DivergenceHeight = n }),

@@ -62,6 +62,29 @@
     </details>
   </section>
 
+  <!--
+    The faster first sync, offered while it would still help.
+
+    Placed above the headline deliberately. Its entire window of usefulness is
+    the first hour of an installation's life, during which the headline says
+    "still catching up" and the honest answer is that there is something the
+    user can do about it. Anywhere further down the page it would be found after
+    the wait it exists to prevent.
+  -->
+  <section id="bootstrap" class="card bootstrap hidden" aria-labelledby="bootstrap-title"
+           aria-live="polite">
+    <p class="state-label">Faster first sync</p>
+    <h2 id="bootstrap-title"></h2>
+    <p id="bootstrap-detail" class="detail"></p>
+    <ul id="bootstrap-why" class="guidance"></ul>
+    <div id="bootstrap-bar" class="progress hidden">
+      <div id="bootstrap-fill" class="progress-fill"></div>
+    </div>
+    <p id="bootstrap-progress" class="since"></p>
+    <p id="bootstrap-error" class="detail problem"></p>
+    <button id="bootstrap-action" class="action hidden" type="button"></button>
+  </section>
+
   <section id="headline" class="card headline" aria-live="polite">
     <p class="state-label" id="headline-state-label"></p>
     <h2 id="headline-title">Connecting to Forktower…</h2>

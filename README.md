@@ -63,11 +63,18 @@ wrote for itself — to learn which channels you have. Then it watches the other
 chain for anything that starts a clock against one of them, and tells you what is
 at stake and how many blocks you have.
 
-The catch is the second node's first sync, which takes days from scratch. Each
-release ships a UTXO snapshot that skips most of it, bringing that down to under
-an hour on decent hardware and a few hours on a small appliance. Bitcoin Core
-verifies the snapshot against a hash compiled into itself, so you are not
-required to trust whoever hosted it.
+The catch is the second node's first sync, which takes about three days from
+scratch — three days during which Forktower cannot see the other chain at all.
+So it offers a shortcut, on the dashboard, at the point where you would otherwise
+be waiting: an 8.7 GB UTXO snapshot that brings the wait down to under an hour on
+decent hardware, and a few hours on a small appliance.
+
+It is offered rather than assumed. This is the only thing Forktower ever
+downloads, nothing is fetched until you press the button, and the request goes
+through the same Tor proxy the second node peers over. Bitcoin Core checks the
+snapshot against a hash compiled into Bitcoin Core itself and refuses anything
+else, so you are not required to trust whoever hosted it — and everything below
+the snapshot's height is still verified in full, in the background, afterwards.
 
 It never holds your channel keys, your seed, or anything that can spend your
 money. It cannot sign a transaction, and no part of it will ever ask you for a

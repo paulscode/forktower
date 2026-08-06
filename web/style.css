@@ -340,3 +340,32 @@ footer { max-width: 46rem; margin: 0 auto; }
 .skip { margin-top: 0.8rem; }
 .skip summary { cursor: pointer; color: var(--quiet); font-size: 0.9rem; }
 .skip .detail { margin: 0.5rem 0; }
+
+/* The faster first sync.
+ *
+ * Marked like the setup card, and for the same reason: while it is showing, it
+ * is the most useful thing on the page. Its whole window is the first hour of an
+ * installation's life, and after that it never appears again. */
+.bootstrap { border-left: 5px solid var(--waiting); }
+.bootstrap h2 { font-size: 1.3rem; line-height: 1.25; margin-bottom: 0.3rem; }
+.bootstrap .since { margin: 0.4rem 0 0; color: var(--quiet); font-size: 0.85rem; }
+.bootstrap .guidance { color: var(--quiet); font-size: 0.92rem; }
+
+/* A bar rather than a number alone, because the thing being reported is a
+ * multi-hour transfer and "is it moving at all" is the question being asked. The
+ * sentence beside it carries the same information for a screen reader, and for
+ * anyone who would rather read than measure. */
+.progress {
+  height: 8px;
+  margin: 0.7rem 0 0.2rem;
+  border-radius: 4px;
+  background: var(--edge);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 4px;
+  background: var(--waiting);
+  transition: width 0.4s ease;
+}

@@ -42,14 +42,35 @@ func TestSyncingIsWaitedForRatherThanAskedOf(t *testing.T) {
 	for _, id := range []string{
 		CheckSQSynced, CheckWatcherProgressing, CheckChannelsInventoried,
 	} {
-		if !waitingOn(id) {
+		if !waitingOn(ReadinessItem{ID: id}) {
 			t.Errorf("%s is presented as a task, but the user cannot do anything about it", id)
 		}
 	}
 	// And the things that genuinely need a person are not swallowed by it.
 	for _, id := range []string{CheckTowerProtection, CheckAlertTransports, CheckLNConnected} {
-		if waitingOn(id) {
+		if waitingOn(ReadinessItem{ID: id}) {
 			t.Errorf("%s is treated as something to wait for, so nobody is ever asked to do it", id)
+		}
+	}
+}
+
+// An action and "nothing you can do" cannot both be true.
+//
+// The case this is really about is the second node's first sync: normally three
+// days of waiting with nothing to be done, and — for exactly the window in which
+// it would help — a button that turns it into under an hour. Swallowed by the
+// waiting list, the offer would never be shown to the only person it exists for.
+func TestSomethingWithAButtonIsNeverPresentedAsWaiting(t *testing.T) {
+	for _, id := range []string{
+		CheckSQSynced, CheckWatcherProgressing, CheckChannelsInventoried,
+	} {
+		item := ReadinessItem{
+			ID:     id,
+			Action: &Action{Label: "Do the thing", Endpoint: PathBootstrapStart},
+		}
+		if waitingOn(item) {
+			t.Errorf("%s offers an action and is still presented as something to "+
+				"wait out, so the button is never shown", id)
 		}
 	}
 }

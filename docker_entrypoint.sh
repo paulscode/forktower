@@ -319,6 +319,59 @@ write_forktower_conf() {
     [ -n "${SQ_ZMQ_BLOCK}" ] && printf 'zmq_rawblock = "%s"\n' "${SQ_ZMQ_BLOCK}"
     [ -n "${SQ_ZMQ_TX}" ] && printf 'zmq_rawtx = "%s"\n' "${SQ_ZMQ_TX}"
 
+    # ── The faster first sync ──────────────────────────────────────────────
+    #
+    # Only for the bundled node. `loadtxoutset` takes a *path*, and the node
+    # reads it itself — so a second node running as somebody else's service
+    # cannot see a file this container wrote, and offering the shortcut there
+    # would mean a nine-gigabyte download followed by a refusal.
+    #
+    # Three settings, one of which is a choice worth making deliberately:
+    #
+    #   off    never offered, and never mentioned
+    #   offer  available, and taken only when the user asks (the default)
+    #   auto   taken without asking, for a deployment with nobody at a screen
+    #
+    # `offer` is the default because the consent is the click. Forktower fetches
+    # nothing else at all, and that stays true of an installation whose owner
+    # never presses the button.
+    if [ "${SQ_MODE}" = "all-in-one" ]; then
+      case "${FORKTOWER_SQ_SNAPSHOT:-offer}" in
+        off)   snapshot_enabled=false; snapshot_auto=false ;;
+        auto)  snapshot_enabled=true;  snapshot_auto=true ;;
+        offer) snapshot_enabled=true;  snapshot_auto=false ;;
+        *)     die "FORKTOWER_SQ_SNAPSHOT must be off, offer or auto, not
+  '${FORKTOWER_SQ_SNAPSHOT}'" ;;
+      esac
+
+      printf '\n[sq.snapshot]\n'
+      printf 'enabled = %s\n' "${snapshot_enabled}"
+      printf 'auto_start = %s\n' "${snapshot_auto}"
+      # Beside the node's own data, which is the volume sized for a blockchain
+      # and therefore the one with room. Deleted as soon as the node has read it.
+      printf 'dir = "%s"\n' "${SQ_DIR}"
+
+      # **Through the same Tor proxy the node peers with, unless the user has
+      # chosen clearnet for that too.** A direct request for this specific file
+      # from a residential address says that whoever lives there runs Lightning
+      # channels and is preparing to defend them across a split — which is
+      # targeting information, and is exactly what the peering default is set up
+      # to avoid giving away. Keeping the two decisions together means somebody
+      # who chose Tor for one gets it for the other without having to know this
+      # setting exists.
+      if [ "${FORKTOWER_SQ_CLEARNET:-false}" != "true" ]; then
+        printf 'proxy = "%s"\n' \
+          "${FORKTOWER_SQ_SNAPSHOT_PROXY:-${FORKTOWER_TOR_PROXY:-127.0.0.1:9050}}"
+      elif [ -n "${FORKTOWER_SQ_SNAPSHOT_PROXY:-}" ]; then
+        printf 'proxy = "%s"\n' "${FORKTOWER_SQ_SNAPSHOT_PROXY}"
+      fi
+
+      # Only where to fetch from. The checksums are compiled into the binary and
+      # are not overridable, so a mirror can be faster but cannot be different.
+      [ -n "${FORKTOWER_SQ_SNAPSHOT_BASE_URL:-}" ] && \
+        printf 'base_url = "%s"\n' "${FORKTOWER_SQ_SNAPSHOT_BASE_URL}"
+    fi
+
     if [ -n "${FORKTOWER_FORK_NAME:-}" ]; then
       printf '\n[fork]\n'
       printf 'name = "%s"\n' "${FORKTOWER_FORK_NAME}"

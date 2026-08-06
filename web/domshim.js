@@ -38,6 +38,30 @@ class Element {
       });
     }
 
+    this.attributes = {};
+
+    // A style object, because a progress bar has to set a width.
+    //
+    // **It refuses anything that is not a plain safe token**, in the same spirit
+    // as the innerHTML rule above. `style` is the other place where a value
+    // chosen by somebody else becomes something the browser interprets, and a
+    // future edit that piped a server string into it would be exactly as wrong
+    // as one that reached for markup — and far easier to miss, because a width
+    // looks harmless. Everything the dashboard writes here is a clamped number.
+    this.style = new Proxy({}, {
+      set(target, name, value) {
+        const text = String(value);
+        if (!/^[A-Za-z0-9 .,%#()+_-]*$/.test(text)) {
+          throw new Error(
+            'the dashboard wrote ' + text + ' into style.' + String(name) +
+            ', which is not a plain value — a style is interpreted by the ' +
+            'browser, so a value chosen by someone else must never reach it');
+        }
+        target[name] = text;
+        return true;
+      },
+    });
+
     const self = this;
     this.classList = {
       add(name) {
@@ -105,6 +129,15 @@ class Element {
     }
     child.parent = null;
     return child;
+  }
+
+  setAttribute(name, value) {
+    this.attributes[name] = String(value);
+  }
+
+  getAttribute(name) {
+    return Object.prototype.hasOwnProperty.call(this.attributes, name)
+      ? this.attributes[name] : null;
   }
 
   addEventListener(name, fn) {
