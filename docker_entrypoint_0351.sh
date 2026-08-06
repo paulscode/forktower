@@ -97,6 +97,20 @@ export FORKTOWER_SQ_CLEARNET="$(cfg '.second-node.clearnet' 'false')"
 export FORKTOWER_SQ_ONION_ONLY="$(cfg '.second-node.onion-only' 'false')"
 export FORKTOWER_SQ_EXTRA_PEERS="$(cfg '.second-node.extra-peers' '')"
 export FORKTOWER_SQ_P2P_PORT=8433
+
+# ── The companion watchtower ─────────────────────────────────────────────────
+#
+# The address clients dial is the package's own Tor hostname, which this
+# platform writes into the data volume for exactly this purpose. Without it the
+# tower advertises nothing and the dashboard shows a tower with no address to
+# register — true, and better than a URI nobody can reach.
+export FORKTOWER_TOWER_LND_ENABLED="$(cfg '.watchtower.enabled' 'true')"
+export FORKTOWER_TOWER_LND_LISTEN="0.0.0.0:9911"
+if [ -f /root/.tor_hostname ]; then
+  export FORKTOWER_TOWER_LND_EXTERNAL_ADDR="$(cat /root/.tor_hostname):9911"
+elif [ -n "${TOR_ADDRESS:-}" ]; then
+  export FORKTOWER_TOWER_LND_EXTERNAL_ADDR="${TOR_ADDRESS}:9911"
+fi
 export FORKTOWER_LOG_LEVEL="$(cfg '.advanced.log-level' 'info')"
 
 NTFY_URL="$(cfg '.notifications.ntfy-url' '')"

@@ -102,6 +102,15 @@ interfaces:
     protocols:
       - tcp
       - http
+  watchtower:
+    name: "Watchtower"
+    description: "Register this address with your Lightning node so a breach on the other chain gets answered rather than only reported."
+    tor-config:
+      port-mapping:
+        9911: "9911"
+    ui: false
+    protocols:
+      - tcp
 dependencies:
   bitcoind:
     version: ">=27.0.0"

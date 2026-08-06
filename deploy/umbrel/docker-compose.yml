@@ -93,6 +93,27 @@ services:
       FORKTOWER_SQ_ONION_ONLY: "false"
       FORKTOWER_TOR_PROXY: ${APP_BITCOIN_KNOTS_TOR_PROXY_IP:-${APP_BITCOIN_TOR_PROXY_IP:-10.21.21.11}}:${APP_BITCOIN_KNOTS_TOR_PROXY_PORT:-${APP_BITCOIN_TOR_PROXY_PORT:-9050}}
 
+      # ── The companion watchtower ──
+      #
+      # On by default, and that is the point of it being here at all. Umbrel
+      # gives an app no settings screen, so a tower that had to be switched on
+      # would be a tower nobody switches on — and until this existed, a packaged
+      # user was told to register a watchtower and given nowhere to get one.
+      #
+      # It watches the *second* node, which is the chain their own node cannot
+      # see and therefore the chain a breach against them would be published on.
+      # A tower watching the same chain as their node would be a second copy of
+      # protection they already have.
+      FORKTOWER_TOWER_LND_ENABLED: ${FORKTOWER_TOWER_LND_ENABLED:-true}
+      # The address the Lightning app connects to. Both apps sit on the same
+      # Umbrel network, so this is reachable without Tor and without publishing
+      # anything to the LAN — and it is the address the dashboard tells the user
+      # to paste, so it has to be the one that works from another container
+      # rather than from inside this one.
+      FORKTOWER_TOWER_LND_LISTEN: 0.0.0.0:9911
+      FORKTOWER_TOWER_LND_EXTERNAL_ADDR: $APP_FORKTOWER_IP:9911
+      FORKTOWER_TOWER_LND_MAX_DISK_MB: ${FORKTOWER_TOWER_LND_MAX_DISK_MB:-2048}
+
       # ── The dashboard ──
       #
       # Bound to every address because Umbrel's app proxy reaches it over the app

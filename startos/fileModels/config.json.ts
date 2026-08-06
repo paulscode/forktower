@@ -25,6 +25,10 @@ export const configJson = FileHelper.json(
     // full chain, and asking for a second is asking most of them to decline.
     sqMode: z.enum(['full', 'pruned', 'blocksonly']).catch('pruned'),
     sqPruneMb: z.number().int().catch(20_000),
+    // On by default. Until this existed a packaged user was told to register a
+    // watchtower and given nowhere to get one, and a tower nobody switches on
+    // protects nobody.
+    towerEnabled: z.boolean().catch(true),
     // Tor by default, in both directions. The second node's traffic says which
     // side of a contested upgrade you are watching, which is not something to
     // announce to your ISP.

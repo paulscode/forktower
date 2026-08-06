@@ -19,6 +19,7 @@ import {
   lndProbeMount,
   lndRestPort,
   sqPeerPort,
+  towerPort,
 } from './utils'
 
 /**
@@ -249,6 +250,47 @@ export const main = sdk.setupMain(async ({ effects }) => {
     'forktower-sq',
   )
 
+  // The watchtower gets a subcontainer of its own, for the same reason the
+  // second node does: two daemons cannot share one, because the second tries to
+  // enter the first's namespace, finds no init there, and dies with an error
+  // about neither of them.
+  const towerContainer = await sdk.SubContainer.of(
+    effects,
+    { imageId: 'main' },
+    sdk.Mounts.of().mountVolume({
+      volumeId: 'main',
+      subpath: null,
+      mountpoint: dataMount,
+      readonly: false,
+    }),
+    'forktower-tower',
+  )
+
+  // The address the tower tells clients to use.
+  //
+  // **Read from the platform rather than constructed.** The onion is assigned
+  // by StartOS and nothing in this package can derive it; guessing would
+  // produce a URI the dashboard shows confidently and nobody can dial.
+  //
+  // An empty result is not an error. On a first start the address may not exist
+  // yet, and lnd is then started without advertising one rather than
+  // advertising a wrong one — the dashboard shows a tower with no address to
+  // register, which is true, and the next start fixes it.
+  const towerAddress = await effects
+    .getHostInfo({ hostId: 'tower' })
+    .then((host) => {
+      const bindings = (host?.bindings ?? {}) as Record<
+        string,
+        { hostnames?: Array<{ hostname: string; port: number | null }> }
+      >
+      const hostnames = Object.values(bindings).flatMap((b) => b.hostnames ?? [])
+      // Onion first, because that is the address a client on another machine
+      // can actually reach and the one that says least about this one.
+      const onion = hostnames.find((h) => h.hostname.endsWith('.onion'))
+      return onion ?? hostnames[0] ?? null
+    })
+    .catch(() => null)
+
   // The environment the entrypoint renders `forktower.toml` from. The daemon
   // never sees these names and the user never sees the TOML.
   const env: Record<string, string> = {
@@ -272,6 +314,17 @@ export const main = sdk.setupMain(async ({ effects }) => {
     // The second node, which this container runs itself.
     FORKTOWER_SQ_MODE: 'all-in-one',
     FORKTOWER_SQ_P2P_PORT: String(sqPeerPort),
+
+    // The companion watchtower. On by default: until it existed, a packaged
+    // user was told to register one and given nowhere to get one.
+    FORKTOWER_TOWER_LND_ENABLED: cfg.towerEnabled ? 'true' : 'false',
+    FORKTOWER_TOWER_LND_LISTEN: `0.0.0.0:${towerPort}`,
+    // What clients are told to dial. Empty when the platform has not assigned
+    // the address yet, which is honest: the dashboard then shows a tower with
+    // no address to register rather than one nobody can reach.
+    FORKTOWER_TOWER_LND_EXTERNAL_ADDR: towerAddress
+      ? `${towerAddress.hostname}:${towerAddress.port ?? towerPort}`
+      : '',
     FORKTOWER_SQ_BLOCKSONLY: cfg.sqMode === 'blocksonly' ? '1' : '0',
     // `prune=0` is Bitcoin Core for "keep everything", which is what Full
     // means. Blocks-only is still pruned — skipping the memory pool is a
@@ -389,6 +442,46 @@ export const main = sdk.setupMain(async ({ effects }) => {
           gracePeriod: 120_000,
         },
         requires: [],
+      })
+      // The companion watchtower. Third rather than second because it needs the
+      // chain backend the second node provides, and starting it first would
+      // mean lnd retrying a connection that cannot succeed yet.
+      .addDaemon('tower', {
+        subcontainer: towerContainer,
+        exec: {
+          // Guarded in the shell rather than by leaving the daemon out of the
+          // list. The daemon set is fixed at build time and its ids are what
+          // `requires` refers to, so a conditional entry would make the
+          // dashboard's dependency graph depend on a setting.
+          command: [
+            '/bin/sh',
+            '-c',
+            `if [ "$FORKTOWER_TOWER_LND_ENABLED" = "true" ]; then ` +
+              `exec /usr/local/bin/lnd-tower --configfile=${dataMount}/tower/lnd.conf; ` +
+              `else echo "the watchtower is switched off" >&2; exec sleep infinity; fi`,
+          ],
+          env,
+          runAsInit: true,
+          // lnd closes a bbolt database on the way out, and killing it early is
+          // how that database comes back needing recovery.
+          sigtermTimeout: 60_000,
+        },
+        ready: {
+          display: 'Watchtower',
+          fn: async () => {
+            if (!cfg.towerEnabled) {
+              return { result: 'success', message: 'Not running, by your choice' }
+            }
+            return sdk.healthCheck.checkPortListening(effects, towerPort, {
+              errorMessage: 'The watchtower is starting',
+              successMessage: 'Ready to answer a breach on the other chain',
+            })
+          },
+          // lnd opens its databases and generates certificates on a first run,
+          // which on an appliance is not quick.
+          gracePeriod: 180_000,
+        },
+        requires: ['sq-bitcoind'],
       })
       .addDaemon('main', {
         subcontainer: container,

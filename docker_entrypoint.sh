@@ -505,6 +505,38 @@ write_forktower_conf() {
       printf '\nplatform = "%s"\n' "${FORKTOWER_PLATFORM}"
     fi
 
+    # ── The companion watchtower ──────────────────────────────────────────
+    #
+    # **Written into the file rather than exported.** StartOS 0.4.x runs this
+    # script with --render-only and then starts the daemon itself, so anything
+    # exported here is discarded — the tower would run and Forktower would not
+    # know where to read it, which is the shape of failure this whole program
+    # complains about: a component working perfectly and nothing watching it.
+    #
+    # The paths are derived from the ones write_tower_conf just chose. Two
+    # places holding the same path is one place for them to disagree, and the
+    # symptom would be a dashboard reporting a healthy tower as missing.
+    if [ "${SQ_MODE}" = "all-in-one" ] && \
+       [ "${FORKTOWER_TOWER_LND_ENABLED:-false}" = "true" ]; then
+      printf '\n[tower.lnd]\n'
+      printf 'enabled = true\n'
+      # **The address clients dial, not the socket lnd binds.** Those are
+      # different things and conflating them is what the wildcard check exists
+      # to catch: inside a container the tower has to bind broadly to be
+      # reachable at all, and what bounds who can reach it is the platform in
+      # front — a Tor onion on StartOS, an app network on Umbrel. Recording the
+      # bind here would put 0.0.0.0 on the dashboard as an address to paste.
+      printf 'listen = "%s"\n' "${FORKTOWER_TOWER_LND_EXTERNAL_ADDR}"
+      printf 'api_url = "https://127.0.0.1:%s"\n' "${FORKTOWER_TOWER_LND_REST_PORT:-8090}"
+      printf 'data_dir = "%s/tower"\n' "${DATA_DIR}"
+      printf 'tls_cert_path = "%s/tower/tls.cert"\n' "${DATA_DIR}"
+      # The tower's own *read-only* macaroon. Forktower asks it how it is doing;
+      # there is nothing here it has any business changing.
+      printf 'macaroon_path = "%s/tower/data/chain/bitcoin/%s/readonly.macaroon"\n' \
+        "${DATA_DIR}" "${FORKTOWER_TOWER_LND_NETWORK:-mainnet}"
+      printf 'max_disk_mb = %s\n' "${FORKTOWER_TOWER_LND_MAX_DISK_MB:-2048}"
+    fi
+
     printf '\n[store]\n'
     printf 'path = "%s/forktower.db"\n' "${DATA_DIR}"
 
@@ -574,19 +606,22 @@ if [ "${SQ_MODE}" = "all-in-one" ]; then
   # Only alongside the bundled node. The tower's whole value is that its chain
   # backend is the second node, and in external mode that node is somebody
   # else's service on an address this container was not given.
+  # **A tower needs an address before it is worth running.** The validation in
+  # the daemon puts it plainly: a tower nobody can reach protects nothing. On
+  # StartOS the onion is assigned by the platform and may not exist on a first
+  # boot, so this can legitimately be empty for one start — and running lnd
+  # anyway would burn a few hundred megabytes on a service no client could dial.
+  if [ "${FORKTOWER_TOWER_LND_ENABLED:-false}" = "true" ] && \
+     [ -z "${FORKTOWER_TOWER_LND_EXTERNAL_ADDR:-}" ]; then
+    log "the watchtower is switched on but has no address clients could reach yet,
+  so it is not being started. This usually resolves itself on the next start,
+  once the platform has assigned one."
+    FORKTOWER_TOWER_LND_ENABLED=false
+    export FORKTOWER_TOWER_LND_ENABLED
+  fi
+
   if [ "${FORKTOWER_TOWER_LND_ENABLED:-false}" = "true" ]; then
     write_tower_conf
-    # Where the daemon reads the tower from. Derived from the paths chosen just
-    # above rather than configured separately, because two places holding the
-    # same path is one place for them to disagree — and the symptom would be a
-    # dashboard reporting a healthy tower as missing.
-    #
-    # The macaroon is the tower's own *read-only* one. Forktower asks it how it
-    # is doing; there is nothing here it has any business changing.
-    export FORKTOWER_TOWER_LND_API_URL="https://127.0.0.1:${FORKTOWER_TOWER_LND_REST_PORT:-8090}"
-    export FORKTOWER_TOWER_LND_DATA_DIR="${DATA_DIR}/tower"
-    export FORKTOWER_TOWER_LND_TLS_CERT_PATH="${DATA_DIR}/tower/tls.cert"
-    export FORKTOWER_TOWER_LND_MACAROON_PATH="${DATA_DIR}/tower/data/chain/bitcoin/${FORKTOWER_TOWER_LND_NETWORK:-mainnet}/readonly.macaroon"
   fi
 fi
 write_forktower_conf

@@ -16,6 +16,14 @@ export const dashboardPort = 8330
  */
 export const sqPeerPort = 8433
 
+/**
+ * Where the companion watchtower listens for the user's Lightning node.
+ *
+ * 9911 is LND's own default for a watchtower, so somebody reading the address
+ * recognises what it is, and anything else would be a number to explain.
+ */
+export const towerPort = 9911
+
 /** The user's own Bitcoin node. */
 export const bitcoindHost = 'bitcoind.startos'
 export const bitcoindRpcPort = 8332

@@ -31,6 +31,18 @@ export const inputSpec = InputSpec.of({
     },
     default: 'pruned',
   }),
+  towerEnabled: Value.toggle({
+    name: 'Run a watchtower',
+    description:
+      'Runs a watchtower here, watching the other chain, and shows you the ' +
+      'address to register with your Lightning node. A watchtower is what ' +
+      'turns a breach on that chain from something you are told about into ' +
+      'something that gets answered while you are asleep. It holds no keys ' +
+      'and cannot spend anything; it stores encrypted backups your node gives ' +
+      'it, which it cannot read until the moment it needs them. Costs a few ' +
+      'hundred megabytes of memory and up to 2 GB of disk.',
+    default: true,
+  }),
   sqPruneMb: Value.number({
     name: 'Pruned size (MB)',
     description:
