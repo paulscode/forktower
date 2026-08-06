@@ -294,3 +294,86 @@ func TestEveryVerdictExplainsItself(t *testing.T) {
 		}
 	}
 }
+
+// A tower that cannot accept a session must not be reported as a node that has
+// not asked for one.
+//
+// **Measured on real hardware, and the highest-volume complaint this project
+// has had.** A user's lnd dialled the companion tower forty-two times and timed
+// out on every read, reporting zero sessions on all three policy types — while
+// the tower sat at "Waiting for chain backend to finish sync", its own Bitcoin
+// node 2.4% of the way through an initial sync. The verdict blamed the node:
+// "both ends support anchor sessions but the node has not negotiated one with
+// this tower". Nothing about that was the node's doing, and there was nothing
+// the user could act on.
+//
+// This is close to universal on a fresh install, where the second node is
+// always still syncing, and it lasts for days.
+func TestATowerThatCannotServeIsNotReportedAsTheNodesFault(t *testing.T) {
+	t.Parallel()
+	const why = "the tower's own Bitcoin node is still catching up (height 289556), " +
+		"and the tower does not accept sessions or watch for breaches until it has finished"
+
+	got := Assess(Inputs{
+		ChanType:      store.ChanAnchors,
+		TowerVersion:  ParseVersion("0.18.5-beta"),
+		ClientVersion: ParseVersion("0.18.5-beta"),
+		// Long past the grace period, which is the case that used to blame the node.
+		RegisteredForSeconds: GracePeriodSeconds * 20,
+		TowerServing:         false,
+		TowerNotServingWhy:   why,
+	})
+
+	if got.Coverable {
+		t.Error("a channel with no session was reported as covered")
+	}
+	if !got.StillSettling {
+		t.Error("a tower that cannot yet accept a session was reported as a " +
+			"settled failure, which is what put a task in front of the user")
+	}
+	if strings.Contains(got.Reason, "the node has not negotiated") {
+		t.Errorf("the verdict still blames the user's node: %q", got.Reason)
+	}
+	if !strings.Contains(got.Reason, "catching up") {
+		t.Errorf("the verdict does not pass on the tower's own account: %q", got.Reason)
+	}
+	if !strings.Contains(got.Reason, "nothing for you to do") {
+		t.Errorf("the verdict does not say the user has nothing to do: %q", got.Reason)
+	}
+}
+
+// But a tower that is serving, past its grace period, with no session, is still
+// the node's business — that is the case the message was written for.
+func TestAServingTowerWithNoSessionStillNamesTheNode(t *testing.T) {
+	t.Parallel()
+	got := Assess(Inputs{
+		ChanType:             store.ChanAnchors,
+		TowerVersion:         ParseVersion("0.18.5-beta"),
+		ClientVersion:        ParseVersion("0.18.5-beta"),
+		RegisteredForSeconds: GracePeriodSeconds * 20,
+		TowerServing:         true,
+	})
+	if got.StillSettling {
+		t.Error("a serving tower with no session was excused as still settling")
+	}
+	if !strings.Contains(got.Reason, "has not negotiated one") {
+		t.Errorf("the real case no longer says what is wrong: %q", got.Reason)
+	}
+}
+
+// A caller that knows nothing about the tower's condition gets the old
+// behaviour, rather than excusing every missing session forever.
+func TestNoInformationAboutTheTowerDoesNotExcuseTheNode(t *testing.T) {
+	t.Parallel()
+	got := Assess(Inputs{
+		ChanType:             store.ChanAnchors,
+		TowerVersion:         ParseVersion("0.18.5-beta"),
+		ClientVersion:        ParseVersion("0.18.5-beta"),
+		RegisteredForSeconds: GracePeriodSeconds * 20,
+		// TowerServing false and no reason: nothing was reported either way.
+	})
+	if got.StillSettling {
+		t.Error("a missing session was excused on the strength of no evidence " +
+			"at all, which would hide a genuine failure indefinitely")
+	}
+}

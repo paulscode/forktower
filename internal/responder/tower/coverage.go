@@ -177,6 +177,18 @@ type Inputs struct {
 	// negotiated instantly, so a tower registered moments ago with no sessions
 	// is not yet a tower that has failed.
 	RegisteredForSeconds int64
+	// TowerServing says the tower is in a state to accept a session at all.
+	//
+	// **Without this the verdict blamed the wrong end.** A companion tower whose
+	// own Bitcoin node is still doing its initial sync never starts serving —
+	// observed on real hardware, where lnd sat at "Waiting for chain backend to
+	// finish sync" for hours while the user's node dialled it forty-two times
+	// and timed out on every read. There is no session, and the reason has
+	// nothing to do with the user or their node.
+	TowerServing bool
+	// TowerNotServingWhy is the tower's own account of it, shown rather than
+	// paraphrased so it matches what the tower card says a few inches away.
+	TowerNotServingWhy string
 }
 
 // GracePeriodSeconds is how long after registration a tower with no sessions is
@@ -257,6 +269,25 @@ func Assess(in Inputs) Verdict {
 					"which does not accept one",
 				in.ChanType, policy, in.TowerVersion),
 		}
+	// **Only when the tower said why.** The reason is the whole value of this
+	// branch, and requiring it also means the zero value of Inputs behaves as it
+	// did before — a caller that knows nothing about the tower's condition falls
+	// through to the checks below rather than silently excusing every missing
+	// session forever.
+	case !in.TowerServing && in.TowerNotServingWhy != "":
+		// **Ours, not theirs.** Saying "your node has not negotiated one" here
+		// sends somebody to go and fix a setting on a node that is behaving
+		// perfectly — it is dialling on a backoff and being timed out, because
+		// there is nothing on the other end yet.
+		return Verdict{
+			Policy:        policy,
+			StillSettling: true,
+			Reason: "no session yet, and this is not your node's doing: " +
+				in.TowerNotServingWhy + ". Your node is already asking, on a retry, " +
+				"and a session will be agreed on its own once the tower can answer " +
+				"— there is nothing for you to do",
+		}
+
 	case in.RegisteredForSeconds < GracePeriodSeconds:
 		return Verdict{
 			Policy:        policy,

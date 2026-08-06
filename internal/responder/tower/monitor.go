@@ -62,6 +62,11 @@ type Monitor struct {
 	// registeredForSeconds is how long the user's node has known about this
 	// tower. Passed in rather than read from a clock so the decision stays pure.
 	registeredForSeconds int64
+	// towerServing and towerNotServingWhy are the tower's own readiness, so a
+	// tower that cannot accept a session is not reported as a node that has not
+	// asked for one.
+	towerServing       bool
+	towerNotServingWhy string
 	// lowFeeSatPerVByte, when set, is the rate below which a session's baked-in
 	// fee is worth mentioning.
 	lowFeeSatPerVByte uint32
@@ -75,6 +80,11 @@ type MonitorOptions struct {
 	TowerVersion         Version
 	RegisteredForSeconds int64
 	LowFeeSatPerVByte    uint32
+	// TowerServing and TowerNotServingWhy carry the tower's own readiness into
+	// the coverage verdict, so a tower that cannot accept a session yet is not
+	// reported as a node that has not asked for one.
+	TowerServing       bool
+	TowerNotServingWhy string
 }
 
 // NewMonitor builds a Monitor.
@@ -91,6 +101,8 @@ func NewMonitor(opts MonitorOptions) (*Monitor, error) {
 		towerPubkey:          opts.TowerPubkey,
 		towerVersion:         opts.TowerVersion,
 		registeredForSeconds: opts.RegisteredForSeconds,
+		towerServing:         opts.TowerServing,
+		towerNotServingWhy:   opts.TowerNotServingWhy,
 		lowFeeSatPerVByte:    opts.LowFeeSatPerVByte,
 	}, nil
 }
@@ -201,6 +213,8 @@ func (m *Monitor) assessChannels(
 			ClientVersion:        clientVersion,
 			SessionPolicies:      present,
 			RegisteredForSeconds: m.registeredForSeconds,
+			TowerServing:         m.towerServing,
+			TowerNotServingWhy:   m.towerNotServingWhy,
 		})
 
 		figures := held[verdict.Policy]

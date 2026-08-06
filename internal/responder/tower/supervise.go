@@ -199,14 +199,18 @@ func (s *Supervisor) Observe(ctx context.Context) Observation {
 
 	switch {
 	case !chain.SyncedToChain:
-		// Up, listening, and blind. The lookout works from block notifications,
-		// so a tower behind the tip punishes nothing until it catches up — and
-		// it will keep accepting backups the whole time, which is what makes
-		// this worth saying out loud.
+		// **Not serving at all, which is stronger than this used to claim.** The
+		// comment here said the tower keeps accepting backups while it catches
+		// up. It does not: observed on real hardware, lnd sits at "Waiting for
+		// chain backend to finish sync" and never starts its server, so the
+		// watchtower never answers a handshake. The user's node dialled it
+		// forty-two times and timed out on every read, and reported no sessions
+		// on any policy.
 		obs.Health.Status = store.TowerTemporarilyUnreachable
 		obs.Health.Detail = fmt.Sprintf(
-			"the tower is running but its node is still catching up with the "+
-				"chain (height %d), so it would not see a breach yet",
+			"the tower's own Bitcoin node is still catching up (height %d), and "+
+				"the tower does not accept sessions or watch for breaches until it "+
+				"has finished",
 			chain.BlockHeight)
 	case len(identity.URIs) == 0:
 		obs.Health.Status = store.TowerTemporarilyUnreachable

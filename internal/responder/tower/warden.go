@@ -408,6 +408,11 @@ func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) 
 		TowerVersion:         ParseVersion(obs.Chain.Version),
 		RegisteredForSeconds: now - w.firstSeen,
 		LowFeeSatPerVByte:    w.lowFeeSatPerVByte,
+		// The tower's own condition decides whether a missing session is the
+		// user's business at all. A tower whose node is still catching up accepts
+		// nothing, and the user's node is already dialling it on a retry.
+		TowerServing:       obs.Health.Status == store.TowerReachable,
+		TowerNotServingWhy: obs.Health.Detail,
 	})
 	if err != nil {
 		w.log.Error("setting up the coverage check", slog.String("error", err.Error()))
