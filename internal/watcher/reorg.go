@@ -18,12 +18,36 @@ import (
 
 // catchUp handles a tip that does not follow the last block processed.
 //
-// Two situations arrive here and they are answered the same way, because from a
-// standing start they are indistinguishable: the chain grew while nobody was
-// looking, or part of it was replaced. Walking back from the new tip until
-// something recognisable turns up settles which — and the answer is the same
-// walk either way.
+// **The chain growing and the chain being replaced are not indistinguishable,
+// and treating them as though they were was a bug with teeth.** This used to
+// walk back from the new tip until something recognisable turned up, on the
+// reasoning that the walk answers both questions. It does — but only within
+// MaxReorgDepth, which is a hundred blocks, and a node catching up advances
+// thousands between polls. Every poll during an initial sync therefore walked a
+// hundred blocks, found nothing, and reported the other chain as replaced
+// further back than any reorganisation reaches: ninety-six critical alerts on a
+// freshly installed appliance, about a node that was working perfectly.
+//
+// One question separates them and it costs one call. If the block we last
+// processed is still on this chain at the height we processed it, the chain grew
+// and nothing was replaced. Only if that block is gone has anything been
+// rewritten.
 func (w *Watcher) catchUp(ctx context.Context, tip chainview.BlockMeta, last blockRef) {
+	if tip.Height > last.Height {
+		still, err := w.view.BlockHashByHeight(ctx, last.Height)
+		switch {
+		case err != nil:
+			// Cannot tell. Fall through to the walk, which is the cautious
+			// answer: it may conclude the chain was replaced, and stopping on a
+			// chain we cannot ask about is the right way to be wrong.
+			w.log.Debug("could not confirm the last block is still on the other chain",
+				slog.Int("height", int(last.Height)), slog.String("error", err.Error()))
+		case still == last.Hash:
+			w.grewForward(ctx, tip, last)
+			return
+		}
+	}
+
 	path, attach, err := w.walkBack(ctx, tip, last)
 	if err != nil {
 		w.stall(ctx, tip.Height, err)
@@ -39,6 +63,49 @@ func (w *Watcher) catchUp(ctx context.Context, tip chainview.BlockMeta, last blo
 			slog.Int("from_height", int(last.Height)),
 			slog.Int("back_to_height", int(attach.Height)))
 	}
+
+	w.processTo(ctx, path)
+}
+
+// grewForward advances the mark over blocks that were simply appended.
+//
+// A short gap is read block by block, because those blocks may contain spends of
+// the user's channels and that is the whole job.
+//
+// A long one is not. **Re-anchoring at the tip is the same decision this watcher
+// already makes the first time it ever sees the chain**, and for the same
+// reason: sweeping history is the rescan's job, and the rescan knows where to
+// start because it is anchored on the fork point rather than on whenever the
+// daemon happened to be looking. Reading a quarter of a million blocks one at a
+// time to reach the present would delay watching the present indefinitely.
+func (w *Watcher) grewForward(ctx context.Context, tip chainview.BlockMeta, last blockRef) {
+	gap := tip.Height - last.Height
+
+	if gap > w.cfg.MaxForwardGap {
+		w.commitMark(ctx, blockRef{Height: tip.Height, Hash: tip.Hash})
+		w.log.Info("the other chain moved on faster than it was being read, so "+
+			"reading has resumed at its tip — earlier blocks are the rescan's, and "+
+			"it starts from where the chains part rather than from here",
+			slog.Int("was_at_height", int(last.Height)),
+			slog.Int("now_at_height", int(tip.Height)))
+		return
+	}
+
+	path := make([]chainview.BlockMeta, 0, gap)
+	for height := last.Height + 1; height < tip.Height; height++ {
+		hash, err := w.view.BlockHashByHeight(ctx, height)
+		if err != nil {
+			w.stall(ctx, height, fmt.Errorf("reading the other chain forward: %w", err))
+			return
+		}
+		header, err := w.view.BlockHeaderByHash(ctx, hash)
+		if err != nil {
+			w.stall(ctx, height, fmt.Errorf("reading the other chain forward: %w", err))
+			return
+		}
+		path = append(path, header)
+	}
+	path = append(path, tip)
 
 	w.processTo(ctx, path)
 }
@@ -505,8 +572,12 @@ func (w *Watcher) deepReorg(ctx context.Context, tip chainview.BlockMeta, last b
 		slog.Int("was_at_height", int(last.Height)),
 		slog.Int("now_at_height", int(tip.Height)))
 
-	w.raise(ctx, store.TierCritical, DeepReorgAlertKind,
-		fmt.Sprintf("%s:%d", DeepReorgAlertKind, tip.Height),
+	// **A stable key, not one per height.** This carried the tip's height, so a
+	// condition that recurred at a moving height minted a fresh critical alert
+	// every time instead of collapsing into one. What the user needs to know is
+	// that scanning has stopped — once, loudly — not the height it was at on
+	// each of ninety-six occasions.
+	w.raise(ctx, store.TierCritical, DeepReorgAlertKind, DeepReorgAlertKind,
 		"Forktower stopped watching the other chain",
 		"The other chain changed further back than a normal reorganisation reaches. "+
 			"Forktower has stopped scanning it rather than risk reporting on the wrong "+

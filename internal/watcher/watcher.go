@@ -27,6 +27,16 @@ const (
 	// chain that replaces that much is either under an attack this daemon cannot
 	// help with, or is not the chain we think we are watching.
 	DefaultMaxReorgDepth = 100
+
+	// DefaultMaxForwardGap is how far the chain may run ahead of the reader
+	// before the reader gives up following it block by block and re-anchors at
+	// the tip.
+	//
+	// Generous enough that an ordinary outage — a restart, a slow minute — is
+	// read properly rather than skipped, and small enough that a node catching
+	// up from nothing does not have a quarter of a million blocks walked one at
+	// a time before it can watch anything current.
+	DefaultMaxForwardGap = 2000
 	// DefaultBlockAttempts is how many times one block is retried before the
 	// watcher declares itself stuck. Bounded on purpose: the high-water mark only
 	// advances after a block commits, so a block that fails forever freezes
@@ -64,11 +74,17 @@ type Guard interface {
 // Config tunes the watcher. Zero values take the defaults above.
 type Config struct {
 	MaxReorgDepth int32
+	// MaxForwardGap bounds how far behind the reader may fall and still catch up
+	// block by block. Zero uses DefaultMaxForwardGap.
+	MaxForwardGap int32
 	BlockAttempts int
 	RetryDelay    time.Duration
 }
 
 func (c Config) withDefaults() Config {
+	if c.MaxForwardGap <= 0 {
+		c.MaxForwardGap = DefaultMaxForwardGap
+	}
 	if c.MaxReorgDepth <= 0 {
 		c.MaxReorgDepth = DefaultMaxReorgDepth
 	}

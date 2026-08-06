@@ -546,11 +546,19 @@ func TestDefaultsAreApplied(t *testing.T) {
 
 	got := Config{}.withDefaults()
 	if got.MaxReorgDepth != DefaultMaxReorgDepth ||
+		got.MaxForwardGap != DefaultMaxForwardGap ||
 		got.BlockAttempts != DefaultBlockAttempts ||
 		got.RetryDelay != DefaultRetryDelay {
 		t.Errorf("got %+v", got)
 	}
-	set := Config{MaxReorgDepth: 5, BlockAttempts: 2, RetryDelay: time.Second}
+	// Every field, so that a setting added later has to be defaulted on purpose
+	// rather than discovered missing. This test caught MaxForwardGap the moment
+	// it existed, which is the whole point of comparing the struct rather than
+	// the fields somebody remembered.
+	set := Config{
+		MaxReorgDepth: 5, MaxForwardGap: 7, BlockAttempts: 2,
+		RetryDelay: time.Second,
+	}
 	if set.withDefaults() != set {
 		t.Error("explicit settings were overwritten")
 	}
@@ -1092,6 +1100,87 @@ func TestOurOwnCommitmentKeepsItsLabelEvenWhenAnswered(t *testing.T) {
 		if sp.SpendTxID == commitment.TxHash().String() &&
 			sp.Shape != store.ShapeCommitmentOurs {
 			t.Errorf("our own commitment was relabelled %q", sp.Shape)
+		}
+	}
+}
+
+// A chain racing ahead is not a chain that was replaced.
+//
+// **This is the bug that put ninety-six critical alerts on a freshly installed
+// appliance.** The watcher anchors at whatever the node's tip is the first time
+// it looks, and a node doing its initial sync then advances thousands of blocks
+// between polls. The new tip never followed the last one directly, so every poll
+// walked back as far as MaxReorgDepth allows, recognised nothing, and reported
+// the other chain as replaced further back than any reorganisation reaches —
+// about a node that was working perfectly and simply moving faster than it was
+// being read.
+//
+// The two are separable by one question: is the block we last processed still on
+// this chain at the height we processed it?
+func TestAChainRacingAheadIsNotReportedAsReplaced(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, func(c *Config) {
+		c.MaxReorgDepth = 3
+		c.MaxForwardGap = 10_000
+	})
+	addChannel(t, h.store, fundingA, store.Relevant)
+	h.run()
+
+	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
+
+	// Far beyond the reorg depth, every block extending the same chain.
+	h.view.Extend("catching-up", 500)
+
+	h.waitFor("the reader to follow", func() bool {
+		return h.w.Progress().Height >= 500 || h.w.Progress().Stalled
+	})
+
+	if h.w.Progress().Stalled {
+		t.Error("the watcher stopped scanning a chain that had only grown")
+	}
+
+	alerts, err := h.store.ListAlerts(context.Background(), store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range alerts {
+		if a.Kind == DeepReorgAlertKind {
+			t.Fatalf("a chain that grew by 500 blocks was reported as replaced: %s",
+				a.Message)
+		}
+	}
+}
+
+// A chain that outruns the reader entirely is followed from its tip rather than
+// walked to it.
+//
+// Reading a quarter of a million blocks one at a time to reach the present would
+// delay watching the present indefinitely, which is the opposite of the point.
+// Sweeping history is the rescan's job and it starts from where the chains part.
+func TestAChainThatOutrunsTheReaderIsRejoinedAtItsTip(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, func(c *Config) {
+		c.MaxReorgDepth = 3
+		c.MaxForwardGap = 50
+	})
+	h.run()
+
+	h.waitFor("the starting point", func() bool { return h.w.Progress().Height > 0 })
+
+	h.view.Extend("initial-sync", 400)
+
+	h.waitFor("the reader to rejoin", func() bool { return h.w.Progress().Height >= 400 })
+
+	if h.w.Progress().Stalled {
+		t.Error("the watcher stalled on a chain that had simply outrun it")
+	}
+	alerts, err := h.store.ListAlerts(context.Background(), store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range alerts {
+		if a.Kind == DeepReorgAlertKind {
+			t.Fatal("rejoining a fast chain was reported as a replaced chain")
 		}
 	}
 }
