@@ -6,7 +6,7 @@
  * binary inside the first packed s9pk reported itself as `dev` — which would
  * have been the version a user quoted in a bug report.
  */
-export const appVersion = '0.6.2'
+export const appVersion = '0.6.3'
 
 /**
  * The StartOS package revision.
