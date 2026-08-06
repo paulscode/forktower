@@ -211,6 +211,15 @@ func (r *Runner) Start(ctx context.Context) error {
 		r.failedAt = time.Time{}
 	}
 	r.armed = true
+	// **Moved now rather than at the next tick.** The API answers a start
+	// request with the current view, and the phase is otherwise still whatever
+	// it was — so somebody who pressed "Use the faster sync" got a reply still
+	// offering it, and the button stayed until the next poll. The loop
+	// recomputes this immediately and will correct it if the assessment has
+	// changed underneath; what it cannot do is un-press the button.
+	if r.state.Phase == PhaseOffered || r.state.Phase == PhaseFailed {
+		r.state.Phase = PhaseDownloading
+	}
 	r.mu.Unlock()
 
 	if !already {

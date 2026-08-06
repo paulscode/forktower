@@ -656,3 +656,25 @@ func TestAnExplicitRetryDoesNotWaitOutTheBackoff(t *testing.T) {
 		t.Errorf("an explicit retry did not restart the transfer (%d loads)", node.loads())
 	}
 }
+
+// Pressing the button changes what the button says.
+//
+// The API answers a start request with the current view. Without this the reply
+// still offered the shortcut the user had just accepted, and the dashboard kept
+// showing "Use the faster sync" until its next poll — which reads as a click
+// that did not register, and invites a second one.
+func TestAcceptingTheOfferIsReflectedImmediately(t *testing.T) {
+	r := newRunner(t, behindNode(), newJournal(), Config{})
+	r.step(context.Background())
+	if got := r.State().Phase; got != PhaseOffered {
+		t.Fatalf("phase = %q before accepting, want %q", got, PhaseOffered)
+	}
+
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.State().Phase; got != PhaseDownloading {
+		t.Errorf("phase = %q straight after accepting, want %q — the reply to the "+
+			"click still offers what was just accepted", got, PhaseDownloading)
+	}
+}
