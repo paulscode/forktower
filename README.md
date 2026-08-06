@@ -20,7 +20,7 @@ how long you have to respond.
 >
 > If you are deciding what to do about your channels before the RDTS activation,
 > read [Lightning channels and the RDTS activation](docs/lightning-and-the-rdts-activation.md)
-> first — the decisions available to you this week need none of this software.
+> first — some of the options available to you do not require this software.
 
 ## The problem, briefly
 
@@ -38,6 +38,18 @@ channel still appears open and healthy. If your chain is later abandoned, you
 find out after the window has closed. If it persists, nothing happened and they
 lost nothing by trying. That asymmetry is the problem: during a split, publishing
 a revoked state stops being a gamble and becomes a free option.
+
+```
+                              the chains separate
+                                       │
+  your node’s chain  ──────────────────┼───────────────────────────────────►
+  you see this                         │     the channel still looks open here
+                                       │
+  the other chain                      ┼───────●───────────────────✗───────►
+  you see none of it                           │                   │
+                                       partner publishes    the window closes,
+                                       a revoked state      balance is theirs
+```
 
 ## What Forktower does about it
 
