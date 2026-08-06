@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -295,11 +297,56 @@ func (w *Warden) firstSeenOf(ctx context.Context, id, now int64) int64 {
 // uriOf prefers the address the tower reports over the one configured, because
 // the tower knows where it actually ended up and a Tor address is published by
 // the tower rather than written down in advance.
+// uriOf is the address a user should paste into their own node.
+//
+// **What the tower reports wins, unless it has resolved a name into an
+// address.** Those are two different situations and the earlier version of this
+// only handled one of them.
+//
+// A Tor onion is created by the tower and cannot be written down in advance, so
+// asking it is the only way to know — that is the ordinary case and it still
+// takes precedence.
+//
+// But LND resolves `watchtower.externalip` at startup and advertises the
+// result. Configured with a hostname, it reports back an address, and on a
+// container platform that address comes from a pool and changes when the
+// container is rebuilt. Measured on StartOS 0.4.0.1: configured
+// `forktower.startos:9911`, advertised `10.0.3.76:9911`. Somebody who pasted
+// the second would have a registration that silently stopped working, with the
+// tower still healthy and nothing anywhere saying why.
+//
+// So a bare address loses to a name we configured, and nothing else changes.
 func (w *Warden) uriOf(obs Observation) string {
+	reported := ""
 	if len(obs.Identity.URIs) > 0 {
-		return obs.Identity.URIs[0]
+		reported = obs.Identity.URIs[0]
 	}
-	return w.uri
+	if reported == "" {
+		return w.uri
+	}
+	if w.uri != "" && isBareAddress(reported) && !isBareAddress(w.uri) {
+		if pubkey := obs.Identity.Pubkey; pubkey != "" {
+			return pubkey + "@" + w.uri
+		}
+		return w.uri
+	}
+	return reported
+}
+
+// isBareAddress reports whether a tower address names a host by number.
+//
+// A number is a fact about where something is now. A name is a fact about what
+// it is, and only one of those survives a container being rebuilt.
+func isBareAddress(uri string) bool {
+	hostPort := uri
+	if _, after, found := strings.Cut(uri, "@"); found {
+		hostPort = after
+	}
+	host := hostPort
+	if h, _, err := net.SplitHostPort(hostPort); err == nil {
+		host = h
+	}
+	return net.ParseIP(strings.TrimSpace(host)) != nil
 }
 
 // announceHealth publishes a change, and only a change.

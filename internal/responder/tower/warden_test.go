@@ -513,3 +513,61 @@ func TestATowerThatNeverAnsweredIsStillAnnounced(t *testing.T) {
 		t.Error("nothing was said about why it is not answering")
 	}
 }
+
+// The address a user pastes has to be one that keeps working.
+//
+// LND resolves `watchtower.externalip` at startup and advertises the result, so
+// a tower configured with a hostname reports back an address. On a container
+// platform that address comes from a pool and changes when the container is
+// rebuilt — measured on StartOS: configured `forktower.startos:9911`,
+// advertised `10.0.3.76:9911`. A user who pasted the second would have a
+// registration that silently stopped working, with the tower still healthy and
+// nothing saying why.
+func TestAResolvedAddressLosesToTheNameItWasResolvedFrom(t *testing.T) {
+	t.Parallel()
+	const pubkey = "021089ec2bfcec440e12d9cfc64f8815191c1d0ff1b6a2f97e3eb6580ce8f87809"
+
+	w := &Warden{managed: true, uri: "forktower.startos:9911"}
+	got := w.uriOf(Observation{Identity: Identity{
+		Pubkey: pubkey,
+		URIs:   []string{pubkey + "@10.0.3.76:9911"},
+	}})
+	if want := pubkey + "@forktower.startos:9911"; got != want {
+		t.Errorf("uriOf = %q, want %q — an address from a container pool stops "+
+			"working the next time the container is rebuilt", got, want)
+	}
+}
+
+// An onion still wins, because the tower creates it and nobody could have
+// written it down in advance. That is the ordinary case and this must not have
+// broken it.
+func TestAPublishedOnionStillBeatsTheConfiguredAddress(t *testing.T) {
+	t.Parallel()
+	const pubkey = "03aaaa"
+
+	w := &Warden{managed: true, uri: "forktower.startos:9911"}
+	got := w.uriOf(Observation{Identity: Identity{
+		Pubkey: pubkey,
+		URIs:   []string{pubkey + "@abcdefg.onion:9911"},
+	}})
+	if want := pubkey + "@abcdefg.onion:9911"; got != want {
+		t.Errorf("uriOf = %q, want the published onion %q", got, want)
+	}
+}
+
+func TestNameOrNumberIsToldApart(t *testing.T) {
+	t.Parallel()
+	for uri, want := range map[string]bool{
+		"03aa@10.0.3.76:9911":         true,
+		"10.0.3.76:9911":              true,
+		"03aa@[2001:db8::1]:9911":     true,
+		"03aa@forktower.startos:9911": false,
+		"03aa@abcdefg.onion:9911":     false,
+		"forktower.startos:9911":      false,
+		"":                            false,
+	} {
+		if got := isBareAddress(uri); got != want {
+			t.Errorf("isBareAddress(%q) = %v, want %v", uri, got, want)
+		}
+	}
+}
