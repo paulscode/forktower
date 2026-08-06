@@ -197,7 +197,7 @@ func (w *Watcher) processTo(ctx context.Context, path []chainview.BlockMeta) {
 		}
 		w.commitMark(ctx, blockRef{Height: meta.Height, Hash: meta.Hash})
 	}
-	w.clearStall()
+	w.clearStall(ctx)
 }
 
 // processWithRetries gives one block a bounded number of attempts.
@@ -620,15 +620,64 @@ func (w *Watcher) stall(ctx context.Context, height int32, cause error) {
 			"needs saying: everything else will look normal.")
 }
 
-func (w *Watcher) clearStall() {
+// clearStall records that scanning is getting somewhere again, and says so.
+//
+// **Neither of these alerts had a resolution, which is why an old one could sit
+// on a dashboard for ever.** Both say scanning has stopped; nothing said it had
+// resumed, so the entry stayed critical and unacknowledged long after the
+// condition passed — including where the reason it was raised turned out to be a
+// defect rather than anything about the chain.
+//
+// Resolving it here is truthful whatever the original cause was, which is the
+// point: this does not claim the earlier alert was mistaken, only that Forktower
+// is reading the chain again now. A genuine deep reorganisation gets the same
+// sentence, and deserves it.
+func (w *Watcher) clearStall(ctx context.Context) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.progress.Stalled {
-		w.log.Info("scanning the other chain is making progress again")
-	}
+	was := w.progress.Stalled
 	w.progress.Stalled = false
 	w.progress.StalledAt = 0
 	w.progress.Why = ""
+	w.mu.Unlock()
+
+	if !was {
+		return
+	}
+	w.log.Info("scanning the other chain is making progress again")
+	w.resolve(ctx, StalledAlertKind,
+		"Forktower is reading the other chain again",
+		"Whatever stopped it has passed, and blocks are being checked again.")
+	w.resolve(ctx, DeepReorgAlertKind,
+		"Forktower is watching the other chain again",
+		"It has confirmed which chain that backend is following, and is reading "+
+			"it again. Anything reported while it was stopped stands as a record of "+
+			"what was seen at the time.")
+}
+
+// resolve closes one of this watcher's alerts, if it is standing.
+//
+// Close-only: no thread, nothing to say. Relief from a problem the user never
+// had is not news, and announcing it on every restart would teach them the list
+// is decorative.
+func (w *Watcher) resolve(ctx context.Context, kind, subject, msg string) {
+	wctx, cancel := writeCtx(ctx)
+	defer cancel()
+
+	now := w.now().Unix()
+	id, err := w.store.ResolveAlert(wctx, store.Alert{
+		Tier: store.TierResolved, Kind: kind, DedupKey: kind,
+		Subject: subject, Message: msg, CreatedAt: now, LastRaisedAt: now,
+	})
+	if err != nil {
+		w.log.Error("could not close an alert", slog.String("error", err.Error()))
+		return
+	}
+	if id != 0 {
+		w.bus.Publish(bus.AlertRaised{
+			AlertID: id, Tier: string(store.TierResolved), AlertKind: kind,
+			DedupKey: kind, Message: msg,
+		})
+	}
 }
 
 // raise records an alert. Best effort: an alert that cannot be stored is still

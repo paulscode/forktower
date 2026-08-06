@@ -1400,3 +1400,63 @@ func TestAScanPositionFromAnotherChainstateIsDiscarded(t *testing.T) {
 		}
 	}
 }
+
+// Scanning resuming closes the alert that said it had stopped.
+//
+// **Neither watcher alert had a resolution.** Both say scanning has stopped;
+// nothing said it had started again, so an entry stayed critical and
+// unacknowledged long after the condition passed. That is how one install ended
+// up holding a red "Forktower stopped watching the other chain" raised by a
+// defect that had since been fixed, with no way to be rid of it but dismissal.
+func TestScanningResumingClosesTheAlertThatSaidItHadStopped(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	ctx := context.Background()
+
+	// Both conditions standing, as an upgraded install would find them.
+	h.w.stall(ctx, 500, errors.New("could not read the block"))
+	h.w.raise(ctx, store.TierCritical, DeepReorgAlertKind, DeepReorgAlertKind,
+		"Forktower stopped watching the other chain", "The other chain changed.")
+	h.w.mu.Lock()
+	h.w.progress.Stalled = true
+	h.w.mu.Unlock()
+
+	h.w.clearStall(ctx)
+
+	alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range alerts {
+		if a.Tier == store.TierResolved {
+			continue
+		}
+		t.Errorf("%q is still standing at %s after scanning resumed", a.Subject, a.Tier)
+	}
+	if len(alerts) != 2 {
+		t.Errorf("%d entries, want the two that turned over rather than copies", len(alerts))
+	}
+	// A resolution that is over must not go on asking to be dismissed.
+	for _, a := range alerts {
+		if a.AckedAt == 0 {
+			t.Errorf("%q came back needing dismissal", a.Subject)
+		}
+	}
+}
+
+// But relief from something that never happened is not news.
+func TestResumingSaysNothingWhenNothingHadStopped(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	ctx := context.Background()
+
+	h.w.clearStall(ctx)
+
+	alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alerts) != 0 {
+		t.Errorf("%d entries announcing recovery from a problem nobody had", len(alerts))
+	}
+}
