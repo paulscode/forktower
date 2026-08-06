@@ -11,10 +11,12 @@ chains, your Lightning node can only see one of them. Forktower watches the othe
 one on your behalf, tells you if a channel is being closed there, and works out
 how long you have to respond.
 
-> **Status: first release (0.6.0), and a beta.** It detects a split, reports what
-> it means for your channels, and has been run end to end against real nodes on
-> real hardware. Nobody outside this project has installed it yet, and it has not
-> had a third-party security review.
+> **Status: first release (0.6.0), and a beta.** It watches the chain your node
+> cannot see, tells you which channels a split puts at risk and how long you
+> have, and — with a watchtower registered — gets a breach there answered rather
+> than only reported. It has been run end to end against real nodes on real
+> hardware. Nobody outside this project has installed it yet, and it has not had
+> a third-party security review.
 >
 > If you are deciding what to do about your channels before the RDTS activation,
 > read [Lightning channels and the RDTS activation](docs/lightning-and-the-rdts-activation.md)
@@ -43,10 +45,16 @@ a revoked state stops being a gamble and becomes a free option.
   channels' funding outputs there.
 - **Works out how long you have** for each one, in time rather than block counts,
   and escalates as the window closes.
-- **Drives a watchtower** with a view of that chain, so the penalty transaction
-  can be published where it is needed.
-- **Mirrors transactions** that are valid on both chains, so your cooperative
-  closes and sweeps exist wherever they can.
+- **Watches the watchtower** that has a view of that chain — the thing that
+  actually publishes the penalty transaction — and says so when it has stopped
+  working, because a tower that has quietly failed looks exactly like one that
+  has not. Forktower does not run or register it; it checks that your node is
+  really backing up to it, and which channels are covered.
+- **Copies your own transactions across**, so cooperative closes and sweeps exist
+  wherever they can — including a justice transaction your node has already
+  published, which then punishes the same breach on the chain nobody was
+  watching. It only ever forwards bytes that already exist, signed by somebody
+  else; it builds nothing.
 - **Tells you, loudly**, through your node appliance's own notifications or a
   channel of your choosing — and tests that the alarm works, because an untested
   alarm is not one.

@@ -10,11 +10,16 @@ should trust.
 
 Forktower never holds your channel keys, seed, or any spend-capable credential.
 It watches the chain your Bitcoin node is not following, detects spends of your
-channels' funding outputs there, computes how long you have before a delay
-expires, and drives an existing watchtower — which holds pre-signed penalty data,
-not keys — to publish on that chain. It is an observer, an alarm, and an
-orchestrator. That design is why the limits below exist: most of them are the
-price of not being able to spend your money.
+channels' funding outputs there, and computes how long you have before a delay
+expires. What actually publishes a penalty on that chain is a watchtower you have
+registered — which holds pre-signed penalty data, not keys — and Forktower's part
+is to watch that tower closely enough to tell you when it has stopped doing its
+job.
+
+It is an observer, an alarm, and a courier: the only bytes it ever broadcasts are
+bytes somebody else already signed, copied from one chain to the other unchanged.
+That design is why the limits below exist: most of them are the price of not
+being able to spend your money.
 
 ## Limits that come from the watchtower model
 

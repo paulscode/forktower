@@ -143,15 +143,16 @@ to your counterparties', not by your version string.
 
 ## Where Forktower fits
 
-Forktower is being built for exactly this problem: watch the chain your node
-cannot see, detect spends of your channels' funding outputs there, compute how
-long you have, and drive a watchtower that can publish the penalty transaction on
-that chain.
+Forktower is built for exactly this problem: watch the chain your node cannot
+see, detect spends of your channels' funding outputs there, compute how long you
+have, and make sure a watchtower with a view of that chain is in a position to
+publish the penalty transaction — and say so when it is not.
 
-**It is not ready, and it will not be ready before block 961,632.** Saying so
-plainly is more useful to you than a rushed release would be. If you are reading
+**There is a first release, and it is a beta.** Nobody outside the project has
+installed it, and it has had no third-party security review. If you are reading
 this before the window opens, the decisions above are the ones available to you,
-and none of them requires our software.
+they are the ones with the least that can go wrong, and none of them requires our
+software. Treat Forktower as something to add to a plan, not as the plan.
 
 Forktower is deliberately neutral about the outcome. It watches whichever chain
 your node is not following, and it protects you on whichever chain survives. If
