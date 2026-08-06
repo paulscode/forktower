@@ -5,14 +5,18 @@ export const current = VersionInfo.of({
   version: `${appVersion}:${packageRevision}`,
   releaseNotes: {
     en_US:
-      'Fixes found by running 0.6.0 on real hardware. On StartOS 0.3.5.1 ' +
-      'Forktower could not authenticate to your Bitcoin node at all, so it ' +
-      'never started and its dashboard was never served — that is fixed. A ' +
-      'second node still syncing is no longer reported as a chain that was ' +
-      'replaced, which was raising a critical alert on every poll. A ' +
-      'watchtower that is starting up, or whose own node is still catching ' +
-      'up, is no longer described as having stopped answering. And where the ' +
-      'dashboard asks you to set up notifications, it now says where to do it.',
+      'Fixes for Forktower describing its own state wrongly after you have ' +
+      'acted on it. Nothing on the dashboard could close a warning: a ' +
+      'watchtower that came back, a chain that could be seen again, or a ' +
+      'notification path that started working each recorded the good news as ' +
+      'a fresh copy of the bad news, and un-dismissed the warning you had ' +
+      'already read — so changing a setting on your own node appeared to do ' +
+      'nothing. A fresh install no longer reports that no watchtower is ' +
+      'protecting your channels while Forktower\'s own watchtower is still ' +
+      'starting. The setup directions now give the steps in an order that can ' +
+      'actually be carried out. And the faster first sync says how long your ' +
+      'node has been reading instead of showing the same sentence for half an ' +
+      'hour.',
   },
   migrations: {
     up: async ({ effects }) => {},
