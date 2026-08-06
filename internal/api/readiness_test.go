@@ -483,3 +483,55 @@ func TestTheCountdownCheckSaysWhatIsBeingCountedOn(t *testing.T) {
 		}
 	})
 }
+
+// A Lightning node that has not been read yet is not one that cannot be read.
+//
+// **Found sweeping for the mistake that produced 0.6.2 and 0.6.3.** The registry
+// hands back one health entry per configured node, zero-valued until the first
+// poll finishes — and a zero LastSuccessAt reads as stale, which readiness
+// reports as "Cannot read your Lightning node". Not informational: a blocking
+// failure, red on the dashboard, from the moment the app starts until the first
+// poll returns. On a fresh install where lnd is itself still coming up, that is
+// the whole of the user's first impression.
+//
+// The zero value carries no name either, so the sentence naming what cannot be
+// seen had a hole in it.
+func TestALightningNodeNotYetReadIsNotOneThatCannotBeRead(t *testing.T) {
+	h := newHarness(t, nil)
+
+	// Configured, and the first poll has not come back. This is what the
+	// registry returns in that window.
+	h.ln.set([]registry.SourceHealth{{Name: "lnd-1"}})
+
+	item := findCheck(t, h.srv.Readiness(context.Background()), CheckLNConnected)
+	if !item.OK && !item.informational {
+		t.Errorf("a node that has not been polled yet was reported as a blocking "+
+			"failure: %q — %q", item.Label, item.Why)
+	}
+	if strings.Contains(item.Why, "see , ") || strings.Contains(item.Why, "see  ") {
+		t.Errorf("the sentence names nothing where a node's name belongs: %q", item.Why)
+	}
+	if !waitingOn(item) {
+		t.Error("a first poll that has not returned was presented as a task")
+	}
+}
+
+// But one that has been tried and failed is a real problem, and says why.
+func TestALightningNodeThatWasTriedAndFailedIsReported(t *testing.T) {
+	h := newHarness(t, nil)
+	h.ln.set([]registry.SourceHealth{{
+		Name: "lnd-1", LastError: "connection refused",
+	}})
+
+	item := findCheck(t, h.srv.Readiness(context.Background()), CheckLNConnected)
+	if item.OK {
+		t.Fatal("a node that has never answered was reported as readable")
+	}
+	if waitingOn(item) {
+		t.Error("a node that is refusing connections was presented as something " +
+			"that resolves itself")
+	}
+	if !strings.Contains(item.Detail, "connection refused") {
+		t.Errorf("the node's own account of the failure is not shown: %q", item.Detail)
+	}
+}

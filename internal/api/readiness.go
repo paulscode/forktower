@@ -527,6 +527,15 @@ func (s *Server) transportHealth(ctx context.Context) (tested bool, failing []st
 	return true, failing
 }
 
+// firstNonBlank keeps the first account of a failure, so a detail line says
+// something rather than the last empty string to come past.
+func firstNonBlank(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
 func humanList(items []string) string {
 	switch len(items) {
 	case 0:
@@ -746,11 +755,47 @@ func (s *Server) checkLNConnected() ReadinessItem {
 		return s.noLightningConfigured()
 	}
 
+	// **Three states, not two.** A node that has never been read, one that has
+	// been tried and refused, and one that answered earlier and has since gone
+	// quiet are different situations with different remedies, and Stale reports
+	// all three as stale because it only knows about the last success.
+	//
+	// Collapsing them meant every fresh start opened on "Cannot read your
+	// Lightning node" — a blocking failure, red, before the first poll had had a
+	// chance to return. On an install where lnd is itself still coming up that
+	// is the user's whole first impression of the software, and it is wrong.
 	now := s.now().Unix()
-	var stale []string
+	var stale, connecting, refused []string
+	var reason string
 	for _, h := range health {
-		if h.Stale(now, LNStaleAfter) {
+		switch {
+		case h.LastSuccessAt == 0 && h.LastError == "":
+			connecting = append(connecting, h.Name)
+		case h.LastSuccessAt == 0:
+			refused = append(refused, h.Name)
+			reason = firstNonBlank(reason, h.LastError)
+		case h.Stale(now, LNStaleAfter):
 			stale = append(stale, h.Name)
+			reason = firstNonBlank(reason, h.LastError)
+		}
+	}
+	if len(refused) > 0 {
+		return ReadinessItem{
+			ID: CheckLNConnected, OK: false,
+			Label: "Cannot reach your Lightning node",
+			Why: "Forktower has not managed to read " + humanList(refused) +
+				" yet, so it does not know which of your channels exist. It is " +
+				"still watching both chains in the meantime.",
+			Detail: reason,
+		}
+	}
+	if len(stale) == 0 && len(connecting) > 0 {
+		return ReadinessItem{
+			ID: CheckLNConnected, OK: false,
+			informational: true, settling: true,
+			Label: "Reading your Lightning node",
+			Why: "Forktower is asking " + humanList(connecting) + " which channels " +
+				"you have. Nothing to do — this finishes on its own.",
 		}
 	}
 	if len(stale) == 0 {

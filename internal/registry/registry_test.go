@@ -1163,3 +1163,31 @@ func TestAZeroDelayIsNotTreatedAsAnAnswer(t *testing.T) {
 }
 
 func ptr32(v int32) *int32 { return &v }
+
+// A node reports its name before it has ever been read.
+//
+// **Found sweeping for the "not yet" mistake.** Health builds one entry per
+// configured node from a map that is empty until the first poll finishes, and
+// the zero value carried no name — so a caller listing the nodes it could not
+// see wrote a sentence with a hole where the name belonged. The dashboard did
+// exactly that, on every fresh start.
+func TestAnUnpolledNodeStillReportsItsName(t *testing.T) {
+	t.Parallel()
+	node := &fakeNode{snap: snapshotWith(record(fundingA, nil))}
+	h := newHarness(t, []Source{{Name: "lnd-1", Client: node}}, nil)
+
+	// Deliberately not run: this is the state before the first poll returns.
+	got := h.reg.Health()
+	if len(got) == 0 {
+		t.Fatal("a configured node reported no health entry at all")
+	}
+	for _, hh := range got {
+		if hh.Name == "" {
+			t.Error("a node that has not been polled yet reports no name, so " +
+				"anything naming it has a blank where the name should be")
+		}
+		if hh.LastSuccessAt != 0 {
+			t.Error("an unpolled node claims to have been read successfully")
+		}
+	}
+}

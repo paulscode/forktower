@@ -229,7 +229,13 @@ func (r *Registry) Health() []SourceHealth {
 
 	out := make([]SourceHealth, 0, len(r.sources))
 	for _, s := range r.sources {
-		out = append(out, r.health[s.Name])
+		// **Named even when nothing has been recorded for it.** Until the first
+		// poll finishes there is no entry, and the zero value carried no name —
+		// so a caller listing the nodes it cannot see produced a sentence with a
+		// hole where the name belonged.
+		h := r.health[s.Name]
+		h.Name = s.Name
+		out = append(out, h)
 	}
 	return out
 }
