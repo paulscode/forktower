@@ -2,6 +2,7 @@ package alert
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/paulscode/forktower/internal/bus"
 	"github.com/paulscode/forktower/internal/responder/tower"
@@ -235,7 +236,37 @@ func detailSentence(detail string) string {
 	if detail == "" {
 		return ""
 	}
-	return "What Forktower saw: " + detail + "."
+	return "What Forktower saw: " + tidyDetail(detail) + "."
+}
+
+// tidyDetail trims a machine's answer down to the part a person can act on.
+//
+// **What arrived here was a sentence with an HTTP status, a JSON body and a gRPC
+// code embedded in it**, wrapped in prose about a broken promise. All of it is
+// true and almost none of it helps: the reader wants to know whether their
+// protection is gone, and is instead handed `{"code":2, "message":"...",
+// "details":[]}` to interpret.
+//
+// The useful part of these is the message a server wrote for a human, which is
+// exactly the part buried deepest. Where one can be recovered it is used, and
+// where it cannot the original is left alone rather than mangled — a detail
+// nobody can read beats a detail this turned into nonsense.
+func tidyDetail(detail string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(detail), ".")
+
+	// A JSON body with a "message" field, which is how gRPC-gateway reports a
+	// refusal. Everything around it is transport bookkeeping.
+	if start := strings.Index(trimmed, `"message":`); start >= 0 {
+		rest := trimmed[start+len(`"message":`):]
+		if open := strings.Index(rest, `"`); open >= 0 {
+			if end := strings.Index(rest[open+1:], `"`); end > 0 {
+				if msg := strings.TrimSpace(rest[open+1 : open+1+end]); msg != "" {
+					return strings.TrimRight(msg, ".")
+				}
+			}
+		}
+	}
+	return trimmed
 }
 
 // neverReachable reports whether a tower has yet been seen working.

@@ -28,6 +28,21 @@ import (
 // `ErrWtclientNotActive` answers the matching question about the user's node.
 const notActiveMarker = "watchtower not active"
 
+// startingMarker is what LND says while it is coming up.
+//
+// **It is telling us plainly that it is starting, and we were calling it
+// stopped.** Every read is an error until lnd finishes opening its subservers,
+// and mapping those to "unreachable" put "your watchtower has stopped answering"
+// in front of a user whose tower was doing nothing wrong — on a first run, and
+// again on every restart, where the stored status is "reachable" and so the
+// startup guard in the alerting cannot help either.
+//
+// Matched on prose, like the marker above, because that is what the interface
+// offers: it arrives as a 500 carrying a gRPC status whose code is shared by
+// half a dozen unrelated refusals, and the sentence is the only part that
+// identifies this one.
+const startingMarker = "in the process of starting up"
+
 // ErrTowerNotActive means the tower process is running but its watchtower is
 // switched off. A different problem from being unreachable, and a different
 // thing to tell the user: the remedy is a setting, not a restart.
@@ -159,6 +174,12 @@ func (s *Supervisor) Observe(ctx context.Context) Observation {
 			"switched off, so it is accepting no sessions"
 		s.measureDisk(&obs)
 		return obs
+	case isStillStarting(err):
+		// Not down. Coming up, and saying so.
+		obs.Health.Status = store.TowerTemporarilyUnreachable
+		obs.Health.Detail = "the tower is still starting up"
+		s.measureDisk(&obs)
+		return obs
 	case err != nil:
 		obs.Health.Status = store.TowerUnreachable
 		obs.Health.Detail = "the tower did not answer: " + err.Error()
@@ -286,4 +307,12 @@ func IsNotActive(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(err.Error()), notActiveMarker)
+}
+
+// isStillStarting reports whether the tower is coming up rather than absent.
+func isStillStarting(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), startingMarker)
 }

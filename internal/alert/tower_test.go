@@ -453,3 +453,43 @@ func TestATowerSettlingFromStartupSaysNothing(t *testing.T) {
 		t.Error("a tower settling on first sight woke somebody")
 	}
 }
+
+// A machine's answer is trimmed to the part a person can act on.
+//
+// What reached the dashboard was a sentence carrying an HTTP status, a JSON body
+// and a gRPC code, wrapped in prose about a broken promise. All true, almost
+// none of it useful: the reader wants to know whether their protection is gone
+// and is handed `{"code":2, ...}` to interpret.
+func TestTheDetailIsTrimmedToWhatAPersonCanUse(t *testing.T) {
+	t.Parallel()
+
+	// Verbatim from a StartOS install.
+	raw := `the tower did not answer: answered 500 Internal Server Error for ` +
+		`/v2/watchtower/server: {"code":2, "message":"the RPC server is in the ` +
+		`process of starting up, but not yet ready to accept calls", "details":[]}`
+
+	got := detailSentence(raw)
+	if strings.Contains(got, `"code"`) || strings.Contains(got, "500") ||
+		strings.Contains(got, "details") {
+		t.Errorf("the reader is still being handed transport bookkeeping: %q", got)
+	}
+	if !strings.Contains(got, "starting up") {
+		t.Errorf("the part that explains what is happening was lost: %q", got)
+	}
+}
+
+// A plain sentence is left alone rather than mangled.
+func TestAPlainDetailIsLeftAsItIs(t *testing.T) {
+	t.Parallel()
+	got := detailSentence("the tower is running but its node is still catching up")
+	if !strings.Contains(got, "still catching up") {
+		t.Errorf("a readable detail was damaged: %q", got)
+	}
+}
+
+func TestNoDetailProducesNoSentence(t *testing.T) {
+	t.Parallel()
+	if got := detailSentence(""); got != "" {
+		t.Errorf("an empty detail produced %q", got)
+	}
+}

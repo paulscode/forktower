@@ -322,3 +322,56 @@ func TestASupervisorNeedsSomethingToWatchAndAKind(t *testing.T) {
 		t.Error("a supervisor with no measurer supplied did not get the default one")
 	}
 }
+
+// LND says plainly that it is starting, and this used to call it stopped.
+//
+// **Verbatim from a StartOS install.** Every read is an error until lnd finishes
+// opening its subservers, and mapping those to "unreachable" put "your
+// watchtower has stopped answering" in front of a user whose tower was doing
+// nothing wrong — on a first run, and again on every restart, where the stored
+// status is "reachable" so the startup guard in the alerting cannot help either.
+func TestATowerStillOpeningItsSubserversIsNotCalledUnreachable(t *testing.T) {
+	t.Parallel()
+
+	err := errors.New(`answered 500 Internal Server Error for ` +
+		`/v2/watchtower/server: {"code":2, "message":"the RPC server is in the ` +
+		`process of starting up, but not yet ready to accept calls", "details":[]}`)
+
+	if !isStillStarting(err) {
+		t.Fatal("lnd's own startup message was not recognised as starting")
+	}
+
+	// And a genuine failure is still a failure.
+	for _, other := range []error{
+		errors.New("connection refused"),
+		errors.New("no route to host"),
+		errors.New(`{"code":2, "message":"something else entirely"}`),
+	} {
+		if isStillStarting(other) {
+			t.Errorf("%q was mistaken for a tower that is starting", other)
+		}
+	}
+	if isStillStarting(nil) {
+		t.Error("no error at all was read as starting")
+	}
+
+	// And the whole way through: a supervisor reading that error reports a tower
+	// that is settling, not one that is gone.
+	tower := healthy()
+	tower.identityErr = err
+	obs := newSupervisor(t, tower).Observe(context.Background())
+
+	if obs.Health.Status != store.TowerTemporarilyUnreachable {
+		t.Errorf("status = %q, want %q — anything else raises a warning about a "+
+			"tower that is doing nothing wrong",
+			obs.Health.Status, store.TowerTemporarilyUnreachable)
+	}
+	if strings.Contains(obs.Health.Detail, "500") ||
+		strings.Contains(obs.Health.Detail, "code") {
+		t.Errorf("the detail hands the reader transport bookkeeping: %q",
+			obs.Health.Detail)
+	}
+	if !strings.Contains(obs.Health.Detail, "starting up") {
+		t.Errorf("the detail does not say what is happening: %q", obs.Health.Detail)
+	}
+}
