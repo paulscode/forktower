@@ -5,18 +5,16 @@ export const current = VersionInfo.of({
   version: `${appVersion}:${packageRevision}`,
   releaseNotes: {
     en_US:
-      'Corrects a claim in 0.6.7 and closes two more alerts that could not ' +
-      'stop being current. 0.6.7 said an upgrade would leave nothing to ' +
-      'dismiss after collapsing duplicate alerts; it would in fact have left ' +
-      'exactly one, permanently, because the entry could only be closed by a ' +
-      'run that had itself seen the problem — and upgrading restarts the app. ' +
-      'That is fixed, and an install upgrading straight from 0.6.7 will find ' +
-      'it closed. A split ending now also closes the alert saying the chains ' +
-      'had separated, which used to stand alongside the news that it was ' +
-      'over. And unconfirmed transactions arriving faster than they can be ' +
-      'read is no longer reported as trouble seeing the other chain: it costs ' +
-      'early warning, not sight of the chain, and it was showing permanently ' +
-      'on healthy installs whose second node had caught up.',
+      'Two fixes for what happens when Forktower restarts. An urgent alert ' +
+      'left over from a previous run could not be closed while Forktower was ' +
+      'waiting for its second Bitcoin node to catch up — and waiting is ' +
+      'exactly what it does for the first days of an install, so the alert ' +
+      'would have stood that whole time. It now closes as soon as the node ' +
+      'answers, whether or not there is anything to scan yet. And the second ' +
+      'node is not listening at all for the first moment after a restart, ' +
+      'which Forktower reported as the node being on the wrong network before ' +
+      'exiting and being restarted. It now waits for the node to become ' +
+      'answerable, as it already did for a node still loading its block index.',
   },
   migrations: {
     up: async ({ effects }) => {},
