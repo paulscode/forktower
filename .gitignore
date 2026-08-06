@@ -15,7 +15,14 @@ deno.lock
 # ── Go ──
 *.test
 *.out
-coverage.*
+# Coverage output, anchored to the repository root and named exactly.
+#
+# This was `coverage.*`, which is a glob over every directory — and it silently
+# swallowed internal/responder/tower/coverage.go, a source file. A fresh clone
+# did not compile. Anchor and enumerate rather than glob: an ignore rule that
+# matches source is invisible until somebody else clones the repository.
+/coverage.out
+/coverage.html
 # Left behind only if `make tidy-check` is interrupted mid-recipe.
 *.checkbak
 

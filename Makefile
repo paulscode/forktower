@@ -26,7 +26,7 @@ GOLANGCI   ?= golangci-lint
 .PHONY: build test lint fmt integration run-dev cover-html icons icons-check \
         forkbench-up forkbench-split forkbench-status forkbench-down \
         forkbench-ln-up forkbench-ln-status forkbench-fixtures demo-s1-detect \
-        check check-boundary check-artifacts check-no-rdts check-versions \
+        check check-boundary check-artifacts check-no-rdts check-clone check-versions \
         cover-check cover tidy-check vuln tidy clean help \
         vendor-teos teos-image
 
@@ -36,7 +36,7 @@ GOLANGCI   ?= golangci-lint
 # workflow in .github/ has never run. Until it does, this target is the whole
 # safety net, which is why it includes the two checks that would otherwise only
 # happen on a build server — module tidiness and the vulnerability database.
-check: build lint test cover-check tidy-check vuln check-no-rdts
+check: build lint test cover-check tidy-check vuln check-no-rdts check-clone
 	@printf '\n  all checks passed\n'
 
 ## build: compile all binaries into bin/
@@ -104,6 +104,14 @@ tidy-check:
 check-no-rdts:
 	@./scripts/check-no-rdts.sh --self-test
 	@./scripts/check-no-rdts.sh
+
+## check-clone: what somebody else clones must build
+#
+# A .gitignore rule of `coverage.*` silently swallowed a source file, and every
+# local build kept working because the file was in the working tree. The failure
+# is invisible from inside a working copy, which is why it needs a check.
+check-clone:
+	@./scripts/check-clone.sh
 
 ## check-boundary: no shipped file may reference the private planning documents
 check-boundary:
