@@ -245,8 +245,16 @@ release: check check-versions
 	rm -rf $(BUILD_DIR) && mkdir -p $(BUILD_DIR)
 	$(MAKE) 0351
 	cp $(PKG_ID)-0351.s9pk $(BUILD_DIR)/$(PKG_ID)-0351.s9pk
-	start-cli s9pk pack --icon icon.svg -o $(BUILD_DIR)/$(PKG_ID)-040.s9pk
+	# **Through the target, not around it.** This called `start-cli s9pk pack`
+	# directly, which packs whatever javascript/index.js happens to be on disk.
+	# That bundle carries the package's version, and it is generated from
+	# startos/version.ts by a rule this line did not go through — so 0.6.1 was
+	# built, signed and published carrying a manifest that said 0.6.0:0. StartOS
+	# would not have offered it as an update at all.
+	$(MAKE) $(PKG_ID)-040.s9pk
+	cp $(PKG_ID)-040.s9pk $(BUILD_DIR)/$(PKG_ID)-040.s9pk
 	$(MAKE) sbom
+	$(MAKE) check-packed-version
 	cd $(BUILD_DIR) && sha256sum *.s9pk SBOM.md > SHA256SUMS
 	@printf '\n'
 	@printf '  Built %s into %s:\n\n' "$(RELEASE_VERSION)" "$(BUILD_DIR)"
@@ -259,6 +267,31 @@ release: check check-versions
 	@printf '  Then, here:\n'
 	@printf '    make verify-release\n\n'
 	@printf '  Do not publish anything until that passes.\n\n'
+
+## check-packed-version: refuse a package whose manifest disagrees with the build
+#
+# **A version is written in three places and the packed artefact is the only one
+# that counts.** manifest.yaml and startos/version.ts are checked against each
+# other by check-versions, and both were right for 0.6.1 — but the 0.4.x package
+# takes its version from a JavaScript bundle generated from version.ts, and the
+# release recipe packed it without going through the rule that regenerates that
+# bundle. So a signed, published 0.6.1 carried a manifest saying 0.6.0:0, which
+# StartOS would never have offered as an update.
+#
+# Reading it back out of the packed file is the only check that could have caught
+# that, because every earlier one was looking at the inputs.
+check-packed-version:
+	@packed="$$(start-cli s9pk inspect $(BUILD_DIR)/$(PKG_ID)-040.s9pk manifest \
+	    | sed -n 's/.*"version"[^"]*"\([^"]*\)".*/\1/p' | head -1)"; \
+	  want="$(RELEASE_VERSION)"; \
+	  case "$$packed" in \
+	    "$$want"|"$$want":*) printf '  packed manifest says %s\n' "$$packed" ;; \
+	    *) printf '\n  The packed 0.4.x manifest says %s, and this release is %s.\n' \
+	         "$$packed" "$$want" >&2; \
+	       printf '  The JavaScript bundle it takes that from is stale.\n' >&2; \
+	       printf '  Rebuild it: rm -f javascript/index.js && make release\n\n' >&2; \
+	       exit 1 ;; \
+	  esac
 
 ## verify-release: refuse to publish a release that is not signed
 #
