@@ -199,6 +199,15 @@ type BackendHealth struct {
 	ReplayingHistory bool
 	// Detail is a short human explanation, safe to show a user.
 	Detail string
+	// BehindOnMempool means unconfirmed transactions are arriving faster than
+	// they can be read, so a spend may not be noticed until it confirms.
+	//
+	// **Not part of State, on purpose.** It costs early warning, not sight of the
+	// chain, and folding it into the health state put "Forktower may not see
+	// everything happening there" permanently in front of every user whose second
+	// node had caught up — which is the healthy state, and the one where that
+	// sentence is least true.
+	BehindOnMempool bool
 }
 
 // NetworkParams identifies the chain a view must be on.

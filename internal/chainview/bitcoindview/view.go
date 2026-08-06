@@ -26,6 +26,9 @@ type View struct {
 	// stall records a consumer that stopped keeping up, so Health can report it
 	// rather than leaving a silent gap that looks like a quiet chain.
 	stall stallState
+	// mempoolStall is the same for unconfirmed transactions, kept apart because
+	// only the block one says anything about whether the chain can be seen.
+	mempoolStall stallState
 	// now exists so the stall reporter's interval can be driven in a test
 	// rather than waited out.
 	now func() time.Time
@@ -254,8 +257,9 @@ func (v *View) Health(ctx context.Context) (chainview.BackendHealth, error) {
 	}
 
 	health := chainview.BackendHealth{
-		State:        chainview.HealthOK,
-		SyncProgress: info.VerificationProgress,
+		State:           chainview.HealthOK,
+		SyncProgress:    info.VerificationProgress,
+		BehindOnMempool: v.mempoolStall.stalled.Load(),
 	}
 
 	if hdr, err := v.BlockHeaderByHash(ctx, mustHash(info.BestBlockHash)); err == nil {
@@ -300,11 +304,12 @@ func (v *View) Health(ctx context.Context) (chainview.BackendHealth, error) {
 		health.Detail = fmt.Sprintf("%d blocks behind the headers it has seen",
 			info.Headers-info.Blocks)
 	case v.stall.stalled.Load():
-		// A dropped notification is not a quiet chain, and the two look identical
-		// from outside. Say so.
+		// A dropped *block* notification is not a quiet chain, and the two look
+		// identical from outside. Say so. Unconfirmed transactions are counted
+		// apart and deliberately do not reach here — see emitTx.
 		health.State = chainview.HealthDegraded
 		health.Detail = fmt.Sprintf(
-			"a consumer stopped keeping up and %d notifications were dropped",
+			"a consumer stopped keeping up and %d block notifications were dropped",
 			v.stall.dropped.Load())
 	case health.PeerCount == 0:
 		// No peers means no new blocks will arrive. The node looks fine and is

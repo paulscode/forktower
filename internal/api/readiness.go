@@ -316,7 +316,24 @@ func (s *Server) checkDistinct(c sentinel.Checks) ReadinessItem {
 func (s *Server) checkSQSynced(v chainview.BackendHealth) ReadinessItem {
 	switch v.State {
 	case chainview.HealthOK:
-		return ReadinessItem{ID: CheckSQSynced, OK: true, Label: "Watching the other chain"}
+		if v.BehindOnMempool {
+			// **Watching, and worth saying what is thinner than usual.** Not a
+			// failure and not a task: unconfirmed transactions arriving faster
+			// than they can be read costs warning *before* a spend confirms, and
+			// every spend is still caught when it lands in a block. Informational
+			// so it neither holds up setup nor colours the dashboard, because the
+			// chain is being watched — which is exactly what the previous wording,
+			// "Forktower may not see everything happening there", denied.
+			return ReadinessItem{
+				ID: CheckSQSynced, OK: true, informational: true,
+				Label: labelWatchingOther,
+				Why: "Unconfirmed transactions are arriving faster than they can " +
+					"be read, so a spend of one of your channels may not be noticed " +
+					"until the block carrying it arrives. Nothing is missed, and " +
+					"there is nothing to do.",
+			}
+		}
+		return ReadinessItem{ID: CheckSQSynced, OK: true, Label: labelWatchingOther}
 
 	case chainview.HealthSyncing:
 		item := ReadinessItem{
@@ -485,6 +502,11 @@ func alertsSetUpByHand(platform config.Platform) bool {
 	}
 }
 
+// labelWatchingOther is the same sentence in three checks, which is deliberate:
+// the user should read one phrase for "this is working" rather than three
+// near-misses that invite them to wonder what the difference is.
+const labelWatchingOther = "Watching the other chain"
+
 func (s *Server) checkAlertTransports(ctx context.Context) ReadinessItem {
 	noTransports := s.alerter == nil || len(s.alerter.TransportNames()) == 0
 
@@ -608,7 +630,7 @@ func (s *Server) checkWatchingActive() ReadinessItem {
 	if s.standDown == nil || s.standDown.Active() {
 		return ReadinessItem{
 			ID: CheckWatchingActive, OK: true,
-			Label: "Watching the other chain",
+			Label: labelWatchingOther,
 		}
 	}
 	return ReadinessItem{

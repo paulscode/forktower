@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/paulscode/forktower/internal/chainview"
+
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // mutableTip lets a test move the node's tip between polls.
@@ -463,5 +465,56 @@ func TestOnlyABlockBacklogCountsAsCatchingUp(t *testing.T) {
 			t.Errorf("%s: headers %d blocks %d -> skip = %v, want %v",
 				tc.name, tc.headers, tc.blocks, got, tc.wantSkip)
 		}
+	}
+}
+
+// A mempool backlog must not be reported as trouble seeing the chain.
+//
+// **Observed on the first machine whose second node finished syncing.** A node
+// at the tip of mainnet relays transactions by the dozen per second; the
+// consumer shared the block notification buffer, overflowed it continuously, and
+// marked the whole view degraded — so "Having trouble seeing the other chain —
+// Forktower may not see everything happening there" became the permanent state
+// of a perfectly healthy install. Seven hundred dropped in four minutes, and
+// climbing.
+func TestFallingBehindOnMempoolIsNotTroubleSeeingTheChain(t *testing.T) {
+	t.Parallel()
+	v := &View{c: &client{}, now: func() time.Time { return time.Unix(1_790_000_000, 0) }}
+
+	// One transaction too many for a consumer that is not reading.
+	full := make(chan *wire.MsgTx)
+	v.emitTx(full, wire.NewMsgTx(2))
+
+	if v.stall.stalled.Load() {
+		t.Error("a transaction backlog marked the block notification path as " +
+			"stalled, which is what makes the view report as degraded")
+	}
+	if !v.mempoolStall.stalled.Load() {
+		t.Error("a transaction backlog was not recorded at all, so nothing could " +
+			"report the loss of early warning")
+	}
+}
+
+// Whereas a block notification backlog still is, because it means the chain is
+// not being seen.
+func TestFallingBehindOnBlocksStillCountsAsTrouble(t *testing.T) {
+	t.Parallel()
+	v := &View{c: &client{}, now: func() time.Time { return time.Unix(1_790_000_000, 0) }}
+
+	full := make(chan chainview.BlockMeta)
+	v.emitTip(full, chainview.BlockMeta{})
+
+	if !v.stall.stalled.Load() {
+		t.Error("a dropped block notification was not recorded as a stall")
+	}
+}
+
+// The two buffers are sized for the traffic they carry, not for each other.
+func TestTheMempoolBufferIsNotTheBlockBuffer(t *testing.T) {
+	t.Parallel()
+	if mempoolBuffer <= subscriberBuffer {
+		t.Errorf("mempool buffer %d is not larger than the block buffer %d, so a "+
+			"node at the tip will overflow it continuously",
+			mempoolBuffer, subscriberBuffer)
 	}
 }

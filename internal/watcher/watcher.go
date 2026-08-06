@@ -11,6 +11,8 @@ import (
 
 	"github.com/btcsuite/btcd/chainhash/v2"
 
+	"github.com/btcsuite/btcd/wire/v2"
+
 	"github.com/paulscode/forktower/internal/bus"
 	"github.com/paulscode/forktower/internal/chainview"
 	"github.com/paulscode/forktower/internal/store"
@@ -299,7 +301,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				mempool = nil
 				continue
 			}
-			w.handleMempoolTx(ctx, tx)
+			mempool = w.drainMempool(ctx, mempool, tx)
 			continue
 		case <-w.nudge:
 			continue
@@ -446,6 +448,41 @@ func (w *Watcher) strayChainstate(activeBest, height int32) bool {
 		return false
 	}
 	return height < activeBest-w.cfg.MaxReorgDepth
+}
+
+// mempoolDrainPerTurn is how many unconfirmed transactions are taken in one go
+// before the loop attends to anything else.
+//
+// **One at a time was the old behaviour, and it is a block-shaped assumption.**
+// Every other event this loop serves arrives minutes apart; a node at the tip of
+// mainnet relays transactions by the dozen per second, so taking one per turn
+// and then doing a slice of catch-up work let the queue grow faster than it
+// drained. Bounded rather than "until empty", because a block that has just
+// arrived matters more than the next thousand transactions, and an unbounded
+// drain would let a busy mempool starve it.
+const mempoolDrainPerTurn = 256
+
+// drainMempool handles one transaction and as many more as are already waiting.
+//
+// Returns the channel, or nil once it has closed, so the caller stops selecting
+// on it.
+func (w *Watcher) drainMempool(
+	ctx context.Context, mempool <-chan *wire.MsgTx, first *wire.MsgTx,
+) <-chan *wire.MsgTx {
+	w.handleMempoolTx(ctx, first)
+
+	for range mempoolDrainPerTurn - 1 {
+		select {
+		case tx, ok := <-mempool:
+			if !ok {
+				return nil
+			}
+			w.handleMempoolTx(ctx, tx)
+		default:
+			return mempool
+		}
+	}
+	return mempool
 }
 
 // stopping reports that the daemon is shutting down, which makes every failure

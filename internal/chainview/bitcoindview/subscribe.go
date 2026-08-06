@@ -31,10 +31,25 @@ var (
 
 // Subscription tuning.
 const (
-	// subscriberBuffer is how many events are held for a consumer that has fallen
-	// behind. Blocks arrive minutes apart, so a consumer that fills this is stuck
-	// rather than busy — and the point is to make that visible, not to absorb it.
+	// subscriberBuffer is how many block notifications are held for a consumer
+	// that has fallen behind. Blocks arrive minutes apart, so a consumer that
+	// fills this is stuck rather than busy — and the point is to make that
+	// visible, not to absorb it.
 	subscriberBuffer = 64
+	// mempoolBuffer is the same for unconfirmed transactions, and is far larger
+	// because the reasoning above is about blocks and does not transfer.
+	//
+	// **A node at the tip of mainnet relays transactions by the dozen per
+	// second.** Sharing the block buffer meant a healthy consumer overflowed it
+	// continuously the moment a second node finished syncing: seven hundred
+	// dropped in four minutes on the first machine to get there, climbing. That
+	// is a busy consumer, not a stuck one, and the two want opposite treatment —
+	// a block backlog should be reported, a transaction backlog absorbed.
+	//
+	// Large enough to ride out a sweep slice or a slow block, and still bounded:
+	// this is early warning, and a consumer that falls behind by thousands has
+	// lost the earliness that made it worth having.
+	mempoolBuffer = 4096
 
 	// reconnectMin and reconnectMax bound the backoff after a notification socket
 	// fails. It starts fast because a node restart is brief and routine, and caps
@@ -208,7 +223,7 @@ func (v *View) SubscribeMempoolTx(ctx context.Context) (<-chan *wire.MsgTx, erro
 	if v.c.opts.ZMQRawTx == "" {
 		return nil, chainview.ErrUnsupported
 	}
-	out := make(chan *wire.MsgTx, subscriberBuffer)
+	out := make(chan *wire.MsgTx, mempoolBuffer)
 	go v.runMempoolZMQ(ctx, out)
 	return out, nil
 }
@@ -233,16 +248,29 @@ func (v *View) emitTip(out chan<- chainview.BlockMeta, meta chainview.BlockMeta)
 	}
 }
 
+// emitTx offers an unconfirmed transaction to the consumer without blocking.
+//
+// **Counted separately from block notifications, and deliberately not part of
+// the view's health.** Missing a transaction before it confirms costs early
+// warning; missing a block means not seeing the chain. Reporting the first as
+// the second put "Having trouble seeing the other chain — Forktower may not see
+// everything happening there" permanently in front of every user whose second
+// node had finished syncing, which is the healthy state.
+//
+// Still logged, because a consumer that cannot keep up is worth knowing about,
+// and still at warning rather than error: it is a reduction in lead time, not a
+// failure to watch.
 func (v *View) emitTx(out chan<- *wire.MsgTx, tx *wire.MsgTx) {
 	select {
 	case out <- tx:
 	default:
-		v.stall.note()
-		if say, since := v.stall.shouldSay(v.now()); say {
-			v.log().Error("mempool consumer is not keeping up; dropping transactions",
+		v.mempoolStall.note()
+		if say, since := v.mempoolStall.shouldSay(v.now()); say {
+			v.log().Warn("falling behind on unconfirmed transactions, so a spend "+
+				"may not be seen until it confirms",
 				slog.String("latest_txid", tx.TxHash().String()),
 				slog.Int64("dropped_since_last_report", since),
-				slog.Int64("dropped_total", v.stall.dropped.Load()))
+				slog.Int64("dropped_total", v.mempoolStall.dropped.Load()))
 		}
 	}
 }
