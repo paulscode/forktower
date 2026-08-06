@@ -13,7 +13,7 @@ you run, and requiring one would have excluded users of the other.
 **A Lightning node is optional.** Without one, Forktower still watches both
 chains. With one, it can tell you which of your channels a split would expose.
 
-Expect the second Bitcoin node to use around **30 GB of disk** and the bandwidth
+Expect the second Bitcoin node to use around **31 GB of disk** and the bandwidth
 of an initial sync. That is the 20 GB pruned block store plus the record of
 unspent coins, which is about 11 GB today and is not something pruning shrinks.
 

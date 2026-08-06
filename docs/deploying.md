@@ -11,14 +11,14 @@ a seed or a recovery phrase.
 
 ## What it costs
 
-About **21 GB of disk** and a spare CPU core, for the second node. That node is
+About **31 GB of disk** and a spare CPU core, for the second node. That node is
 pruned and holds no wallet — it exists to answer questions about blocks.
 
-The 21 GB is two things, and only one of them is what `prune` controls: about
-10 GB of blocks under the default prune setting, plus the record of unspent
-coins, which is around 11 GB today, grows with the chain, and is not something
-pruning shrinks. The packaged apps set a 20 GB prune target instead of 10, so
-budget about 31 GB there.
+The 31 GB is two things, and only one of them is what `prune` controls: 20 GB of
+blocks under the default setting, plus the record of unspent coins, which is
+around 11 GB today, grows with the chain, and is not something pruning shrinks.
+Lowering `FORKTOWER_SQ_PRUNE_MB` reduces the first number only; Bitcoin Core
+refuses anything below about 5,000.
 
 **The first sync takes about three days from scratch**, and until it finishes
 Forktower cannot see the other chain at all. There is a shortcut — see below —

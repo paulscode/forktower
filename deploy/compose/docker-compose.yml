@@ -109,7 +109,7 @@ services:
       - -listen=1
       - -printtoconsole=1
       - -disablewallet=1
-      - -prune=${FORKTOWER_SQ_PRUNE_MB:-10000}
+      - -prune=${FORKTOWER_SQ_PRUNE_MB:-20000}
       - -port=8433
       - -rpcport=8432
       - -rpcbind=0.0.0.0

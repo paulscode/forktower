@@ -214,7 +214,7 @@ printtoconsole=1
 # Pruned. Forktower never needs arbitrary history older than the point the
 # chains separated, and it watches the prune height so it can say something
 # before that stops being true.
-prune=${FORKTOWER_SQ_PRUNE_MB:-10000}
+prune=${FORKTOWER_SQ_PRUNE_MB:-20000}
 
 # No wallet and no address index: this node holds nothing and answers about
 # blocks. Its memory pool is kept, because an unconfirmed sighting is what buys

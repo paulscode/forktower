@@ -76,7 +76,7 @@ a revoked state stops being a gamble and becomes a free option.
 **Forktower runs a second Bitcoin node**, following the chain your own node does
 not. That is the whole trick, and it is worth knowing before you install: it is
 another Bitcoin node on your machine, with its own disk and its own bandwidth.
-Pruned by default, and about **30 GB** once it has caught up: 20 GB of blocks,
+Pruned by default, and about **31 GB** once it has caught up: 20 GB of blocks,
 plus the record of unspent coins, which is around 11 GB today and is not
 something pruning shrinks.
 
