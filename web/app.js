@@ -656,6 +656,7 @@ function renderTowers(payload) {
   clear(list);
 
   let anyUri = '';
+  let anyKind = '';
   for (const tower of towers) {
     const display = tower.display || {};
     const item = make('li', display.state === TOWER_BAD ? 'tower at-risk' : 'tower');
@@ -680,11 +681,12 @@ function renderTowers(payload) {
 
     if (tower.uri) {
       anyUri = tower.uri;
+      anyKind = tower.kind;
     }
     list.appendChild(item);
   }
 
-  renderTowerCommand(anyUri);
+  renderTowerCommand(anyUri, anyKind);
 }
 
 // feeNote says what a justice transaction would pay, and that nobody can change
@@ -706,17 +708,35 @@ function feeNote(coverage) {
     'afterwards — re-registering starts a new session at your node\'s current rate.';
 }
 
+// The command that registers each kind of tower with the node that speaks to it.
+//
+// An LND watchtower is registered from LND; a teos tower from Core Lightning.
+// They are not interchangeable, and neither is the command.
+const TOWER_COMMANDS = {
+  lnd: 'lncli wtclient add ',
+  teos: 'lightning-cli registertower ',
+};
+
 // renderTowerCommand fills in the copy-paste line in the wizard.
 //
 // The real address or nothing. A placeholder that looks like a command is worse
 // than an empty box: somebody will paste it.
-function renderTowerCommand(uri) {
+//
+// **The same rule applies to the command itself, which is why this is keyed on
+// the tower's kind.** It used to emit the LND form for every tower, so somebody
+// running Core Lightning beside a teos tower was shown `lncli` — a program they
+// do not have, driving a node they are not running. That is the failure the
+// comment above was written about, arrived at from the other direction: the
+// address was real and the verb was wrong.
+function renderTowerCommand(uri, kind) {
   const box = el('tower-command');
   if (!box) {
     return;
   }
-  setText(box, uri ? 'lncli wtclient add ' + uri : '');
-  show(box, Boolean(uri));
+  const prefix = TOWER_COMMANDS[kind];
+  const usable = Boolean(uri && prefix);
+  setText(box, usable ? prefix + uri : '');
+  show(box, usable);
 }
 
 // ---------------------------------------------------------------------------

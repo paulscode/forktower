@@ -584,7 +584,7 @@ test('a tower covering everything is not marked at risk', () => {
 // than an empty box, because somebody will paste it.
 test('the registration command carries the real address or nothing', () => {
   app.renderTowers({
-    towers: [{ uri: '03abc@abcdef.onion:9911', display: { state: 'settling', summary: 'Ready.' }, coverage: [] }],
+    towers: [{ kind: 'lnd', uri: '03abc@abcdef.onion:9911', display: { state: 'settling', summary: 'Ready.' }, coverage: [] }],
   });
   assert.ok(textOf(byID['tower-command']).includes('lncli wtclient add 03abc@abcdef.onion:9911'),
     'the command did not carry the address');
@@ -916,4 +916,40 @@ test('an earlier error is cleared once it no longer applies', () => {
     'a stale error is still on screen after the shortcut succeeded');
   assert.strictEqual(byID['bootstrap-why'].children.length, 0,
     'the offer’s small print is still showing after it was accepted');
+});
+
+// The command has to match the node that speaks to the tower.
+//
+// An LND watchtower is registered from LND and a teos tower from Core
+// Lightning; they are not interchangeable and neither is the verb. This used to
+// emit the LND form for every tower, so somebody running Core Lightning beside
+// a teos tower was shown `lncli` — a program they do not have, driving a node
+// they are not running.
+test('the registration command matches the kind of tower', () => {
+  app.renderTowers({ towers: [{
+    kind: 'lnd', uri: '02aa@abcdef.onion:9911',
+    display: { state: 'settling', summary: 'Ready.' }, coverage: [],
+  }] });
+  assert.match(textOf(byID['tower-command']), /^lncli wtclient add 02aa@/);
+
+  app.renderTowers({ towers: [{
+    kind: 'teos', uri: '03bb@fedcba.onion:9814',
+    display: { state: 'settling', summary: 'Ready.' }, coverage: [],
+  }] });
+  assert.match(textOf(byID['tower-command']),
+    /^lightning-cli registertower 03bb@/);
+});
+
+// A tower of a kind this page does not know gets no command at all.
+//
+// A plausible-looking command is worse than an empty box, because somebody will
+// paste it — and guessing a verb from an unfamiliar kind is precisely how the
+// wrong one gets emitted.
+test('an unrecognised tower kind produces no command rather than a guess', () => {
+  app.renderTowers({ towers: [{
+    kind: 'something-new', uri: '04cc@example.onion:9911',
+    display: { state: 'settling', summary: 'Ready.' }, coverage: [],
+  }] });
+  assert.strictEqual(textOf(byID['tower-command']), '');
+  assert.strictEqual(byID['tower-command'].className.includes('hidden'), true);
 });

@@ -55,9 +55,22 @@
 #   * a channel closed with its current state, honestly, by either side;
 #   * copying transactions between the two chains, which is a separate job.
 #
-# And it must be watching the right chain. A tower whose view is the chain your
-# own node already follows adds nothing during a split: the whole problem is the
-# chain nobody is looking at.
+# And it must be watching the right chain — which, for once, the default is
+# likely to get right, for a reason worth stating because it is easy to reason
+# backwards about.
+#
+# If your node enforces the new rules, it follows the signalling chain. A tower
+# running stock software follows the other one: the chain with the majority of
+# the hashrate, which is the chain your node cannot see and therefore exactly
+# where a breach against you would be published. The tower does not have to know
+# any of this. It is useless to you only if its operator happens to have made
+# the same choice you did.
+#
+# Nobody can check that from here. Forktower reads what your *node* knows about
+# a tower — sessions, states backed up, fee rates — not what the tower is
+# looking at, and an operator who changes their software flips it silently.
+# Registering with several is the answer to that, and it is why this file is a
+# list rather than a single address.
 
 # ── What Forktower cannot do about somebody else's tower ──────────────────────
 #
