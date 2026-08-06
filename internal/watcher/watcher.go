@@ -166,6 +166,9 @@ type Watcher struct {
 	replaying     bool
 	replayingAt   time.Time
 	replayingSeen bool
+	// checkedStanding records that this process has looked for alerts a previous
+	// run left standing, so that it looks exactly once.
+	checkedStanding bool
 	// activeBest is the height the backend itself calls its best block, from the
 	// same cached read. Needed to tell a tip on the chain being watched from one
 	// belonging to some other chainstate the same node happens to be building.

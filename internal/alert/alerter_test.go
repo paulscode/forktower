@@ -722,3 +722,39 @@ func TestAViewComingBackClosesTheWarningThatItWasGone(t *testing.T) {
 		t.Errorf("%d entries for one chain going away and coming back", len(alerts))
 	}
 }
+
+// A split ending closes the alert that said it had started.
+//
+// **The headline alert of the whole program, and it could not stop being
+// current.** split_resolved keys itself distinctly, so it announced the good
+// news and left "the chains have separated" standing above it, unchanged. The
+// chain views had the same defect and were fixed in 0.6.2; this one was found by
+// sweeping for it.
+func TestASplitEndingClosesTheAlertThatSaidItHadStarted(t *testing.T) {
+	t.Parallel()
+	rec := newRecorder("phone")
+	h := newHarness(t, []Route{{Transport: rec, MinTier: config.MinTierInfo}}, nil)
+	h.start(t)
+
+	h.bus.Publish(bus.SplitStateChanged{Old: "ARMED", New: string(store.StateSplit)})
+	waitFor(t, "the split to be announced", func() bool {
+		return rec.countKind(KindSplitDetected) > 0
+	})
+	h.bus.Publish(bus.SplitStateChanged{
+		Old: string(store.StateSplit), New: string(store.StateResolvedSFWon),
+	})
+	waitFor(t, "the split ending to be announced", func() bool {
+		return rec.countKind(KindSplitResolved) > 0
+	})
+
+	alerts, err := h.store.ListAlerts(t.Context(), store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range alerts {
+		if a.Tier != store.TierResolved {
+			t.Errorf("%q is still standing at %s after the split ended",
+				a.Message, a.Tier)
+		}
+	}
+}

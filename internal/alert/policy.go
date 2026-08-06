@@ -231,7 +231,14 @@ func mapSplitState(ev bus.SplitStateChanged) (Candidate, bool) {
 			Tier:     store.TierResolved,
 			Kind:     KindSplitResolved,
 			DedupKey: KindSplitResolved,
-			Message:  "The split has ended.",
+			// **The two it supersedes, or they stand for ever beside it.** This
+			// keys itself distinctly, so without naming them a split ending
+			// announced good news and left "the chains have separated" standing
+			// above it — on the one alert this whole program exists to raise.
+			// Same defect as the chain views had, found by sweeping for it rather
+			// than by anybody hitting it.
+			Closes:  []string{KindSplitDetected, KindSplitResolving},
+			Message: "The split has ended.",
 		}, true
 
 	default:

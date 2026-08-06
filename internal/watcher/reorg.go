@@ -577,7 +577,7 @@ func (w *Watcher) deepReorg(ctx context.Context, tip chainview.BlockMeta, last b
 	// every time instead of collapsing into one. What the user needs to know is
 	// that scanning has stopped — once, loudly — not the height it was at on
 	// each of ninety-six occasions.
-	w.raise(ctx, store.TierCritical, DeepReorgAlertKind, DeepReorgAlertKind,
+	w.raise(ctx, DeepReorgAlertKind, DeepReorgAlertKind,
 		"Forktower stopped watching the other chain",
 		"The other chain changed further back than a normal reorganisation reaches. "+
 			"Forktower has stopped scanning it rather than risk reporting on the wrong "+
@@ -613,7 +613,7 @@ func (w *Watcher) stall(ctx context.Context, height int32, cause error) {
 	// alert every time: eleven of them in ten minutes on one install, all
 	// describing the same thing. What a user needs to know is that scanning has
 	// stopped, once, not the height it was at on each occasion.
-	w.raise(ctx, store.TierCritical, StalledAlertKind, StalledAlertKind,
+	w.raise(ctx, StalledAlertKind, StalledAlertKind,
 		"Forktower has stopped scanning the other chain",
 		"A block on the other chain could not be read after several tries, so nothing "+
 			"new is being checked. Forktower is still running, which is exactly why this "+
@@ -635,15 +635,29 @@ func (w *Watcher) stall(ctx context.Context, height int32, cause error) {
 func (w *Watcher) clearStall(ctx context.Context) {
 	w.mu.Lock()
 	was := w.progress.Stalled
+	// **The first success of a process always looks, whatever it remembers.**
+	// Stalled lives in memory and starts false, and an upgrade restarts the
+	// daemon — so an alert left standing by the previous run would never be
+	// closed by a check that only fires when *this* run saw the stall. That is
+	// exactly the case that matters: the release which collapses thousands of
+	// these into one, and then leaves the one behind.
+	//
+	// Restoring Stalled from storage at startup would be the other way, and is
+	// worse: it would report scanning as stopped until the next block, and on
+	// the chain being watched a block can be a long time coming.
+	first := !w.checkedStanding
+	w.checkedStanding = true
 	w.progress.Stalled = false
 	w.progress.StalledAt = 0
 	w.progress.Why = ""
 	w.mu.Unlock()
 
-	if !was {
+	if !was && !first {
 		return
 	}
-	w.log.Info("scanning the other chain is making progress again")
+	if was {
+		w.log.Info("scanning the other chain is making progress again")
+	}
 	w.resolve(ctx, StalledAlertKind,
 		"Forktower is reading the other chain again",
 		"Whatever stopped it has passed, and blocks are being checked again.")
@@ -682,7 +696,12 @@ func (w *Watcher) resolve(ctx context.Context, kind, subject, msg string) {
 
 // raise records an alert. Best effort: an alert that cannot be stored is still
 // worth logging, and the log line above it has already done that.
-func (w *Watcher) raise(ctx context.Context, tier store.Tier, kind, dedup, subject, msg string) {
+// raise records one of this watcher's alerts. Always critical: the only two it
+// has both mean the other chain has stopped being read, and there is no quieter
+// way to say that.
+func (w *Watcher) raise(ctx context.Context, kind, dedup, subject, msg string) {
+	const tier = store.TierCritical
+
 	wctx, cancel := writeCtx(ctx)
 	defer cancel()
 

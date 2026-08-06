@@ -1415,7 +1415,7 @@ func TestScanningResumingClosesTheAlertThatSaidItHadStopped(t *testing.T) {
 
 	// Both conditions standing, as an upgraded install would find them.
 	h.w.stall(ctx, 500, errors.New("could not read the block"))
-	h.w.raise(ctx, store.TierCritical, DeepReorgAlertKind, DeepReorgAlertKind,
+	h.w.raise(ctx, DeepReorgAlertKind, DeepReorgAlertKind,
 		"Forktower stopped watching the other chain", "The other chain changed.")
 	h.w.mu.Lock()
 	h.w.progress.Stalled = true
@@ -1458,5 +1458,62 @@ func TestResumingSaysNothingWhenNothingHadStopped(t *testing.T) {
 	}
 	if len(alerts) != 0 {
 		t.Errorf("%d entries announcing recovery from a problem nobody had", len(alerts))
+	}
+}
+
+// An alert left standing by a previous run is closed by the next one.
+//
+// **The gap that would have made 0.6.7's headline claim untrue.** Stalled lives
+// in memory and starts false; upgrading restarts the daemon. So the release that
+// collapses thousands of these into a single entry would have left that entry
+// standing for ever, because the run that could close it had never seen the
+// stall itself — and the release notes said there would be nothing left to
+// dismiss.
+func TestAnAlertLeftStandingByAPreviousRunIsClosed(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	ctx := context.Background()
+
+	// As an upgraded install finds it: the alert in storage, and a watcher that
+	// has never stalled because it has only just started.
+	h.w.raise(ctx, DeepReorgAlertKind, DeepReorgAlertKind,
+		"Forktower stopped watching the other chain", "The other chain changed.")
+	if h.w.Progress().Stalled {
+		t.Fatal("a freshly started watcher already believes it is stalled")
+	}
+
+	h.w.clearStall(ctx)
+
+	alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range alerts {
+		if a.Tier != store.TierResolved {
+			t.Errorf("%q was left standing at %s by a run that had not seen it "+
+				"raised", a.Subject, a.Tier)
+		}
+	}
+}
+
+// And it looks once, not on every block.
+func TestTheStandingCheckHappensOnceNotPerBlock(t *testing.T) {
+	t.Parallel()
+	h := newLiveHarness(t, nil)
+	ctx := context.Background()
+
+	h.w.clearStall(ctx)
+	// Raised after the first look, standing in for one appearing later without
+	// this process ever stalling.
+	h.w.raise(ctx, DeepReorgAlertKind, DeepReorgAlertKind,
+		"Forktower stopped watching the other chain", "The other chain changed.")
+	h.w.clearStall(ctx)
+
+	alerts, err := h.store.ListAlerts(ctx, store.AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alerts) != 1 || alerts[0].Tier == store.TierResolved {
+		t.Errorf("the standing check ran again on a later block: %+v", alerts)
 	}
 }
