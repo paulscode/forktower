@@ -694,6 +694,7 @@ function renderTowers(payload) {
   }
 
   renderTowerCommand(anyUri, anyKind);
+  renderTowerSteps(payload.guidance);
 }
 
 // feeNote says what a justice transaction would pay, and that nobody can change
@@ -719,10 +720,33 @@ function feeNote(coverage) {
 //
 // An LND watchtower is registered from LND; a teos tower from Core Lightning.
 // They are not interchangeable, and neither is the command.
+// towerUri is the bare address the copy button puts on the clipboard.
+let towerUri = '';
+
 const TOWER_COMMANDS = {
   lnd: 'lncli wtclient add ',
   teos: 'lightning-cli registertower ',
 };
+
+// renderTowerSteps lists what to click, on the platform the user is on.
+//
+// **Empty where the platform is not known**, rather than guessing. A self-hoster
+// knows where their own node's settings are, and inventing a menu path for them
+// would send somebody looking for a screen that does not exist.
+function renderTowerSteps(steps) {
+  const list = el('tower-steps');
+  if (!list) {
+    return;
+  }
+  clear(list);
+  const usable = Array.isArray(steps) && steps.length > 0;
+  if (usable) {
+    for (const step of steps) {
+      list.appendChild(make('li', '', String(step)));
+    }
+  }
+  show(list, usable);
+}
 
 // renderTowerCommand fills in the copy-paste line in the wizard.
 //
@@ -745,6 +769,12 @@ function renderTowerCommand(uri, kind) {
   setText(box, usable ? prefix + uri : '');
   show(box, usable);
 
+  // **The address alone, not the command around it.** On every packaged
+  // platform this value is pasted into a settings field, not a terminal — so a
+  // button labelled "Copy address" that put `lncli wtclient add …` on the
+  // clipboard handed the user something their node's form would reject.
+  towerUri = usable ? uri : '';
+
   // **A button, because selecting the text does not survive.** This page
   // re-renders every few seconds, which clears a selection mid-drag — so the
   // obvious way to copy an address fails repeatedly and silently, on the one
@@ -754,7 +784,7 @@ function renderTowerCommand(uri, kind) {
     return;
   }
   show(copy, usable);
-  copy.onclick = () => copyText(box.textContent, copy);
+  copy.onclick = () => copyText(towerUri, copy);
 }
 
 // copyText puts a string on the clipboard, by whichever route is available.

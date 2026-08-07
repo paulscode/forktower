@@ -157,18 +157,10 @@
         client is a setting in your node's own configuration, and Forktower is
         only ever allowed to read from your node — never to change it.
       </p>
-      <ol class="steps">
-        <li>
-          Switch on the watchtower client in your Lightning node's settings.
-          Every packaging calls it something slightly different, and the setup
-          steps on this page name yours.
-        </li>
-        <li>
-          Then paste this address into your node's watchtower settings:
-          <pre id="tower-command" class="command"></pre>
-          <button type="button" id="tower-copy" class="copy">Copy address</button>
-        </li>
-      </ol>
+      <ol class="steps" id="tower-steps"></ol>
+      <p>Your watchtower's address:</p>
+      <pre id="tower-command" class="command"></pre>
+      <button type="button" id="tower-copy" class="copy">Copy address</button>
       <p class="quiet" id="tower-limits">
         Worth knowing before you rely on it: a watchtower can only punish states
         that were backed up <em>after</em> you registered. Anything revoked

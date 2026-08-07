@@ -6,11 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/paulscode/forktower/internal/config"
 	"github.com/paulscode/forktower/internal/store"
 )
 
 type towersPayload struct {
-	Towers []Tower `json:"towers"`
+	Towers   []Tower  `json:"towers"`
+	Guidance []string `json:"guidance"`
 }
 
 func towers(t *testing.T, h *harness) []Tower {
@@ -311,5 +313,23 @@ func TestAFailedReadIsNotAnEmptyTowerList(t *testing.T) {
 	resp := h.do(t, http.MethodGet, "/api/v1/towers", "")
 	if resp.StatusCode == http.StatusOK {
 		t.Error("a store that had gone away reported no towers rather than an error")
+	}
+}
+
+// The towers payload carries the steps for this platform.
+//
+// The card used to say only that the setup list names the right ones — true,
+// and on a different part of the page. Somebody reading the watchtower card
+// wants them there.
+func TestTheTowersPayloadCarriesThePlatformSteps(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.Platform = config.PlatformStartOS035 })
+
+	got := decode[towersPayload](t, h.do(t, http.MethodGet, "/api/v1/towers", ""))
+	if len(got.Guidance) == 0 {
+		t.Fatal("no steps were served with the towers")
+	}
+	joined := strings.Join(got.Guidance, " ")
+	if !strings.Contains(joined, "Watchtower Client Enabled") {
+		t.Errorf("the steps are not this platform's: %q", joined)
 	}
 }

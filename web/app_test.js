@@ -1013,10 +1013,10 @@ test('the watchtower address has a working copy button', () => {
   const button = byID['tower-copy'];
   assert.ok(button, 'no copy button was rendered');
   button.onclick();
-  assert.ok(
-    copied.includes('ours@ours.onion:9911'),
-    'the button copied ' + JSON.stringify(copied) + ' rather than the address',
-  );
+  assert.strictEqual(copied, 'ours@ours.onion:9911',
+    'the button must copy the address alone — every packaged platform pastes ' +
+    'this into a settings field, not a terminal, and a command would be ' +
+    'rejected by the form');
 });
 
 // And it still copies where the modern clipboard API is refused.
@@ -1043,4 +1043,36 @@ test('the address copies without the clipboard API', () => {
   );
   assert.strictEqual(document.body.children.length, 0,
     'the temporary textarea was left behind in the page');
+});
+
+// The card carries the steps for the platform the user is on.
+//
+// **Reported from a live install.** The card said only that "the setup steps on
+// this page name yours", which they do — on a different part of the page the
+// user may not be looking at. Somebody reading the watchtower card wants the
+// steps there.
+test('the watchtower card lists the platform own steps', () => {
+  app.renderTowers({
+    towers: [
+      { id: 1, managed: true, kind: 'lnd', uri: 'ours@ours.onion:9911', display: {} },
+    ],
+    guidance: ['Open Services, then LND.', 'Click Config, and expand Watchtowers.'],
+  });
+
+  const shown = byID['tower-steps'].textContent;
+  assert.ok(shown.includes('Click Config'),
+    'the platform steps did not reach the card: ' + JSON.stringify(shown));
+});
+
+// And where the platform is unknown, it invents nothing.
+test('an unknown platform gets no invented menu path', () => {
+  app.renderTowers({
+    towers: [
+      { id: 1, managed: true, kind: 'lnd', uri: 'ours@ours.onion:9911', display: {} },
+    ],
+    guidance: [],
+  });
+
+  assert.strictEqual(byID['tower-steps'].textContent.trim(), '',
+    'steps were shown for a platform with none');
 });

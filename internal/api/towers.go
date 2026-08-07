@@ -88,7 +88,14 @@ func (s *Server) handleTowers(w http.ResponseWriter, r *http.Request) {
 		out = append(out, towerView(t, coverage))
 	}
 
-	writeData(w, map[string]any{"towers": out})
+	// **The steps that belong to this platform, not a pointer to them.** The card
+	// used to carry one generic sentence saying the setup list names the right
+	// ones — which it does, on a different part of the page the user may not be
+	// looking at. Somebody reading the watchtower card wants the steps there.
+	writeData(w, map[string]any{
+		"towers":   out,
+		"guidance": watchtowerGuidance(s.cfg.Platform),
+	})
 }
 
 // towerView turns a stored tower into what the dashboard renders.
