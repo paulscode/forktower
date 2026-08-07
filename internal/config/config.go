@@ -245,6 +245,16 @@ type LNConfig struct {
 type LNDConfig struct {
 	// RESTAddr is the node's REST address, e.g. "https://127.0.0.1:8080".
 	RESTAddr string `toml:"rest_addr"`
+	// RESTHost is the stable name RESTAddr's address was resolved from, where
+	// the packaging resolved one rather than dialling a name directly.
+	//
+	// **Because a container's address outlives neither the container nor the
+	// user's next update.** StartOS 0.4.x issues lnd a certificate naming IP
+	// addresses and no DNS names, so its packaging resolves the sibling
+	// hostname once and dials the result — correct, and stale the moment lnd is
+	// updated and comes back on a different address. Keeping the name lets the
+	// address be looked up again rather than mourned.
+	RESTHost string `toml:"rest_host"`
 	// TLSCertPath is lnd's self-signed certificate, which is pinned rather than
 	// trusted through the system roots: the certificate is the node's identity
 	// here, and accepting any certificate for this address would mean no way to

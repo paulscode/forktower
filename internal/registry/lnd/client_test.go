@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -335,4 +336,93 @@ func selfSignedPEM(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+// A node that comes back on a different address is followed, not mourned.
+//
+// **Reported by a user who had done nothing but update lnd.** StartOS rebuilt
+// its container, it returned on a new address, and every read afterwards failed
+// with "no route to host" — while the dashboard kept serving the last good
+// inventory, so nothing looked wrong until a channel changed.
+func TestANodeThatMovedIsFollowed(t *testing.T) {
+	t.Parallel()
+
+	// A second loopback address, so the move is a change of host rather than of
+	// port — which is what happens on the platform: the port is fixed and the
+	// container's address is not.
+	ln, err := net.Listen("tcp", "127.0.0.2:0")
+	if err != nil {
+		t.Skipf("this system has no second loopback address: %v", err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"identity_pubkey":"02abc","version":"0.18.5"}`))
+		}))
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pointed at an address nothing is listening on, as a stale container
+	// address is, with the name that now resolves to where the node moved.
+	c := clientForTest(t, "http://127.0.0.1:"+port, ln.Addr().String())
+
+	if _, err := c.Info(t.Context()); err != nil {
+		t.Fatalf("a node that had moved was not followed: %v", err)
+	}
+}
+
+// It does not retry when the address has not changed, so a node that is simply
+// down costs one lookup rather than one per request.
+func TestANodeThatIsDownIsNotRetriedForEveryRequest(t *testing.T) {
+	t.Parallel()
+
+	c := clientForTest(t, "http://127.0.0.1:1", "127.0.0.1:1")
+	if _, err := c.Info(t.Context()); err == nil {
+		t.Fatal("a node that is down reported success")
+	}
+	// A second call must not re-resolve at all: the cooldown has not passed.
+	before := c.lastResolve
+	if _, err := c.Info(t.Context()); err == nil {
+		t.Fatal("a node that is down reported success")
+	}
+	if !c.lastResolve.Equal(before) {
+		t.Error("the name was looked up again inside the cooldown, so a node " +
+			"that stays down would produce a lookup for every request")
+	}
+}
+
+// clientForTest builds a client pointed at one address with a name that resolves
+// to another, without the TLS pinning the real constructor requires.
+func clientForTest(t *testing.T, base, resolvesTo string) *Client {
+	t.Helper()
+	host, _, err := net.SplitHostPort(resolvesTo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Client{
+		baseURL: base,
+		// A literal address resolves to itself, which is all the lookup needs.
+		resolveHost: host,
+		now:         time.Now,
+		http:        &http.Client{Timeout: 2 * time.Second},
+		log:         slog.New(discardHandler{}),
+	}
+}
+
+// swapHost keeps everything but the host, and reports honestly when nothing
+// changed — which is what stops the retry happening at all.
+func TestSwappingTheHostKeepsTheRest(t *testing.T) {
+	t.Parallel()
+	got, changed := swapHost("https://10.0.3.72:8080", "10.0.3.99")
+	if !changed || got != "https://10.0.3.99:8080" {
+		t.Errorf("swapHost = %q, %v", got, changed)
+	}
+	if _, changed := swapHost("https://10.0.3.72:8080", "10.0.3.72"); changed {
+		t.Error("an unchanged address was reported as a move, which would retry " +
+			"every failed request")
+	}
 }

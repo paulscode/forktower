@@ -355,6 +355,11 @@ export const main = sdk.setupMain(async ({ effects }) => {
 
   if (lndCredentials) {
     env.FORKTOWER_LND_REST_URL = `https://${lndCredentials.address}:${lndRestPort}`
+    // **The name the address came from.** That address belongs to a container,
+    // and updating lnd rebuilds it on a different one — after which every read
+    // fails with "no route to host" while the dashboard keeps serving the last
+    // good inventory. Reported by a user who had done nothing but update lnd.
+    env.FORKTOWER_LND_REST_HOST = lndHost
     env.FORKTOWER_LND_TLS_PATH = lndCredentials.cert
     env.FORKTOWER_LND_MACAROON_PATH = lndCredentials.macaroon
   }

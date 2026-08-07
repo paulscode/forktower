@@ -509,6 +509,11 @@ write_forktower_conf() {
     if [ -n "${FORKTOWER_LND_REST_URL:-}" ]; then
       printf '\n[[ln.lnd]]\n'
       printf 'rest_addr = "%s"\n' "${FORKTOWER_LND_REST_URL}"
+      # The name that address came from, so a node that moves can be followed
+      # rather than dialled at wherever it used to be.
+      if [ -n "${FORKTOWER_LND_REST_HOST:-}" ]; then
+        printf 'rest_host = "%s"\n' "${FORKTOWER_LND_REST_HOST}"
+      fi
       [ -n "${FORKTOWER_LND_TLS_PATH:-}" ] && \
         printf 'tls_cert_path = "%s"\n' "${FORKTOWER_LND_TLS_PATH}"
       [ -n "${FORKTOWER_LND_MACAROON_PATH:-}" ] && \

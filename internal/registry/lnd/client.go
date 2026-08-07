@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/paulscode/forktower/internal/registry"
@@ -38,6 +40,9 @@ type Options struct {
 	MacaroonPath string
 	Timeout      time.Duration
 	Logger       *slog.Logger
+	// ResolveHost is the stable name BaseURL's address was resolved from, where
+	// the packaging resolved one. Empty leaves the address fixed.
+	ResolveHost string
 }
 
 // Client reads channels from an LND node.
@@ -45,10 +50,19 @@ type Options struct {
 // Read-only by construction: there is no method here that changes anything, and
 // nothing in this package builds a request to an endpoint that would.
 type Client struct {
+	cred Credential
+	http *http.Client
+	log  *slog.Logger
+
+	// mu guards baseURL and lastResolve, which the re-resolve below rewrites
+	// while polls are in flight.
+	mu      sync.Mutex
 	baseURL string
-	cred    Credential
-	http    *http.Client
-	log     *slog.Logger
+	// resolveHost is the stable name baseURL's address was resolved from, empty
+	// where there is nothing to re-resolve. See reresolve.
+	resolveHost string
+	lastResolve time.Time
+	now         func() time.Time
 }
 
 // New builds a client, and inspects the credential it was given.
@@ -78,8 +92,10 @@ func New(opts Options) (*Client, error) {
 	}
 
 	c := &Client{
-		baseURL: strings.TrimRight(opts.BaseURL, "/"),
-		cred:    cred,
+		baseURL:     strings.TrimRight(opts.BaseURL, "/"),
+		resolveHost: opts.ResolveHost,
+		now:         time.Now,
+		cred:        cred,
 		http: &http.Client{
 			Timeout:   opts.Timeout,
 			Transport: &http.Transport{TLSClientConfig: tlsConfig},
@@ -131,9 +147,104 @@ func pinnedTLS(certPath string) (*tls.Config, error) {
 	return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, nil
 }
 
-// get performs one read.
+// reresolveEvery is the shortest gap between two attempts to look the node's
+// name up again.
+//
+// The reads that trigger it are minutes apart, so this only matters when
+// something is failing repeatedly — and then it is the difference between one
+// lookup a minute and one per failed request.
+const reresolveEvery = time.Minute
+
+// get performs one read, and follows the node if it has moved.
+//
+// **A container's address is only good for the life of that container.** On
+// StartOS 0.4.x the node's certificate names IP addresses and no DNS names, so
+// the address is deliberately resolved once at startup and dialled directly —
+// see the package's own comment on that decision. Updating lnd rebuilds its
+// container, it returns on a different address, and every read afterwards fails
+// with "no route to host" while the dashboard keeps serving the last good
+// inventory. Reported by a user who had done nothing but update their node.
+//
+// **One retry, never a loop.** The retry is a single extra attempt in a
+// straight line — not recursion, and not a loop that could spin. It happens only
+// when the address actually changed, and re-resolution itself is rate-limited,
+// so a node that is simply down costs one lookup a minute and nothing else.
 func (c *Client) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, http.NoBody)
+	err := c.getOnce(ctx, path, out)
+	if err == nil || !c.reresolve(ctx) {
+		return err
+	}
+	c.log.Info("your Lightning node answers on a different address than before, "+
+		"so the new one is being used", slog.String("address", c.base()))
+	return c.getOnce(ctx, path, out)
+}
+
+// base is the current address, read under the lock.
+func (c *Client) base() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.baseURL
+}
+
+// reresolve looks the node's name up again, and reports whether the address
+// changed.
+//
+// Returns false — meaning "do not retry" — whenever there is nothing to look up,
+// the lookup fails, or the answer is what we were already dialling. That last
+// case is the important one: it is what stops a node that is genuinely down from
+// producing a retry for every request.
+func (c *Client) reresolve(ctx context.Context) bool {
+	c.mu.Lock()
+	host, last, current := c.resolveHost, c.lastResolve, c.baseURL
+	c.mu.Unlock()
+
+	if host == "" {
+		return false
+	}
+	now := c.now()
+	if !last.IsZero() && now.Sub(last) < reresolveEvery {
+		return false
+	}
+
+	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+	c.mu.Lock()
+	c.lastResolve = now
+	c.mu.Unlock()
+	if err != nil || len(addrs) == 0 {
+		return false
+	}
+
+	updated, changed := swapHost(current, addrs[0])
+	if !changed {
+		return false
+	}
+	c.mu.Lock()
+	c.baseURL = updated
+	c.mu.Unlock()
+	return true
+}
+
+// swapHost rewrites the host of a URL, keeping everything else.
+func swapHost(raw, addr string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw, false
+	}
+	port := u.Port()
+	host := addr
+	if port != "" {
+		host = net.JoinHostPort(addr, port)
+	}
+	if host == u.Host {
+		return raw, false
+	}
+	u.Host = host
+	return strings.TrimRight(u.String(), "/"), true
+}
+
+// getOnce performs exactly one read, with no retry of any kind.
+func (c *Client) getOnce(ctx context.Context, path string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base()+path, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("building the request for %s: %w", path, err)
 	}

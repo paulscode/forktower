@@ -402,6 +402,7 @@ func (a *App) buildLNSources(
 		name := fmt.Sprintf("lnd-%d", i+1)
 		client, err := lnd.New(lnd.Options{
 			BaseURL:      n.RESTAddr,
+			ResolveHost:  n.RESTHost,
 			TLSCertPath:  n.TLSCertPath,
 			MacaroonPath: n.MacaroonPath,
 			Logger:       log.With(slog.String("component", name)),
