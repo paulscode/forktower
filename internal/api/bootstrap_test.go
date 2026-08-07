@@ -890,3 +890,42 @@ func TestTheMessageCarriesThePlatformsCommand(t *testing.T) {
 			"platform: %q", item.Detail)
 	}
 }
+
+// A tower that is merely settling is not accused of blocking anything.
+//
+// **The status matters, not just "is it reachable".** A tower that has stopped
+// answering while its client retries, or one nobody has asked about yet, is not
+// a dead registration — and the instruction attached to this message destroys
+// protection rather than merely worrying somebody, so a false positive is the
+// expensive direction.
+func TestATowerThatIsSettlingIsNotAccusedOfBlocking(t *testing.T) {
+	for _, status := range []store.TowerStatus{
+		store.TowerTemporarilyUnreachable,
+		store.TowerStatusUnknown,
+	} {
+		h := newHarness(t, func(c *Config) { c.RunsOwnWatchtower = true })
+		ctx := context.Background()
+
+		ours := putTower(t, h, "0315149f"+strings.Repeat("c", 56), true)
+		other := putTower(t, h, "021089ec"+strings.Repeat("b", 56), false)
+		if err := h.store.SetTowerStatus(ctx, other,
+			store.TowerHealth{Status: status}, 1_790_000_200); err != nil {
+			t.Fatal(err)
+		}
+		ch := addChannel(t, h, "aa"+strings.Repeat("0", 62), nil)
+		for _, c := range []store.Coverage{
+			{ChannelID: ch, TowerID: ours, Coverable: false, Reason: "no session"},
+			{ChannelID: ch, TowerID: other, Coverable: true, Reason: "holds a session"},
+		} {
+			if err := h.store.UpsertCoverage(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		item := findCheck(t, h.srv.Readiness(ctx), CheckTowerProtection)
+		if strings.Contains(item.Label, "cannot reach") {
+			t.Errorf("%s: told the user to delete a watchtower that may be fine: %q",
+				status, item.Label)
+		}
+	}
+}

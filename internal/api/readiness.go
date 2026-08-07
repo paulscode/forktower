@@ -316,7 +316,14 @@ func (s *Server) staleTowerCrowdingOut(
 		}
 	}
 	for _, t := range towers {
-		if t.Managed || !covering[t.ID] || t.Status == store.TowerReachable {
+		// **Only a tower whose retries are exhausted counts.** Any status other
+		// than reachable would also catch TowerTemporarilyUnreachable — which
+		// means answering, with its own node still catching up — and
+		// TowerStatusUnknown, which means nobody has asked yet. Accusing either
+		// would tell a user to delete a watchtower that is working, which is the
+		// settling mistake this codebase keeps making, here on an instruction
+		// that destroys protection rather than merely worrying somebody.
+		if t.Managed || !covering[t.ID] || t.Status != store.TowerUnreachable {
 			continue
 		}
 		return t, true

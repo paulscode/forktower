@@ -422,8 +422,12 @@ func (c *Client) pending(ctx context.Context) ([]registry.ChannelRecord, error) 
 // returning is not fatal — the poll is what guarantees progress, exactly as it
 // does for the chain views.
 func (c *Client) Watch(ctx context.Context, notify func()) error {
+	// **Through base(), like every other read.** baseURL is rewritten when the
+	// node moves, so reading it directly is a data race as well as a
+	// subscription that would keep reconnecting to wherever the node used to be.
+	// The poll re-resolves; this picks the new address up on its next attempt.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/v1/channels/subscribe", http.NoBody)
+		c.base()+"/v1/channels/subscribe", http.NoBody)
 	if err != nil {
 		return err
 	}
