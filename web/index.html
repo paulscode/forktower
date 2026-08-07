@@ -159,13 +159,14 @@
       </p>
       <ol class="steps">
         <li>
-          In your Lightning node's advanced settings, switch on the watchtower
-          client (<code>wtclient.active</code>) and restart it.
+          Switch on the watchtower client in your Lightning node's settings.
+          Every packaging calls it something slightly different, and the setup
+          steps on this page name yours.
         </li>
         <li>
-          Then run this, or paste the address into your node's watchtower
-          settings:
+          Then paste this address into your node's watchtower settings:
           <pre id="tower-command" class="command"></pre>
+          <button type="button" id="tower-copy" class="copy">Copy address</button>
         </li>
       </ol>
       <p class="quiet" id="tower-limits">

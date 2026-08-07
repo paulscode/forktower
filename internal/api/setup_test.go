@@ -86,14 +86,14 @@ func TestWatchtowerDirectionsMatchThePlatform(t *testing.T) {
 	}{
 		{
 			platform: config.PlatformStartOS04,
-			mustSay:  "Actions → Watchtower",
+			mustSay:  "Watchtower Client Settings",
 			// On 0.4.x the client turns itself on once a tower is listed; telling
 			// somebody to find wtclient.active sends them hunting for nothing.
-			mustNot: "wtclient.active",
+			mustNot: "Watchtower Client Enabled",
 		},
 		{
 			platform: config.PlatformStartOS035,
-			mustSay:  "wtclient.active",
+			mustSay:  "Watchtower Client Enabled",
 			mustNot:  "Advanced Settings",
 		},
 		{

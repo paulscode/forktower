@@ -369,3 +369,25 @@ footer { max-width: 46rem; margin: 0 auto; }
   background: var(--waiting);
   transition: width 0.4s ease;
 }
+
+/* The copy button beside the watchtower address.
+ *
+ * Small and quiet: it sits under a value the user has to move somewhere else,
+ * and it is there because the page re-renders often enough to clear a manual
+ * selection mid-drag. */
+.copy {
+  margin: 0.4rem 0 0;
+  padding: 0.3rem 0.7rem;
+  font: inherit;
+  font-size: 0.85rem;
+  border: 1px solid var(--surface-2, rgba(127, 127, 127, 0.35));
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.copy:hover,
+.copy:focus-visible {
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+}

@@ -744,6 +744,34 @@ function renderTowerCommand(uri, kind) {
   const usable = Boolean(uri && prefix);
   setText(box, usable ? prefix + uri : '');
   show(box, usable);
+
+  // **A button, because selecting the text does not survive.** This page
+  // re-renders every few seconds, which clears a selection mid-drag — so the
+  // obvious way to copy an address fails repeatedly and silently, on the one
+  // value the whole watchtower setup depends on being copied exactly.
+  const copy = el('tower-copy');
+  if (!copy) {
+    return;
+  }
+  show(copy, usable);
+  copy.onclick = () => copyText(box.textContent, copy);
+}
+
+// copyText puts a string on the clipboard and says whether it worked.
+//
+// Falls back to the old selection method because the clipboard API is refused
+// outside a secure context, and this dashboard is reached over a LAN address on
+// at least one platform.
+function copyText(text, button) {
+  const done = (ok) => {
+    setText(button, ok ? 'Copied' : 'Press Ctrl+C to copy');
+    setTimeout(() => setText(button, 'Copy address'), 4000);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
+    return;
+  }
+  done(false);
 }
 
 // ---------------------------------------------------------------------------

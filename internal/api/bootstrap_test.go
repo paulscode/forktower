@@ -523,7 +523,7 @@ func TestTheOneSaveConstraintIsStated(t *testing.T) {
 	t.Parallel()
 	joined := strings.Join(watchtowerGuidance(config.PlatformStartOS035), " ")
 	if !strings.Contains(joined, "same edit") && !strings.Contains(joined, "together") {
-		t.Errorf("the directions do not say both settings must be saved at once: %q",
+		t.Errorf("the directions do not say both settings must go in one save: %q",
 			joined)
 	}
 }

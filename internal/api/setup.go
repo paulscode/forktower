@@ -179,31 +179,43 @@ func watchtowerGuidance(platform config.Platform) []string {
 	switch platform {
 	case config.PlatformStartOS04:
 		return []string{
-			"Open the LND service in StartOS.",
-			"Go to Actions → Watchtower → Watchtower Client Settings.",
-			"Paste the address from the watchtower card on this page. LND turns " +
-				"its watchtower client on by itself once there is one in the list " +
-				"— there is no separate switch.",
+			"Open Services, then LND.",
+			"Click Actions and Config, then Watchtower Client Settings.",
+			"Set Enable Watchtower Client to Enabled.",
+			"Click + Add, paste the address from the watchtower card above, and " +
+				"click Submit.",
 		}
+
 	case config.PlatformStartOS035:
-		// **Both in one save, address first.** That package refuses to save the
-		// client as enabled with no tower listed, so the order this used to give
-		// — switch it on, save, then register — cannot be carried out at all.
+		// **One edit, not two.** That package refuses to save the client as
+		// enabled with no tower listed, so switching it on and registering
+		// afterwards cannot be carried out at all.
 		return []string{
-			"Copy the address from the watchtower card on this page.",
-			"Open the LND service in StartOS, and go to Config.",
-			"Add that address to the watchtower list, and turn on the watchtower " +
-				"client (wtclient.active), in the same edit. LND will not save the " +
-				"client as enabled with an empty list, so both have to go in together.",
-			"Save, and restart LND so it takes effect.",
+			"Open Services, then LND.",
+			"Click Config, and expand Watchtowers.",
+			"Set Watchtower Client Enabled to Enabled.",
+			"Click + Add, paste the address from the watchtower card above, and " +
+				"click Save. Both go in together — this package will not save the " +
+				"client as enabled with an empty list, so turning it on first and " +
+				"adding the address afterwards does not work.",
 		}
+
 	case config.PlatformUmbrel:
+		// **Two passes, and the restart between them is not optional.** Umbrel
+		// leaves the Add button disabled until the client has been switched on
+		// and the node restarted, so the address cannot go in on the first pass.
+		// Written out as two visits because somebody who expects one will find
+		// the button greyed out and conclude the page is broken.
 		return []string{
-			"Open the Lightning app in Umbrel.",
-			"Go to Advanced Settings, and turn on wtclient.active.",
-			"Restart the Lightning app so the setting takes effect.",
-			"Then register the address from the watchtower card on this page.",
+			"Open the Lightning app, then the three-dots menu, then Advanced Settings.",
+			"Expand Watchtower and turn on Watchtower Client.",
+			"Click Save and Restart Node. The Add button stays greyed out until " +
+				"this restart has happened, so it has to be done first.",
+			"When it is back, return to Advanced Settings and expand Watchtower again.",
+			"Paste the address from the watchtower card above, click Add, then " +
+				"click Save and Restart Node.",
 		}
+
 	case config.PlatformUnknown:
 		return nil
 	default:

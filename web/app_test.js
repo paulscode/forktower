@@ -991,3 +991,30 @@ test('the link panel offers our own tower when it is listed last', () => {
   assert.ok(shown.includes('ours@ours.onion:9911'),
     'the panel does not offer our own tower');
 });
+
+// The address can be copied with one click.
+//
+// **Because selecting it does not survive.** The page re-renders every few
+// seconds, which clears a selection mid-drag — so the obvious way to copy fails
+// repeatedly and silently, on the one value the whole watchtower setup depends
+// on being copied exactly. Reported from a live install.
+test('the watchtower address has a working copy button', () => {
+  let copied = '';
+  global.navigator = {
+    clipboard: { writeText: (t) => { copied = t; return Promise.resolve(); } },
+  };
+
+  app.renderTowers({
+    towers: [
+      { id: 1, managed: true, kind: 'lnd', uri: 'ours@ours.onion:9911', display: {} },
+    ],
+  });
+
+  const button = byID['tower-copy'];
+  assert.ok(button, 'no copy button was rendered');
+  button.onclick();
+  assert.ok(
+    copied.includes('ours@ours.onion:9911'),
+    'the button copied ' + JSON.stringify(copied) + ' rather than the address',
+  );
+});
