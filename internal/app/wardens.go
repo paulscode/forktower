@@ -63,6 +63,10 @@ func (a *App) buildWardens(cfg config.Config, log *slog.Logger, now func() time.
 		// your arrangement" when there is nothing here to register, and "register
 		// ours" when there is.
 		RunsOwnWatchtower: cfg.Tower.LND.Enabled || cfg.Tower.TEOS.Enabled,
+		// The other addresses our tower answers on. Without these, a node
+		// registered against the address the tower had *before* it was given an
+		// onion is reported as pointing somewhere dead, which it is not.
+		AlsoReachableAt: cfg.Tower.LND.AlsoReachableAt,
 	})
 	if err != nil {
 		return fmt.Errorf("setting up watching for towers you registered with: %w", err)
@@ -105,11 +109,12 @@ func (a *App) buildWarden(
 		// The Core Lightning side, for a teos tower. Nil for an LND one, and nil
 		// when the user runs no Core Lightning node — in which case the tower is
 		// still watched for liveness and nothing is claimed about coverage.
-		CLNClient:  a.clnTowerClient(kind, cfg, log),
-		TeosPubkey: conf.Pubkey,
-		Kind:       kind,
-		Managed:    true,
-		URI:        conf.Listen,
+		CLNClient:      a.clnTowerClient(kind, cfg, log),
+		TeosPubkey:     conf.Pubkey,
+		Kind:           kind,
+		Managed:        true,
+		URI:            conf.Listen,
+		CanAttachOnion: canAttachOnion(cfg.Platform),
 		// The chain the tower watches is the one the user's own node does not.
 		Branch: store.BranchSQ,
 		Now:    now,
@@ -250,4 +255,28 @@ func (a *App) clnTowerClient(
 		return client
 	}
 	return nil
+}
+
+// canAttachOnion says whether this packaging can give the companion tower a Tor
+// address on request, and therefore whether Forktower has asked it for one.
+//
+// **Only StartOS 0.4.x, and the difference is not cosmetic.** There, an lnd
+// routed through Tor cannot dial the tower's local address at all, and the
+// platform's Tor package will attach an onion when asked — so the remedy is to
+// approve that request. On StartOS 0.3.5.1 and Umbrel the node dials local
+// addresses directly, there is no onion to attach and no request is ever made;
+// telling those users to go and approve one would send them looking for a screen
+// that does not exist, which spends the credibility of the next message too.
+//
+// A self-hosted deployment is assumed not to, because nothing here knows what it
+// could do and guessing wrong costs more than saying less.
+func canAttachOnion(p config.Platform) bool {
+	switch p {
+	case config.PlatformStartOS04:
+		return true
+	case config.PlatformStartOS035, config.PlatformUmbrel, config.PlatformUnknown:
+		return false
+	default:
+		return false
+	}
 }

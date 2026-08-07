@@ -142,6 +142,20 @@ export const inputSpec = InputSpec.of({
     },
     default: 'info',
   }),
+  towerLogLevel: Value.select({
+    name: 'Watchtower log level',
+    description:
+      "The bundled watchtower's own logging, which is separate from " +
+      'Forktower\'s. Raise it only to find out whether a Lightning node\'s ' +
+      'connections are arriving; it is very verbose and the tower writes to ' +
+      'its own log file.',
+    values: {
+      info: 'Info',
+      debug: 'Debug',
+      trace: 'Trace',
+    },
+    default: 'info',
+  }),
 })
 
 export const config = sdk.Action.withInput(

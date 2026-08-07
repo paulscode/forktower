@@ -50,6 +50,22 @@ type Candidate struct {
 	//
 	// Only meaningful on a resolved candidate; ignored elsewhere.
 	Closes []string
+
+	// OnlyIfStanding drops this resolution when there is nothing open for it to
+	// close, instead of recording it as news in its own right.
+	//
+	// **This is what lets a producer declare its state rather than diff against
+	// memory.** A concern that is only withdrawn on the transition from bad to
+	// good is never withdrawn at all if the process restarts in between: the
+	// memory of having raised it is gone, and the warning stands on the dashboard
+	// forever. The fix is to say "this is fine" on every pass and let the alert
+	// layer ignore it — but a resolution ordinarily falls through and creates a
+	// row when it closes nothing, which would invent "your watchtower is working"
+	// news on every healthy install, once a minute.
+	//
+	// Set it where the resolution means *only* "whatever I said before no longer
+	// applies", and leave it off where the good news stands on its own.
+	OnlyIfStanding bool
 }
 
 // tierRank ranks the five alert tiers onto the three severities `min_tier`

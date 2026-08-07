@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"strings"
 
 	"github.com/paulscode/forktower/internal/store"
 )
@@ -47,6 +49,20 @@ const (
 	// Not a fault; worth knowing because the replacements carry today's fee
 	// rate, which is the only way that rate ever changes.
 	ConcernSessionsExhausted ConcernKind = "tower.sessions_exhausted"
+	// ConcernUnreachableFromNode means the registration is right, the tower is
+	// serving, and no session has been agreed anyway — which leaves the path
+	// between them.
+	//
+	// **Every other explanation has been ruled out by the time this fires.** The
+	// node knows the tower, the tower is up and accepting, the grace period is
+	// past, and there are channels wanting protection. What remains is that the
+	// dial does not arrive, and neither end will say so: lnd logs the failure at
+	// debug and reports the tower as an active session candidate regardless.
+	// Measured on StartOS 0.4.0.1, where the node routed every connection through
+	// Tor and the tower had only a local address — the proxy refused it, and for
+	// eighty-seven minutes the only visible symptom was a number that stayed at
+	// zero.
+	ConcernUnreachableFromNode ConcernKind = "tower.unreachable_from_node"
 )
 
 // Monitor watches what one node is backing up to one tower.
@@ -67,6 +83,14 @@ type Monitor struct {
 	// asked for one.
 	towerServing       bool
 	towerNotServingWhy string
+	// towerURI is the address a user would paste to register, carried here so a
+	// concern that asks them to re-register can say what to re-register *with*.
+	// Telling somebody to correct a registration without giving them the string
+	// is most of the way to telling them nothing.
+	towerURI string
+	// canAttachOnion says this packaging can give the tower a Tor address on
+	// request, which decides what the remedy is and is not the same everywhere.
+	canAttachOnion bool
 	// lowFeeSatPerVByte, when set, is the rate below which a session's baked-in
 	// fee is worth mentioning.
 	lowFeeSatPerVByte uint32
@@ -85,6 +109,11 @@ type MonitorOptions struct {
 	// reported as a node that has not asked for one.
 	TowerServing       bool
 	TowerNotServingWhy string
+	// TowerURI is the address a user would paste to register with this tower.
+	TowerURI string
+	// CanAttachOnion says this packaging can give the tower a Tor address, and
+	// that Forktower has asked it to when there is none.
+	CanAttachOnion bool
 }
 
 // NewMonitor builds a Monitor.
@@ -103,6 +132,8 @@ func NewMonitor(opts MonitorOptions) (*Monitor, error) {
 		registeredForSeconds: opts.RegisteredForSeconds,
 		towerServing:         opts.TowerServing,
 		towerNotServingWhy:   opts.TowerNotServingWhy,
+		towerURI:             opts.TowerURI,
+		canAttachOnion:       opts.CanAttachOnion,
 		lowFeeSatPerVByte:    opts.LowFeeSatPerVByte,
 	}, nil
 }
@@ -118,6 +149,17 @@ type Pass struct {
 	ClientActive bool
 	// Registered is whether the node knows about our tower at all.
 	Registered bool
+	// Settled names the concerns this pass positively established do *not*
+	// apply, as opposed to the ones it simply could not judge.
+	//
+	// **The distinction is what stops a restart stranding a warning.** A concern
+	// withdrawn only when this process remembers raising it is never withdrawn
+	// if the daemon restarts between the fault and its repair. Withdrawing it
+	// whenever it is merely absent is worse: absence is also what "the tower is
+	// still starting" and "the grace period has not passed" look like, and
+	// retiring a real warning on that basis tells somebody their protection is
+	// back when nothing was checked.
+	Settled []ConcernKind
 }
 
 // Check looks at what the node is backing up and decides what it means for each
@@ -184,10 +226,138 @@ func (m *Monitor) Check(
 	}
 
 	held := sessionsByPolicy(ours)
+	switch c, verdict := m.unreachableFromNode(found, held, channels); verdict {
+	case registrationStale:
+		pass.Concerns = append(pass.Concerns, c)
+	case registrationGood:
+		pass.Settled = append(pass.Settled, ConcernUnreachableFromNode)
+	case registrationUnknown:
+		// Nothing established. Whatever was said before stands.
+	}
 	pass.Coverage, pass.Concerns = m.assessChannels(
 		channels, held, clientVersion, previous, now, pass.Concerns)
 	pass.Concerns = append(pass.Concerns, m.feeConcerns(ours)...)
 	return pass, nil
+}
+
+// unreachableFromNode reports the case where nothing is wrong at either end and
+// there is still no session.
+//
+// The conditions are deliberately narrow, because this concern names a cause
+// rather than describing a symptom and it must be right when it does. Every one
+// of them removes a competing explanation: registered rules out the user not
+// having done it, serving rules out the tower, the grace period rules out
+// negotiation still being under way, and having channels rules out there being
+// nothing to protect.
+//
+// **Zero sessions on an old registration means it has never once worked.** lnd
+// keeps a session after it is negotiated — it does not drop them when a tower
+// stops answering, which was checked on hardware while the tower's address was
+// being changed underneath it. So no session here is not "the link is down
+// today", it is "no channel state has ever reached this tower", and the message
+// says so, because that is the fact that makes somebody act.
+//
+// The three-way answer matters as much as the concern. A session existing is
+// positive evidence that the path works and is the only thing that retires this;
+// everything else — a tower still starting, a node with no channels, a fresh
+// registration — is "cannot tell", and must leave whatever was said standing.
+func (m *Monitor) unreachableFromNode(
+	registered bool, held map[PolicyType]policyFigures, channels []store.Channel,
+) (Concern, registrationVerdict) {
+	switch {
+	case !registered, len(channels) == 0, !m.towerServing,
+		m.registeredForSeconds < GracePeriodSeconds:
+		return Concern{}, registrationUnknown
+	case len(held) > 0:
+		// Sessions exist, so the node has reached the tower. Nothing else this
+		// concern could be about.
+		return Concern{}, registrationGood
+	}
+	return Concern{
+		Kind:    ConcernUnreachableFromNode,
+		TowerID: m.towerID,
+		Message: m.reRegisterMessage(),
+	}, registrationStale
+}
+
+// reRegisterMessage explains why a registration that exists has to be made again.
+//
+// **Written against the reason it would otherwise be ignored.** Somebody reading
+// this has already registered their node, remembers doing it, and can see the
+// tower listed on their own node when they check — so "register your watchtower"
+// reads as a mistake by Forktower and gets dismissed. It has to open by agreeing
+// with them: the registration is there, it looks right, and it has still never
+// carried a single backup. Only then does the instruction land.
+//
+// **The remedy differs by packaging and the first version of this did not.** It
+// told everybody the tower needed a Tor address and that Forktower had asked for
+// one on their behalf. That is true on StartOS 0.4.x, where the address the tower
+// had was one a Tor-routed node cannot dial and the platform can attach an onion
+// on request. On StartOS 0.3.5.1 and Umbrel it is false twice over: those nodes
+// dial local addresses directly, and no such request is ever made — so it would
+// have sent those users hunting for a screen that does not exist, which is worse
+// than saying nothing.
+func (m *Monitor) reRegisterMessage() string {
+	const (
+		lead = "your node is registered with this watchtower and the tower is " +
+			"running, but not one channel state has ever reached it — no backup, " +
+			"since the day you registered. Nothing on your node will tell you " +
+			"this: it still lists the tower as usable and retries in silence."
+		fault = " The registration itself is fine. What is wrong is the address " +
+			"inside it: your node cannot open a connection to it."
+		viaTor = " That is what happens when the node sends its connections " +
+			"through Tor, which will not carry one to a local network address."
+	)
+
+	switch {
+	case isOnionURI(m.towerURI):
+		// An onion works from a node dialling directly and from one routed
+		// through Tor, so this branch is the same advice on every platform.
+		return lead + fault + viaTor + " The tower now has a Tor address, which " +
+			"your node can reach. Re-register it with the new address — the old " +
+			"one will not start working on its own:\n\n" +
+			"    lncli wtclient remove " + m.towerPubkey + "\n" +
+			"    lncli wtclient add " + m.towerURI + "\n\n" +
+			"Nothing is lost by doing this: no backups were ever made under the " +
+			"old registration, and your channels are protected from the moment " +
+			"the first session is agreed, which takes a couple of minutes."
+
+	case m.canAttachOnion:
+		// No onion to hand them, so re-registering now would reproduce the same
+		// failure. Ask for the address first.
+		return lead + fault + viaTor + " The tower does not have a Tor address " +
+			"yet, and Forktower cannot create one for it — that is done from the " +
+			"Tor service, and Forktower has asked it for one on your behalf. Look " +
+			"for that request, approve it, and re-register your node afterwards."
+
+	default:
+		// Nothing here can attach an onion, so there is no request to point at
+		// and no new address to paste. Say what is known and no more: the address
+		// is where the tower is, and the connection is not arriving anyway.
+		return lead + fault + " The address it has is where the tower is, so " +
+			"something between the two is stopping the connection. The usual cause " +
+			"is the node being set to send every connection through Tor, which " +
+			"will not carry one to a local address. Check that setting on your " +
+			"node first; otherwise check that nothing between them is blocking " +
+			"port " + portOf(m.towerURI) + "."
+	}
+}
+
+// portOf is the port a client would dial, for a message that has to name it.
+func portOf(uri string) string {
+	if _, port, err := net.SplitHostPort(hostPortOf(uri)); err == nil && port != "" {
+		return port
+	}
+	return "9911"
+}
+
+// isOnionURI says whether an address is one a Tor-routed node could dial.
+func isOnionURI(uri string) bool {
+	host := hostPortOf(uri)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(host)), ".onion")
 }
 
 // assessChannels decides coverage for each channel and collects what is wrong.

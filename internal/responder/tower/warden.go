@@ -57,10 +57,16 @@ type Warden struct {
 	kind              store.TowerKind
 	// managed is whether this installation runs the tower. It changes what may
 	// honestly be said about fixing it.
-	managed  bool
-	uri      string
-	interval time.Duration
-	now      func() time.Time
+	managed bool
+	uri     string
+	// canAttachOnion says this packaging can give the tower a Tor address, and
+	// that Forktower has asked it to when there is none. Only StartOS 0.4.x can:
+	// the 0.3.5.1 and Umbrel packages advertise the only address they have, and
+	// telling those users to go and approve a request nobody made would send them
+	// looking for a screen that does not exist.
+	canAttachOnion bool
+	interval       time.Duration
+	now            func() time.Time
 	// events carries the chain the tower watches, so that a teos subscription's
 	// expiry height can be measured against something. Nil for an LND tower,
 	// which has no expiry to measure.
@@ -76,6 +82,11 @@ type Warden struct {
 	// lastConcerns is what was last said, so a standing problem is not repeated
 	// on every pass. A concern that goes away and comes back is said again.
 	lastConcerns map[string]bool
+	// settledSaid records which "this no longer applies" declarations have been
+	// made since this process started. They are declared rather than diffed
+	// against lastConcerns precisely because a restart empties that memory, so
+	// they need a memory of their own to avoid repeating every pass.
+	settledSaid map[ConcernKind]bool
 	// previous is the coverage from the last pass, which is what makes a stalled
 	// backup count visible.
 	previous []store.Coverage
@@ -108,6 +119,9 @@ type WardenOptions struct {
 	Kind              store.TowerKind
 	Managed           bool
 	URI               string
+	// CanAttachOnion says this packaging can give the tower a Tor address on
+	// request. See the field of the same name on Warden.
+	CanAttachOnion bool
 	// TeosPubkey identifies our teos tower among those the node has registered
 	// with, and TeosSlots is the subscription size the tower was configured with,
 	// so that "running low" can be judged as a fraction rather than only as
@@ -147,11 +161,13 @@ func NewWarden(opts WardenOptions) (*Warden, error) {
 		supervisor: opts.Supervisor, client: opts.Client, clnClient: opts.CLNClient,
 		lowFeeSatPerVByte: opts.LowFeeSatPerVByte,
 		kind:              opts.Kind, managed: opts.Managed, uri: opts.URI,
+		canAttachOnion:   opts.CanAttachOnion,
 		teosPubkey:       opts.TeosPubkey,
 		teosSlotsAtStart: opts.TeosSlots,
 		branch:           opts.Branch,
 		interval:         opts.Interval, now: opts.Now,
 		lastConcerns: map[string]bool{},
+		settledSaid:  map[ConcernKind]bool{},
 		// The chain the tower watches, for the one thing that needs a height: a
 		// teos subscription lapses at one, and nothing else here reads a tip.
 		events: opts.Bus.Subscribe(
@@ -225,7 +241,7 @@ func (w *Warden) pass(ctx context.Context) {
 				obs.UsedBytes>>20, obs.LimitBytes>>20),
 		})
 	}
-	coverage, assessed := w.checkCoverage(ctx, obs, now)
+	coverage, settled, assessed := w.checkCoverage(ctx, obs, now)
 	concerns = append(concerns, coverage...)
 
 	for _, c := range concerns {
@@ -242,7 +258,7 @@ func (w *Warden) pass(ctx context.Context) {
 	// had been switched on every time the tower restarted, then warn them again a
 	// minute later.
 	if assessed {
-		w.forgetResolved(concerns)
+		w.forgetResolved(concerns, settled)
 	}
 }
 
@@ -385,22 +401,25 @@ func (w *Warden) announceHealth(obs Observation) {
 // wrong" — the tower's RPC still starting up is the common one — and a caller
 // that read an empty list as all-clear would announce that every concern had
 // been fixed, then raise them all again on the next pass.
-func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) (_ []Concern, assessed bool) {
+func (w *Warden) checkCoverage(
+	ctx context.Context, obs Observation, now int64,
+) (_ []Concern, settled []ConcernKind, assessed bool) {
 	if w.towerID.Load() == 0 {
-		return nil, false
+		return nil, nil, false
 	}
 	if w.kind == store.TowerTeos {
-		return w.checkTeosCoverage(ctx, now)
+		concerns, ok := w.checkTeosCoverage(ctx, now)
+		return concerns, nil, ok
 	}
 	if w.client == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	// Built on the first pass that learns the tower's own identity, and rebuilt
 	// when the registration age moves. Not at construction: the pubkey and the
 	// version both come from the tower, and a monitor built before it answered
 	// would be one that could not recognise it.
 	if obs.Identity.Pubkey == "" {
-		return nil, false
+		return nil, nil, false
 	}
 	monitor, err := NewMonitor(MonitorOptions{
 		Client: w.client, TowerID: w.towerID.Load(),
@@ -413,10 +432,14 @@ func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) 
 		// nothing, and the user's node is already dialling it on a retry.
 		TowerServing:       obs.Health.Status == store.TowerReachable,
 		TowerNotServingWhy: obs.Health.Detail,
+		// The address to hand back when telling somebody to re-register. Asking
+		// for that without supplying it is most of the way to asking nothing.
+		TowerURI:       w.uriOf(obs),
+		CanAttachOnion: w.canAttachOnion,
 	})
 	if err != nil {
 		w.log.Error("setting up the coverage check", slog.String("error", err.Error()))
-		return nil, false
+		return nil, nil, false
 	}
 	w.monitor = monitor
 
@@ -424,19 +447,19 @@ func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) 
 	if listErr != nil {
 		w.log.Error("reading channels to check their protection",
 			slog.String("error", listErr.Error()))
-		return nil, false
+		return nil, nil, false
 	}
 	if len(channels) == 0 {
 		// Nothing to have an opinion about. Not an all-clear: with no channels
 		// there is no way to tell whether the node's client is switched on, and
 		// saying so would be a guess dressed as good news.
-		return nil, false
+		return nil, nil, false
 	}
 
 	pass, err := w.monitor.Check(ctx, channels, w.previous, now)
 	if err != nil {
 		w.log.Error("reading what your node is backing up", slog.String("error", err.Error()))
-		return nil, false
+		return nil, nil, false
 	}
 
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
@@ -445,14 +468,14 @@ func (w *Warden) checkCoverage(ctx context.Context, obs Observation, now int64) 
 		if err := w.store.UpsertCoverage(writeCtx, c); err != nil {
 			w.log.Error("recording what this tower protects",
 				slog.String("error", err.Error()))
-			return nil, false
+			return nil, nil, false
 		}
 	}
 
 	pass.Concerns = append(pass.Concerns, w.monitor.StalledBackups(
 		pass.Coverage, w.previous, advancedSince(w.previous, pass.Coverage))...)
 	w.previous = pass.Coverage
-	return pass.Concerns, true
+	return pass.Concerns, pass.Settled, true
 }
 
 // checkTeosCoverage is the Core Lightning arm.
@@ -573,6 +596,8 @@ func advancedSince(previous, current []store.Coverage) map[int64]bool {
 // again if it goes away and comes back, because that is news.
 func (w *Warden) raise(c Concern) {
 	key := fmt.Sprintf("%s:%d", c.Kind, c.ChannelID)
+	// Raising it again means the next settling is news again.
+	delete(w.settledSaid, c.Kind)
 	if w.lastConcerns[key] {
 		return
 	}
@@ -591,11 +616,39 @@ func (w *Warden) raise(c Concern) {
 // change a setting on their own node — had no visible outcome. They came back to
 // the same sentence and no way to tell whether it was current or a record of
 // something already dealt with.
-func (w *Warden) forgetResolved(current []Concern) {
+func (w *Warden) forgetResolved(current []Concern, settled []ConcernKind) {
 	still := make(map[string]bool, len(current))
 	for _, c := range current {
 		still[fmt.Sprintf("%s:%d", c.Kind, c.ChannelID)] = true
 	}
+
+	// **Positively settled, so declared rather than diffed against memory.** The
+	// loop below withdraws only what *this process* remembers raising, which
+	// means a restart between a fault and its repair strands the warning forever
+	// with nothing able to retire it. These are the ones the pass proved do not
+	// apply, so they are announced whether or not memory knows about them; the
+	// alert layer drops the announcement when nothing is standing — see
+	// Candidate.OnlyIfStanding.
+	//
+	// Only what was proven. "Absent" is not "settled": a tower still starting and
+	// a grace period still running both look like absence, and retiring a real
+	// warning on that basis is the failure this exists to avoid.
+	for _, kind := range settled {
+		key := fmt.Sprintf("%s:%d", kind, 0)
+		delete(w.lastConcerns, key)
+		// Once per start, not once a minute. A restart is the only way a standing
+		// warning can be stranded, so declaring at the first opportunity after one
+		// is enough — and repeating it every pass would be a bus event a minute
+		// saying nothing has happened.
+		if w.settledSaid[kind] {
+			continue
+		}
+		w.settledSaid[kind] = true
+		w.bus.Publish(bus.TowerConcern{
+			TowerID: w.towerID.Load(), Concern: string(kind), Cleared: true,
+		})
+	}
+
 	for key := range w.lastConcerns {
 		if still[key] {
 			continue

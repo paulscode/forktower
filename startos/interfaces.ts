@@ -46,10 +46,18 @@ export const setInterfaces = sdk.setupInterfaces(async ({ effects }) => {
    * address list — no public gateway and no onion — so the tower is reachable
    * on the internal network and nowhere else.
    *
-   * That is what the package wants and it is why the address advertised is
-   * `forktower.startos:9911`, the sibling-service convention the rest of this
-   * file's neighbours use. The declaration stays because the binding is what
-   * opens the port; it is not what exposes it.
+   * **That measurement was right and what was concluded from it was wrong.** It
+   * was read as "good, internal-only is what we want", and the advertised address
+   * became `forktower.startos:9911`. An empty address list is not a safe default;
+   * it is a tower with no address a Tor-routed node can dial, and an lnd
+   * configured to send every connection through Tor — the case that broke — can
+   * reach neither a `.startos` name nor a private address, because the proxy
+   * refuses both.
+   *
+   * So the binding stays and so does the empty list: the platform is right not to
+   * publish anything on its own. What changed is that `main.ts` now asks the Tor
+   * package for an onion and advertises it when there is one, which is a decision
+   * the user makes rather than one the declaration makes for them.
    */
   const towerMulti = sdk.MultiHost.of(effects, 'tower')
   const towerOrigin = await towerMulti.bindPort(towerPort, {

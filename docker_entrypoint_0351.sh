@@ -153,7 +153,39 @@ export FORKTOWER_SQ_P2P_PORT=8433
 # session from anyone who can reach it and has no allowlist.
 export FORKTOWER_TOWER_LND_ENABLED="$(cfg '.watchtower.enabled' 'true')"
 export FORKTOWER_TOWER_LND_BIND="0.0.0.0:9911"
-export FORKTOWER_TOWER_LND_EXTERNAL_ADDR="${FORKTOWER_HOST:-forktower.embassy}:9911"
+
+# **The onion, when the platform has given us one, and the sibling hostname when
+# it has not.**
+#
+# This file used to advertise `forktower.embassy:9911` and nothing else, which
+# reads as the obvious answer and rots. lnd does not keep the name it is given —
+# it resolves the address when the tower is added and stores the number — so the
+# next time this container is rebuilt on a different address the registration
+# points at nothing, still listed, with no backup arriving and nothing on the
+# node saying so. Measured on hardware: a node registered at `172.18.0.18` while
+# the tower had moved to `172.18.0.24`.
+#
+# `manifest.yaml` declares a `watchtower` interface with a `tor-config`, so the
+# platform assigns this tower an onion of its own — separate from the dashboard's
+# and with no `.local` name — and `getConfig.ts` points at it with a top-level
+# pointer. That address survives rebuilds and updates, so a registration made
+# against it is made once.
+#
+# The sibling hostname stays in the alternates list rather than being dropped: it
+# still reaches the tower, and a node registered against it before this change is
+# working perfectly. Leaving it out would report every one of those registrations
+# as pointing somewhere dead.
+TOWER_ONION="$(cfg '.watchtower-address' '')"
+TOWER_SIBLING="${FORKTOWER_HOST:-forktower.embassy}:9911"
+if [ -n "${TOWER_ONION}" ]; then
+  export FORKTOWER_TOWER_LND_EXTERNAL_ADDR="${TOWER_ONION}:9911"
+  export FORKTOWER_TOWER_LND_ALSO_REACHABLE_AT="${TOWER_SIBLING}"
+else
+  # No onion yet — a first boot before the platform has assigned one, or an
+  # older config that predates the pointer. The sibling hostname works; it is
+  # only the durability that is lost.
+  export FORKTOWER_TOWER_LND_EXTERNAL_ADDR="${TOWER_SIBLING}"
+fi
 export FORKTOWER_LOG_LEVEL="$(cfg '.advanced.log-level' 'info')"
 
 NTFY_URL="$(cfg '.notifications.ntfy-url' '')"

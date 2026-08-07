@@ -415,6 +415,20 @@ type TowerInstance struct {
 	// wildcard — see validateTowers.
 	Listen string `toml:"listen"`
 
+	// AlsoReachableAt are the other addresses this tower answers on.
+	//
+	// **The address advertised is not the only address that works, and treating
+	// it as such accuses working registrations of being broken.** A tower with an
+	// onion is still reachable on the sibling hostname it had before, and a node
+	// registered against that hostname months ago goes on backing up perfectly
+	// well. Checking a registration against `Listen` alone would tell every one
+	// of those users to go and redo something that is not wrong — on the one
+	// screen where a false alarm costs the most, because the true version of the
+	// same warning means their channels are unprotected.
+	//
+	// Empty is fine and common. Nothing is inferred from it.
+	AlsoReachableAt []string `toml:"also_reachable_at"`
+
 	// APIURL is where Forktower reads the tower's own status. Not the address
 	// clients connect to: that is Listen, and it speaks a different protocol.
 	APIURL string `toml:"api_url"`

@@ -150,6 +150,9 @@ func envBindings() []envBinding {
 
 		yesNo("TOWER_LND_ENABLED", func(c *Config, b bool) { c.Tower.LND.Enabled = b }),
 		str("TOWER_LND_LISTEN", func(c *Config, v string) { c.Tower.LND.Listen = v }),
+		str("TOWER_LND_ALSO_REACHABLE_AT", func(c *Config, v string) {
+			c.Tower.LND.AlsoReachableAt = splitList(v)
+		}),
 		str("TOWER_LND_API_URL", func(c *Config, v string) { c.Tower.LND.APIURL = v }),
 		str("TOWER_LND_MACAROON_PATH", func(c *Config, v string) { c.Tower.LND.MacaroonPath = v }),
 		str("TOWER_LND_TLS_CERT_PATH", func(c *Config, v string) { c.Tower.LND.TLSCertPath = v }),
@@ -180,4 +183,19 @@ func EnvKeys() []string {
 		keys = append(keys, b.key)
 	}
 	return keys
+}
+
+// splitList reads a comma-separated environment value as a list.
+//
+// Blanks are dropped rather than kept as empty strings: a value assembled by a
+// shell from a variable that happened to be unset produces stray commas, and an
+// empty address in the middle of a list is not a fact about anything.
+func splitList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }

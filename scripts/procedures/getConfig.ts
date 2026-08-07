@@ -5,7 +5,17 @@ import { compat, types as T } from "../deps.ts";
 // Short on purpose: most of what Forktower needs it works out for itself — which
 // Lightning node is installed, where the Bitcoin node is, what the fork's
 // heights are (the node reports them). What is left here is genuinely a choice.
-export const getConfig: T.ExpectedExports.getConfig = compat.getConfig({
+/**
+ * The settings this package accepts.
+ *
+ * **Exported so the migration can walk it.** StartOS checks a saved config
+ * against the *current* spec when it reconfigures, and offers a missing key to
+ * the spec as null — which a boolean refuses. So a config saved before a field
+ * existed fails the check and the install with it. The repair belongs in a
+ * migration, and a migration that has to be told the defaults by hand is a
+ * migration that will be forgotten; it reads them from here instead.
+ */
+export const configSpec = {
   "second-node": {
     type: "object",
     name: "Second Bitcoin node",
@@ -91,6 +101,42 @@ export const getConfig: T.ExpectedExports.getConfig = compat.getConfig({
       },
     },
   },
+  // **The address the user's Lightning node dials, taken from the platform
+  // rather than written down — and deliberately not nested in an object.**
+  //
+  // This package declares a `watchtower` interface with a `tor-config` and no
+  // `lan-config`, so StartOS gives it an onion of its own and no `.local` name.
+  // That address survives the container being rebuilt, which the sibling
+  // hostname does not: lnd resolves the name when the tower is added and stores
+  // the number, so the next rebuild leaves the registration pointing at nothing
+  // with no backup arriving and nothing on the node saying so. Measured on
+  // hardware, where a node sat registered at `172.18.0.18` while the tower had
+  // moved to `172.18.0.24`.
+  //
+  // **Top-level because a new object would break every existing install.** When
+  // StartOS re-runs `configure` after an update it checks the *saved* config
+  // against the *new* spec, and a missing key is offered to the spec as null:
+  // `ValueSpecObject::matches(Null)` is `NotNullable`, so wrapping this in an
+  // object would fail that check for everybody who had configured the package
+  // before — and it would need a migration to undo. A pointer matches null
+  // happily and is then overwritten by the dereference, so it costs nothing and
+  // needs no migration. Read from the platform source rather than guessed.
+  //
+  // A pointer rather than something the user types: the address is the
+  // platform's to know, and asking somebody to copy their own onion into a box
+  // is asking them to make a mistake.
+  "watchtower-address": {
+    type: "pointer",
+    name: "Watchtower Tor address",
+    description:
+      "Where your Lightning node reaches this watchtower. Assigned by StartOS " +
+      "and stable across updates, so a registration made against it does not " +
+      "have to be redone.",
+    subtype: "package",
+    target: "tor-address",
+    "package-id": "forktower",
+    interface: "watchtower",
+  },
   advanced: {
     type: "object",
     name: "Advanced",
@@ -111,4 +157,9 @@ export const getConfig: T.ExpectedExports.getConfig = compat.getConfig({
       },
     },
   },
-});
+} as const;
+
+export const getConfig: T.ExpectedExports.getConfig = compat.getConfig(
+  configSpec as unknown as Parameters<typeof compat.getConfig>[0],
+);
+

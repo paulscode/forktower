@@ -301,3 +301,241 @@ func mustAbs(t *testing.T, path string) string {
 	}
 	return p
 }
+
+// The entrypoint has to render the alternate addresses as a TOML array the
+// daemon can read back.
+//
+// **Asserted against the rendered file, not against a loaded Config.** The first
+// version of this test called `Load` with the same variables set in the
+// environment, which overlays them on top of whatever the file said — so it
+// passed while the entrypoint was rendering an empty list. A test of rendering
+// has to read what was rendered.
+func TestTheOtherAddressesTheTowerAnswersOnSurviveRendering(t *testing.T) {
+	t.Parallel()
+	entrypoint := "../../docker_entrypoint.sh"
+	if _, err := os.Stat(entrypoint); err != nil {
+		t.Skipf("no entrypoint to run: %v", err)
+	}
+
+	dir := t.TempDir()
+	cmd := exec.Command("sh", entrypoint, "--render-only")
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"FORKTOWER_DATA_DIR=" + dir,
+		"FORKTOWER_SF_RPC_URL=http://127.0.0.1:8332",
+		"FORKTOWER_SF_RPC_USER=u",
+		"FORKTOWER_SF_RPC_PASS=p",
+		"FORKTOWER_TOWER_LND_ENABLED=true",
+		"FORKTOWER_TOWER_LND_BIND=0.0.0.0:9911",
+		"FORKTOWER_TOWER_LND_EXTERNAL_ADDR=abcdef.onion:9911",
+		// One address, no trailing comma: the case every real deployment has,
+		// and the one a `tr | read` pipeline silently drops.
+		"FORKTOWER_TOWER_LND_ALSO_REACHABLE_AT=forktower.startos:9911",
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the entrypoint failed: %v\n%s", err, out)
+	}
+
+	rendered, err := os.ReadFile(filepath.Join(dir, "forktower.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rendered), `also_reachable_at = ["forktower.startos:9911"]`) {
+		t.Errorf("the rendered config does not list the sibling hostname — "+
+			"without it, every registration made before the tower had an onion is "+
+			"reported as pointing somewhere dead. Got:\n%s", rendered)
+	}
+
+	// And it still parses, which is the other half of rendering an array by hand.
+	cfg, err := Load(filepath.Join(dir, "forktower.toml"))
+	if err != nil {
+		t.Fatalf("the daemon would refuse to start: %v", err)
+	}
+	if got := cfg.Tower.LND.AlsoReachableAt; len(got) != 1 {
+		t.Errorf("tower.lnd.also_reachable_at parsed as %q, want one address", got)
+	}
+}
+
+// Several addresses, because rendering a list by hand is where separators go
+// wrong and a malformed array stops the daemon starting at all.
+func TestSeveralOtherAddressesRenderAsAValidArray(t *testing.T) {
+	t.Parallel()
+	entrypoint := "../../docker_entrypoint.sh"
+	if _, err := os.Stat(entrypoint); err != nil {
+		t.Skipf("no entrypoint to run: %v", err)
+	}
+
+	dir := t.TempDir()
+	cmd := exec.Command("sh", entrypoint, "--render-only")
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"FORKTOWER_DATA_DIR=" + dir,
+		"FORKTOWER_SF_RPC_URL=http://127.0.0.1:8332",
+		"FORKTOWER_SF_RPC_USER=u",
+		"FORKTOWER_SF_RPC_PASS=p",
+		"FORKTOWER_TOWER_LND_ENABLED=true",
+		"FORKTOWER_TOWER_LND_BIND=0.0.0.0:9911",
+		"FORKTOWER_TOWER_LND_EXTERNAL_ADDR=abcdef.onion:9911",
+		"FORKTOWER_TOWER_LND_ALSO_REACHABLE_AT=a.startos:9911,b.startos:9911",
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the entrypoint failed: %v\n%s", err, out)
+	}
+
+	cfg, err := Load(filepath.Join(dir, "forktower.toml"))
+	if err != nil {
+		t.Fatalf("the daemon would refuse to start: %v", err)
+	}
+	got := cfg.Tower.LND.AlsoReachableAt
+	if len(got) != 2 || got[0] != "a.startos:9911" || got[1] != "b.startos:9911" {
+		t.Errorf("tower.lnd.also_reachable_at = %q, want both addresses", got)
+	}
+}
+
+// An empty value is the ordinary case — the tower is advertised at the only
+// address it has — and must not become a list containing nothing.
+func TestNoOtherAddressesRendersNothing(t *testing.T) {
+	t.Parallel()
+	entrypoint := "../../docker_entrypoint.sh"
+	if _, err := os.Stat(entrypoint); err != nil {
+		t.Skipf("no entrypoint to run: %v", err)
+	}
+
+	dir := t.TempDir()
+	cmd := exec.Command("sh", entrypoint, "--render-only")
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"FORKTOWER_DATA_DIR=" + dir,
+		"FORKTOWER_SF_RPC_URL=http://127.0.0.1:8332",
+		"FORKTOWER_SF_RPC_USER=u",
+		"FORKTOWER_SF_RPC_PASS=p",
+		"FORKTOWER_TOWER_LND_ENABLED=true",
+		"FORKTOWER_TOWER_LND_BIND=0.0.0.0:9911",
+		"FORKTOWER_TOWER_LND_EXTERNAL_ADDR=forktower.startos:9911",
+		"FORKTOWER_TOWER_LND_ALSO_REACHABLE_AT=",
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the entrypoint failed: %v\n%s", err, out)
+	}
+
+	cfg, err := Load(filepath.Join(dir, "forktower.toml"))
+	if err != nil {
+		t.Fatalf("the daemon would refuse to start: %v", err)
+	}
+	if got := cfg.Tower.LND.AlsoReachableAt; len(got) != 0 {
+		t.Errorf("tower.lnd.also_reachable_at = %q, want nothing at all", got)
+	}
+}
+
+// **The 0.3.5.1 packaging, end to end through its own entrypoint.**
+//
+// That package declares a `watchtower` interface with a `tor-config`, so the
+// platform assigns the tower an onion of its own — a stable address, unlike the
+// sibling hostname lnd flattens to a container number that dies on the next
+// rebuild. This runs the real `docker_entrypoint_0351.sh` against a config file
+// shaped like the one StartOS writes, and checks the address that comes out.
+//
+// The sibling hostname has to survive into the alternates, or every registration
+// made before this change — all of which still work — is reported as pointing
+// somewhere dead.
+func TestTheOlderPackagingAdvertisesItsOnion(t *testing.T) {
+	t.Parallel()
+	entrypoint := "../../docker_entrypoint_0351.sh"
+	if _, err := os.Stat(entrypoint); err != nil {
+		t.Skipf("no entrypoint to run: %v", err)
+	}
+	if _, err := exec.LookPath("yq"); err != nil {
+		t.Skipf("yq is needed to read the platform's config file: %v", err)
+	}
+
+	const onion = "s4uoylvbtjc5crtbetccetb3yuhzkmwwpapgrqxv5ehze4n7cpezmeqd.onion"
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "start9"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// What the platform writes once the pointer in getConfig.ts is resolved.
+	cfgYAML := "watchtower-address: " + onion + "\n"
+	if err := os.WriteFile(
+		filepath.Join(dir, "start9", "config.yaml"), []byte(cfgYAML), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("sh", entrypoint, "--render-only")
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"FORKTOWER_DATA_DIR=" + dir,
+		"FORKTOWER_CONFIG_YAML=" + filepath.Join(dir, "start9", "config.yaml"),
+		"FORKTOWER_ENTRYPOINT=" + mustAbs(t, "../../docker_entrypoint.sh"),
+		"FORKTOWER_SF_RPC_URL=http://127.0.0.1:8332",
+		"FORKTOWER_SF_RPC_USER=u",
+		"FORKTOWER_SF_RPC_PASS=p",
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the entrypoint failed: %v\n%s", err, out)
+	}
+
+	rendered, err := os.ReadFile(filepath.Join(dir, "forktower.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(rendered)
+	if !strings.Contains(got, `listen = "`+onion+`:9911"`) {
+		t.Errorf("the onion is not the advertised address, so a registration made "+
+			"against it still rots on the next rebuild:\n%s", got)
+	}
+	if !strings.Contains(got, `also_reachable_at = ["forktower.embassy:9911"]`) {
+		t.Errorf("the sibling hostname was dropped from the alternates, which "+
+			"reports every registration made before this change as dead:\n%s", got)
+	}
+}
+
+// And with no onion assigned — a first boot, or a config predating the pointer —
+// it falls back to the address that has always worked, and claims no alternates.
+func TestTheOlderPackagingFallsBackToTheSiblingHostname(t *testing.T) {
+	t.Parallel()
+	entrypoint := "../../docker_entrypoint_0351.sh"
+	if _, err := os.Stat(entrypoint); err != nil {
+		t.Skipf("no entrypoint to run: %v", err)
+	}
+	if _, err := exec.LookPath("yq"); err != nil {
+		t.Skipf("yq is needed to read the platform's config file: %v", err)
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "start9"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(dir, "start9", "config.yaml"), []byte("{}\n"), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("sh", entrypoint, "--render-only")
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"FORKTOWER_DATA_DIR=" + dir,
+		"FORKTOWER_CONFIG_YAML=" + filepath.Join(dir, "start9", "config.yaml"),
+		"FORKTOWER_ENTRYPOINT=" + mustAbs(t, "../../docker_entrypoint.sh"),
+		"FORKTOWER_SF_RPC_URL=http://127.0.0.1:8332",
+		"FORKTOWER_SF_RPC_USER=u",
+		"FORKTOWER_SF_RPC_PASS=p",
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the entrypoint failed: %v\n%s", err, out)
+	}
+
+	rendered, err := os.ReadFile(filepath.Join(dir, "forktower.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(rendered)
+	if !strings.Contains(got, `listen = "forktower.embassy:9911"`) {
+		t.Errorf("without an onion the tower lost the address that does work:\n%s", got)
+	}
+	if strings.Contains(got, "also_reachable_at") {
+		t.Errorf("alternates were claimed where the advertised address is the "+
+			"only one there is:\n%s", got)
+	}
+}

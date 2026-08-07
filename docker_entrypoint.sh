@@ -545,6 +545,32 @@ write_forktower_conf() {
       # front — a Tor onion on StartOS, an app network on Umbrel. Recording the
       # bind here would put 0.0.0.0 on the dashboard as an address to paste.
       printf 'listen = "%s"\n' "${FORKTOWER_TOWER_LND_EXTERNAL_ADDR}"
+      # **The other addresses the same tower answers on.** Advertising an onion
+      # does not stop the sibling hostname working, and a node registered against
+      # that hostname before the onion existed is still backing up correctly.
+      # Without this list, checking a registration against the advertised address
+      # alone would tell every one of those users to redo something that is not
+      # wrong — on the one screen where a false alarm costs the most.
+      if [ -n "${FORKTOWER_TOWER_LND_ALSO_REACHABLE_AT:-}" ]; then
+        # Split on commas with the field separator rather than by piping into
+        # `read`. **A pipeline drops the last entry**: `tr` leaves the final
+        # address without a trailing newline, `read` returns non-zero on it, and
+        # the loop body never runs — which silently rendered an empty list for
+        # the single-address case that is the only one anybody uses.
+        # `set -f` because these are addresses, not globs.
+        printf 'also_reachable_at = ['
+        (
+          set -f
+          IFS=','
+          sep=''
+          for addr in ${FORKTOWER_TOWER_LND_ALSO_REACHABLE_AT}; do
+            [ -n "${addr}" ] || continue
+            printf '%s"%s"' "${sep}" "${addr}"
+            sep=', '
+          done
+        )
+        printf ']\n'
+      fi
       printf 'api_url = "https://127.0.0.1:%s"\n' "${FORKTOWER_TOWER_LND_REST_PORT:-8090}"
       printf 'data_dir = "%s/tower"\n' "${DATA_DIR}"
       printf 'tls_cert_path = "%s/tower/tls.cert"\n' "${DATA_DIR}"

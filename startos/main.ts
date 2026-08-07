@@ -20,7 +20,10 @@ import {
   lndRestPort,
   sqPeerPort,
   towerHost,
+  towerHostId,
   towerPort,
+  torPackageId,
+  addOnionAction,
 } from './utils'
 
 /**
@@ -267,6 +270,9 @@ export const main = sdk.setupMain(async ({ effects }) => {
     'forktower-tower',
   )
 
+  // Where the user's Lightning node should dial the watchtower.
+  const towerAddress = await resolveTowerAddress(effects, cfg.towerEnabled)
+
   // The environment the entrypoint renders `forktower.toml` from. The daemon
   // never sees these names and the user never sees the TOML.
   const env: Record<string, string> = {
@@ -298,19 +304,39 @@ export const main = sdk.setupMain(async ({ effects }) => {
     // daemon reads as the address to advertise and rightly refuses as a
     // wildcard.
     FORKTOWER_TOWER_LND_BIND: `0.0.0.0:${towerPort}`,
-    // **The address a sibling service dials, not an onion.**
+    // The tower's own logging. The entrypoint has read this since the tower
+    // existed and nothing ever set it, so the only way to see inside the tower
+    // was to rebuild.
+    FORKTOWER_TOWER_LND_LOG_LEVEL: cfg.towerLogLevel,
+    // **The address the user's node can actually dial, which is not always the
+    // sibling hostname.**
     //
-    // The first version of this read an onion back from the platform, which was
-    // wrong twice over. It was a shape read from type definitions and never run
-    // against a real system, and it answered a question nobody asked: the client
-    // is the user's own Lightning node, on this machine, and every other service
-    // here is addressed by exactly this convention.
+    // This said `forktower.startos:9911` and argued that a sibling hostname was
+    // both the obvious answer and the safer one. The topology part was right and
+    // the conclusion was wrong, because it never accounted for how the client
+    // gets out. Measured on StartOS 0.4.0.1: lnd running with
+    // `tor.skip-proxy-for-clearnet-targets=false` sends *every* dial through the
+    // platform's Tor SOCKS proxy, and Tor refuses RFC1918 targets outright and
+    // cannot resolve a `.startos` name. The proxy answered `GENERAL FAILURE` and
+    // the watchtower client retried in silence for eighty-seven minutes.
     //
-    // It is also the safer answer. An LND watchtower accepts a session from
-    // anyone who can reach it and has no allowlist, so an address reachable only
-    // from this machine is a smaller thing to be running than one on the public
-    // internet.
-    FORKTOWER_TOWER_LND_EXTERNAL_ADDR: `${towerHost}:${towerPort}`,
+    // So the address has to be one Tor can carry, and on this platform that is an
+    // onion. With one attached, a session was agreed in under three minutes and
+    // sixty-five backups went across — the first working session ever observed.
+    //
+    // The security point in the old comment survives and is why the onion is
+    // asked for rather than assumed: an LND watchtower accepts a session from
+    // anyone who can reach it and has no allowlist. The sibling hostname is kept
+    // as the fallback because it is genuinely correct for a node dialling
+    // directly, which is the platform's own default.
+    FORKTOWER_TOWER_LND_EXTERNAL_ADDR: towerAddress,
+    // The sibling hostname still reaches the tower whatever is advertised, and a
+    // node registered against it before an onion existed is not to be told its
+    // registration has gone bad. Listed unless it *is* what is advertised.
+    FORKTOWER_TOWER_LND_ALSO_REACHABLE_AT:
+      towerAddress === `${towerHost}:${towerPort}`
+        ? ''
+        : `${towerHost}:${towerPort}`,
     FORKTOWER_SQ_BLOCKSONLY: cfg.sqMode === 'blocksonly' ? '1' : '0',
     // `prune=0` is Bitcoin Core for "keep everything", which is what Full
     // means. Blocks-only is still pruned — skipping the memory pool is a
@@ -519,3 +545,115 @@ export const main = sdk.setupMain(async ({ effects }) => {
       })
   )
 })
+
+/**
+ * Where the user's Lightning node should dial the watchtower.
+ *
+ * **An onion when there is one, and the sibling hostname otherwise.** Which of
+ * those works is not a property of this machine's topology but of how the
+ * client's node gets out: an lnd configured to send every connection through
+ * Tor — the case on StartOS 0.4.0.1 — cannot reach a `.startos` name or a
+ * private address at all, because the proxy refuses both. An lnd dialling
+ * directly reaches the sibling hostname fine and would have to build a Tor
+ * circuit to reach an onion on the same box.
+ *
+ * Preferring the onion serves both: a direct-dialling node can still reach an
+ * onion, and a proxied one cannot reach anything else.
+ *
+ * When there is no onion, this asks for one — see `askForAnOnion`. It does not
+ * create one, and deliberately: a watchtower has no allowlist, so publishing one
+ * is the user's decision to take.
+ */
+async function resolveTowerAddress(
+  effects: Parameters<Parameters<typeof sdk.setupMain>[0]>[0]['effects'],
+  towerEnabled: boolean,
+): Promise<string> {
+  const fallback = `${towerHost}:${towerPort}`
+  if (!towerEnabled) return fallback
+
+  const onion = await towerOnion(effects)
+  if (onion) {
+    await effects.action
+      .clearTasks({ only: [`${torPackageId}:${addOnionAction}`] })
+      .catch(() => null)
+    return onion
+  }
+
+  await askForAnOnion(effects)
+  return fallback
+}
+
+/**
+ * The onion attached to the watchtower's binding, if the user has added one.
+ *
+ * Read from the host rather than from anything Forktower wrote down, because
+ * Forktower does not create it: the Tor package attaches it as a plugin
+ * hostname, and `bindings[port].addresses.available` is where those surface.
+ *
+ * Any failure here means "no onion known", never a thrown start. A tower on the
+ * sibling hostname protects the users whose nodes can dial it; a package that
+ * refuses to start protects nobody.
+ */
+async function towerOnion(
+  effects: Parameters<Parameters<typeof sdk.setupMain>[0]>[0]['effects'],
+): Promise<string | null> {
+  try {
+    const host = await effects.getHostInfo({ hostId: towerHostId })
+    const available = host?.bindings?.[towerPort]?.addresses?.available ?? []
+    for (const entry of available) {
+      const hostname = entry?.hostname ?? ''
+      if (!hostname.toLowerCase().endsWith('.onion')) continue
+      // The port Tor publishes, which is not necessarily the port bound here —
+      // the hidden service maps its own external port onto this one.
+      return `${hostname}:${entry.port ?? towerPort}`
+    }
+  } catch {
+    // No host, no bindings, or an older platform that does not answer. Nothing
+    // here is worth failing a start over.
+  }
+  return null
+}
+
+/**
+ * Ask the user to give the watchtower an onion.
+ *
+ * A task rather than a silent action. `effects.action.run` does take a
+ * `packageId` and would create the onion outright, and it should not: an LND
+ * watchtower accepts a session from anyone who can reach it and has no
+ * allowlist, so putting one on the public internet is a decision to be taken
+ * knowingly. The reason travels with the request so it is not a bare instruction.
+ *
+ * `replayId` is stable, so this is one standing request rather than a fresh one
+ * every start.
+ */
+async function askForAnOnion(
+  effects: Parameters<Parameters<typeof sdk.setupMain>[0]>[0]['effects'],
+): Promise<void> {
+  await effects.action
+    .createTask({
+      replayId: `${torPackageId}:${addOnionAction}`,
+      packageId: torPackageId,
+      actionId: addOnionAction,
+      severity: 'important',
+      reason:
+        "Forktower's watchtower has no onion address, so a Lightning node " +
+        'that sends its connections through Tor cannot reach it — Tor will ' +
+        'not carry a connection to a local address, and the node retries in ' +
+        'silence rather than reporting it. Adding an onion service to the ' +
+        'Watchtower interface gives it an address any node can dial. Note that ' +
+        'a watchtower accepts a session from anyone who can reach it, so this ' +
+        'does publish it.',
+      input: {
+        kind: 'partial',
+        value: {
+          urlPluginMetadata: {
+            packageId: 'forktower',
+            hostId: towerHostId,
+            internalPort: towerPort,
+          },
+          ssl: false,
+        },
+      },
+    })
+    .catch(() => null)
+}

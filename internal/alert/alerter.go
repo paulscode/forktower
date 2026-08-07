@@ -273,6 +273,12 @@ func (a *Alerter) put(ctx context.Context, candidate Candidate, keepAck bool) {
 				slog.String("error", resolveErr.Error()))
 			return
 		}
+		if id == 0 && candidate.OnlyIfStanding {
+			// Nothing was standing, so there is nothing to retire and nothing to
+			// say. The producer declares this state every pass; recording it would
+			// mean an alert a minute on an installation with no problem.
+			return
+		}
 		if id > 0 {
 			record.ID = id
 			a.bus.Publish(bus.AlertRaised{

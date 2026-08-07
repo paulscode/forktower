@@ -456,3 +456,265 @@ func TestTheLastBackupTimeIsKeptWhenNothingNewArrives(t *testing.T) {
 		t.Errorf("a new backup did not update the time: %+v", third.Coverage[0])
 	}
 }
+
+// ── Registered, serving, and still no session ────────────────────────────────
+
+// registeredNoSessions is a node that knows the tower and has agreed nothing.
+func registeredNoSessions() *fakeClient {
+	return &fakeClient{
+		version: "0.18.5-beta",
+		towers: []RegisteredTower{{
+			Pubkey:    ourTower,
+			Addresses: []string{"forktower.startos:9911"},
+		}},
+	}
+}
+
+// The case this concern exists for, seen on real hardware. Everything looked
+// right — registered, tower up, chain synced, address correct — and no session
+// was ever agreed because the node's dial could not arrive. Nothing anywhere
+// said so for eighty-seven minutes.
+//
+// The assertions are about what the message has to *achieve*, because the reader
+// has already registered their node and can see the tower listed on it. A
+// message that reads as "you forgot to register" gets dismissed by exactly the
+// people who need it.
+func TestARegisteredTowerThatNeverGetsASessionNamesTheCause(t *testing.T) {
+	t.Parallel()
+	const onion = "03aabb@33t6ppdplzzs3633rgbfgnjbbnjy25rb3m74k73xuzfwfwdm5ivdykad.onion:9911"
+	m := newMonitor(t, registeredNoSessions(), func(o *MonitorOptions) {
+		o.TowerServing = true
+		o.TowerURI = onion
+	})
+
+	pass, err := m.Check(context.Background(), channelsOf(store.ChanAnchors), nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := concernsOf(pass, ConcernUnreachableFromNode)
+	if len(said) != 1 {
+		t.Fatalf("a registered tower with no session past the grace period "+
+			"produced %d concerns naming the cause, want 1", len(said))
+	}
+	msg := said[0].Message
+
+	// It must agree that they are registered, or it reads as a mistake.
+	if !strings.Contains(msg, "is registered") {
+		t.Errorf("the message does not acknowledge that they already registered, "+
+			"so it reads as a false alarm to the person who needs it: %q", msg)
+	}
+	// It must say nothing has *ever* arrived — the fact that makes somebody act.
+	if !strings.Contains(msg, "ever reached it") {
+		t.Errorf("the message does not say no backup has ever arrived: %q", msg)
+	}
+	// It must warn that their own node will corroborate nothing.
+	if !strings.Contains(msg, "Nothing on your node will tell you") {
+		t.Errorf("the message does not warn that the node stays silent: %q", msg)
+	}
+	// It must say the address changed, or re-running the old command is the
+	// obvious next move and it fails the same way.
+	if !strings.Contains(msg, "the old one will not start working") {
+		t.Errorf("the message does not say the old address is dead: %q", msg)
+	}
+	// It must hand over the exact string to paste.
+	if !strings.Contains(msg, "wtclient add "+onion) {
+		t.Errorf("the message does not give the address to register: %q", msg)
+	}
+	// And reassure, or a cautious user does nothing rather than risk their setup.
+	if !strings.Contains(msg, "Nothing is lost") {
+		t.Errorf("the message does not say re-registering is safe: %q", msg)
+	}
+}
+
+// **Do not tell somebody to re-register at an address that will fail too.** When
+// the tower has no Tor address yet, re-registering reproduces the same failure
+// exactly, and having followed instructions that did not work is how a user
+// stops following them.
+func TestWithNoTorAddressYetTheMessageAsksForOneFirst(t *testing.T) {
+	t.Parallel()
+	m := newMonitor(t, registeredNoSessions(), func(o *MonitorOptions) {
+		o.TowerServing = true
+		o.TowerURI = "03aabb@forktower.startos:9911"
+		o.CanAttachOnion = true
+	})
+
+	pass, err := m.Check(context.Background(), channelsOf(store.ChanAnchors), nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := concernsOf(pass, ConcernUnreachableFromNode)
+	if len(said) != 1 {
+		t.Fatalf("want 1 concern, got %d", len(said))
+	}
+	msg := said[0].Message
+
+	if strings.Contains(msg, "wtclient add") {
+		t.Errorf("the user was told to re-register at an address that cannot "+
+			"work either, which is how somebody learns to ignore instructions: %q", msg)
+	}
+	if !strings.Contains(msg, "does not have a Tor address yet") {
+		t.Errorf("the message does not say what is missing: %q", msg)
+	}
+	if !strings.Contains(msg, "asked it for one on your behalf") {
+		t.Errorf("the message does not tell them a request is waiting for them, "+
+			"which is the only thing they can act on: %q", msg)
+	}
+}
+
+// Not while the tower itself cannot serve — there is already a better
+// explanation, and two explanations for one symptom is one too many.
+func TestATowerThatCannotServeYetIsNotBlamedOnTheNetwork(t *testing.T) {
+	t.Parallel()
+	m := newMonitor(t, registeredNoSessions(), func(o *MonitorOptions) {
+		o.TowerServing = false
+		o.TowerNotServingWhy = "its Bitcoin node is still catching up"
+	})
+
+	pass, err := m.Check(context.Background(), channelsOf(store.ChanAnchors), nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := concernsOf(pass, ConcernUnreachableFromNode); len(got) != 0 {
+		t.Errorf("a tower that is not serving yet was reported as unreachable "+
+			"from the node: %q", got[0].Message)
+	}
+}
+
+// Not during the grace period. Session negotiation takes minutes, and a check
+// that fires on every fresh registration is one people learn to ignore.
+func TestAFreshRegistrationIsNotCalledUnreachable(t *testing.T) {
+	t.Parallel()
+	m := newMonitor(t, registeredNoSessions(), func(o *MonitorOptions) {
+		o.TowerServing = true
+		o.RegisteredForSeconds = 60
+	})
+
+	pass, err := m.Check(context.Background(), channelsOf(store.ChanAnchors), nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := concernsOf(pass, ConcernUnreachableFromNode); len(got) != 0 {
+		t.Errorf("a registration a minute old was called unreachable: %q", got[0].Message)
+	}
+}
+
+// Not when there is nothing to protect. A node with no channels has no reason to
+// have negotiated anything, so the absence proves nothing.
+func TestANodeWithNoChannelsIsNotCalledUnreachable(t *testing.T) {
+	t.Parallel()
+	m := newMonitor(t, registeredNoSessions(), func(o *MonitorOptions) {
+		o.TowerServing = true
+	})
+
+	pass, err := m.Check(context.Background(), nil, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := concernsOf(pass, ConcernUnreachableFromNode); len(got) != 0 {
+		t.Errorf("a node with no channels was told its tower was unreachable: %q",
+			got[0].Message)
+	}
+}
+
+// And once a session exists the question is settled — that is the evidence the
+// path works, whatever else may be true.
+func TestASessionSettlesTheReachabilityQuestion(t *testing.T) {
+	t.Parallel()
+	m := newMonitor(t, registeredWith(anchorSession(5)), func(o *MonitorOptions) {
+		o.TowerServing = true
+	})
+
+	pass, err := m.Check(context.Background(), channelsOf(store.ChanAnchors), nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := concernsOf(pass, ConcernUnreachableFromNode); len(got) != 0 {
+		t.Errorf("a tower with a live session was reported unreachable: %q", got[0].Message)
+	}
+}
+
+// An unregistered tower is a different fault with a different remedy, and gets
+// its own concern rather than this one.
+func TestAnUnregisteredTowerIsNotCalledUnreachable(t *testing.T) {
+	t.Parallel()
+	none := &fakeClient{version: "0.18.5-beta"}
+	m := newMonitor(t, none, func(o *MonitorOptions) { o.TowerServing = true })
+
+	pass, err := m.Check(context.Background(), channelsOf(store.ChanAnchors), nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := concernsOf(pass, ConcernUnreachableFromNode); len(got) != 0 {
+		t.Errorf("a tower the node has never heard of was reported as unreachable "+
+			"rather than unregistered: %q", got[0].Message)
+	}
+	if len(concernsOf(pass, ConcernNotRegistered)) != 1 {
+		t.Error("the unregistered tower was not reported as unregistered")
+	}
+}
+
+// **No bleed-over onto the packagings that cannot attach an onion.** StartOS
+// 0.3.5.1 and Umbrel advertise the only address they have, their nodes dial local
+// addresses directly, and Forktower never asks anything for a Tor address there.
+// Telling those users that a request is waiting for their approval would send
+// them looking for a screen that does not exist — worse than saying nothing,
+// because it burns the credibility of the next message too.
+func TestThePlatformsWithoutOnionsAreNotToldToApproveOne(t *testing.T) {
+	t.Parallel()
+	m := newMonitor(t, registeredNoSessions(), func(o *MonitorOptions) {
+		o.TowerServing = true
+		o.TowerURI = "03aabb@forktower.embassy:9911"
+		o.CanAttachOnion = false
+	})
+
+	pass, err := m.Check(context.Background(), channelsOf(store.ChanAnchors), nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := concernsOf(pass, ConcernUnreachableFromNode)
+	if len(said) != 1 {
+		t.Fatalf("want 1 concern, got %d", len(said))
+	}
+	msg := said[0].Message
+
+	if strings.Contains(msg, "asked it for one on your behalf") {
+		t.Errorf("a packaging that never asks for a Tor address told the user a "+
+			"request was waiting for them: %q", msg)
+	}
+	if strings.Contains(msg, "Tor address yet") {
+		t.Errorf("the user was pointed at an onion their packaging cannot "+
+			"produce: %q", msg)
+	}
+	// It still has to be useful: name the real state and something checkable.
+	if !strings.Contains(msg, "is where the tower is") {
+		t.Errorf("the message does not say the address is correct: %q", msg)
+	}
+	if !strings.Contains(msg, "9911") {
+		t.Errorf("the message names no port to check: %q", msg)
+	}
+}
+
+// An onion, however it was obtained, is the same advice everywhere — so a
+// packaging that cannot request one is still told to use the one it has.
+func TestAnOnionIsTheSameAdviceOnEveryPlatform(t *testing.T) {
+	t.Parallel()
+	const onion = "03aabb@33t6ppdplzzs3633rgbfgnjbbnjy25rb3m74k73xuzfwfwdm5ivdykad.onion:9911"
+	m := newMonitor(t, registeredNoSessions(), func(o *MonitorOptions) {
+		o.TowerServing = true
+		o.TowerURI = onion
+		o.CanAttachOnion = false
+	})
+
+	pass, err := m.Check(context.Background(), channelsOf(store.ChanAnchors), nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := concernsOf(pass, ConcernUnreachableFromNode)
+	if len(said) != 1 {
+		t.Fatalf("want 1 concern, got %d", len(said))
+	}
+	if !strings.Contains(said[0].Message, "wtclient add "+onion) {
+		t.Errorf("a tower with an onion did not hand over the address to "+
+			"register: %q", said[0].Message)
+	}
+}

@@ -533,3 +533,563 @@ func TestRegisteringOurTowerWithdrawsTheRequest(t *testing.T) {
 			"withdrawn, so the dashboard still asks for something already done")
 	}
 }
+
+// ── A registration that points at nothing ────────────────────────────────────
+
+// ourTowerAt records our tower advertising a particular address.
+func (h *scoutHarness) ourTowerAt(uri string) {
+	h.t.Helper()
+	if _, _, err := h.store.UpsertTower(context.Background(), store.Tower{
+		Kind: store.TowerLND, Pubkey: ourTower, Managed: true, URI: uri,
+		FirstSeenAt: h.clock.Load(), UpdatedAt: h.clock.Load(),
+	}); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// staleConcern picks the stale-registration concern out of what was published.
+func (h *scoutHarness) staleConcern() *bus.TowerConcern {
+	h.t.Helper()
+	var found *bus.TowerConcern
+	for _, e := range h.drain() {
+		if c, ok := e.(bus.TowerConcern); ok &&
+			c.Concern == string(ConcernRegistrationStale) && !c.Cleared {
+			found = &c
+		}
+	}
+	return found
+}
+
+// The defect this was written for. Measured on StartOS 0.4.0.1: the node held two
+// container addresses, both of them previous incarnations of the Forktower
+// container, while the tower itself was alive on a third. Every session request
+// dialled a dead address and failed silently for eighty-seven minutes.
+func TestARegistrationPointingAtADeadAddressIsReported(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return []string{"10.0.3.52"}, nil
+		}
+	})
+	h.ourTowerAt(ourTower + "@forktower.startos:9911")
+
+	h.client.towers = []RegisteredTower{{
+		Pubkey:    ourTower,
+		Addresses: []string{"10.0.3.233:9911", "10.0.3.93:9911"},
+	}}
+
+	h.pass()
+
+	said := h.staleConcern()
+	if said == nil {
+		t.Fatal("the node held only addresses that no longer reach the tower and " +
+			"nothing was said, which is the whole defect: a registration that " +
+			"looks correct and protects nothing")
+	}
+	// Both dead addresses, so the user can see which registration is meant.
+	for _, dead := range []string{"10.0.3.233:9911", "10.0.3.93:9911"} {
+		if !strings.Contains(said.Message, dead) {
+			t.Errorf("the message does not name the stale address %s: %q", dead, said.Message)
+		}
+	}
+	// And where it actually is, or there is nothing to act on.
+	if !strings.Contains(said.Message, "forktower.startos:9911") {
+		t.Errorf("the message does not say where the tower is now: %q", said.Message)
+	}
+	// It has to agree that they already registered. Somebody who is told to
+	// register a tower they can see listed on their own node concludes Forktower
+	// is mistaken, and that is the last time they read one of these.
+	if !strings.Contains(said.Message, "was correct when you made it") {
+		t.Errorf("the message does not acknowledge that their registration was "+
+			"right at the time, so it reads as a false alarm: %q", said.Message)
+	}
+	// And say what changed, or re-running the command they ran before is the
+	// obvious move and it fails identically.
+	if !strings.Contains(said.Message, "moved") {
+		t.Errorf("the message does not say the address changed underneath them: %q",
+			said.Message)
+	}
+	// The remedy, in the syntax lncli actually takes. `--pubkey=`/`--address=`
+	// are not flags it has; `remove` takes pubkey or pubkey@address positionally.
+	if !strings.Contains(said.Message, "wtclient remove "+ourTower) {
+		t.Errorf("the message does not give a command that would work: %q", said.Message)
+	}
+	if strings.Contains(said.Message, "--pubkey") || strings.Contains(said.Message, "--address") {
+		t.Errorf("the message gives lncli flags that do not exist: %q", said.Message)
+	}
+}
+
+// **The false alarm this must never raise.** lnd does not store the name it was
+// given — it resolves it when the tower is added and keeps the number. Measured:
+// a tower added as `forktower.startos:9911` reads back as `10.0.3.52:9911`. A
+// string comparison would call that perfectly good registration stale, every
+// pass, and teach the user to ignore the one concern that matters.
+func TestAResolvedAddressIsNotAStaleOne(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return []string{"10.0.3.52"}, nil
+		}
+	})
+	h.ourTowerAt(ourTower + "@forktower.startos:9911")
+
+	h.client.towers = []RegisteredTower{{
+		Pubkey:    ourTower,
+		Addresses: []string{"10.0.3.52:9911"},
+	}}
+
+	h.pass()
+
+	if said := h.staleConcern(); said != nil {
+		t.Errorf("a registration holding the address our name resolves to was "+
+			"called stale: %q", said.Message)
+	}
+}
+
+// One live address among dead ones still reaches the tower. Saying so would be
+// noise about a wasted retry, not a warning about lost protection.
+func TestOneReachableAddressIsEnough(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return []string{"10.0.3.52"}, nil
+		}
+	})
+	h.ourTowerAt(ourTower + "@forktower.startos:9911")
+
+	h.client.towers = []RegisteredTower{{
+		Pubkey:    ourTower,
+		Addresses: []string{"10.0.3.233:9911", "10.0.3.52:9911"},
+	}}
+
+	h.pass()
+
+	if said := h.staleConcern(); said != nil {
+		t.Errorf("a registration that can still reach the tower was reported as "+
+			"stale: %q", said.Message)
+	}
+}
+
+// An onion is stored verbatim, so it compares directly and needs no resolver.
+// Confirmed on hardware: registered as an onion, read back as that onion, and a
+// session followed.
+func TestAnOnionRegistrationIsComparedDirectly(t *testing.T) {
+	t.Parallel()
+	const onion = "bnmsdrpzycm3pzkuj4q4lbupa7ngmiuj43u37uo6ucxkgaiibdionxid.onion:9911"
+	resolved := false
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			resolved = true
+			return nil, errors.New("an onion must not be sent to the resolver")
+		}
+	})
+	h.ourTowerAt(ourTower + "@" + onion)
+
+	h.client.towers = []RegisteredTower{{Pubkey: ourTower, Addresses: []string{onion}}}
+	h.pass()
+
+	if resolved {
+		t.Error("an onion address was handed to the system resolver, which cannot " +
+			"answer for it and would fail the comparison open")
+	}
+	if said := h.staleConcern(); said != nil {
+		t.Errorf("a correct onion registration was called stale: %q", said.Message)
+	}
+}
+
+// A stale onion is still stale — a rebuilt tower gets a new one.
+func TestAnOldOnionIsStale(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) { o.RunsOwnWatchtower = true })
+	h.ourTowerAt(ourTower + "@newonion" + strings.Repeat("a", 48) + ".onion:9911")
+
+	h.client.towers = []RegisteredTower{{
+		Pubkey:    ourTower,
+		Addresses: []string{"oldonion" + strings.Repeat("b", 48) + ".onion:9911"},
+	}}
+	h.pass()
+
+	if said := h.staleConcern(); said == nil {
+		t.Error("the tower was rebuilt onto a new onion and the node's old one " +
+			"was not reported")
+	}
+}
+
+// **A name that will not resolve is not evidence of anything.** Silence beats a
+// guess: the resolver being down says nothing about whether the registration is
+// good, and a concern raised on that basis is the kind that gets ignored.
+func TestAnUnresolvableNameSaysNothing(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return nil, errors.New("no such host")
+		}
+	})
+	h.ourTowerAt(ourTower + "@forktower.startos:9911")
+
+	h.client.towers = []RegisteredTower{{
+		Pubkey:    ourTower,
+		Addresses: []string{"10.0.3.233:9911"},
+	}}
+	h.pass()
+
+	if said := h.staleConcern(); said != nil {
+		t.Errorf("a lookup failure was reported as a stale registration: %q", said.Message)
+	}
+}
+
+// **And a lookup failure must not withdraw one either.** Caught on hardware: a
+// genuinely stale registration was reported, then retracted a pass later while
+// it was still stale, because "could not tell" and "it is fixed" came out of the
+// check as the same answer. The user is left with a resolved notification and no
+// protection, which is worse than never having said anything.
+func TestALookupFailureDoesNotWithdrawAStandingWarning(t *testing.T) {
+	t.Parallel()
+	resolves := true
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			if !resolves {
+				return nil, errors.New("no such host")
+			}
+			return []string{"10.0.3.52"}, nil
+		}
+	})
+	h.ourTowerAt(ourTower + "@forktower.startos:9911")
+	h.client.towers = []RegisteredTower{{
+		Pubkey: ourTower, Addresses: []string{"10.0.3.233:9911"},
+	}}
+
+	h.pass()
+	if h.staleConcern() == nil {
+		t.Fatal("the stale registration was never reported")
+	}
+
+	// The resolver goes away. Nothing about the registration has changed.
+	resolves = false
+	h.pass()
+	h.pass()
+
+	for _, e := range h.drain() {
+		if c, ok := e.(bus.TowerConcern); ok &&
+			c.Concern == string(ConcernRegistrationStale) && c.Cleared {
+			t.Fatal("a resolver failure withdrew a standing stale-registration " +
+				"warning, telling the user their protection was restored when it " +
+				"had not been checked at all")
+		}
+	}
+}
+
+// **Evidence beats the string comparison.** A node holding an address Forktower
+// no longer advertises may still be reaching the tower on it — seen on hardware
+// after an onion was detached while Tor went on serving it. A live session
+// settles the question, and the rest of this package already prefers a session
+// over any inference drawn from configuration.
+func TestALiveSessionMeansTheRegistrationIsNotStale(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return []string{"10.0.3.52"}, nil
+		}
+	})
+	h.ourTowerAt(ourTower + "@forktower.startos:9911")
+	h.client.towers = []RegisteredTower{{
+		Pubkey:    ourTower,
+		Addresses: []string{"oldonion" + strings.Repeat("c", 48) + ".onion:9911"},
+		Sessions:  []Session{anchorSession(12)},
+	}}
+
+	h.pass()
+
+	if said := h.staleConcern(); said != nil {
+		t.Errorf("a registration with a live session was called stale on the "+
+			"strength of an address comparison: %q", said.Message)
+	}
+}
+
+// A tower that has not said where it is yet cannot contradict anything.
+func TestATowerWithNoAddressYetSaysNothing(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) { o.RunsOwnWatchtower = true })
+	h.ourTowerAt("")
+
+	h.client.towers = []RegisteredTower{{
+		Pubkey:    ourTower,
+		Addresses: []string{"10.0.3.233:9911"},
+	}}
+	h.pass()
+
+	if said := h.staleConcern(); said != nil {
+		t.Errorf("a tower that has not reported an address produced a stale "+
+			"registration warning: %q", said.Message)
+	}
+}
+
+// And when the user corrects it, the concern is withdrawn — the same complaint
+// that produced half of 0.6.2 applies here: they have to act on their own node,
+// and coming back to the same sentence tells them nothing took.
+func TestCorrectingTheRegistrationWithdrawsTheConcern(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return []string{"10.0.3.52"}, nil
+		}
+	})
+	h.ourTowerAt(ourTower + "@forktower.startos:9911")
+
+	h.client.towers = []RegisteredTower{{
+		Pubkey: ourTower, Addresses: []string{"10.0.3.233:9911"},
+	}}
+	h.pass()
+	if h.staleConcern() == nil {
+		t.Fatal("no concern to withdraw")
+	}
+
+	h.client.towers = []RegisteredTower{{
+		Pubkey: ourTower, Addresses: []string{"10.0.3.52:9911"},
+	}}
+	h.pass()
+
+	var cleared bool
+	for _, e := range h.drain() {
+		if c, ok := e.(bus.TowerConcern); ok &&
+			c.Concern == string(ConcernRegistrationStale) && c.Cleared {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("the registration was corrected and the warning was never withdrawn")
+	}
+}
+
+// Said once while it stands, not once a pass.
+func TestAStandingStaleRegistrationIsNotRepeated(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return []string{"10.0.3.52"}, nil
+		}
+	})
+	h.ourTowerAt(ourTower + "@forktower.startos:9911")
+	h.client.towers = []RegisteredTower{{
+		Pubkey: ourTower, Addresses: []string{"10.0.3.233:9911"},
+	}}
+
+	h.pass()
+	h.drain()
+	h.pass()
+	h.pass()
+
+	if said := h.staleConcern(); said != nil {
+		t.Errorf("a standing stale registration was announced again: %q", said.Message)
+	}
+}
+
+// ── The upgrade case: a registration made before the tower had an onion ──────
+
+// **The false positive that would have scared everybody who upgraded.** Before
+// the onion existed, users registered against the sibling hostname, and lnd
+// stored the address that resolved to. Giving the tower an onion changes what
+// Forktower advertises and changes nothing about whether that older registration
+// works — it still reaches the tower, and on a node that dials directly it goes
+// on backing up exactly as before.
+//
+// Checking against the advertised address alone would have told every one of
+// those users to go and redo something that is not wrong, which is the worst
+// possible place to be wrong: the true version of this warning means their
+// channels are unprotected, and one false alarm is all it takes for the next one
+// to be ignored.
+func TestARegistrationFromBeforeTheOnionIsNotStale(t *testing.T) {
+	t.Parallel()
+	const onion = "33t6ppdplzzs3633rgbfgnjbbnjy25rb3m74k73xuzfwfwdm5ivdykad.onion:9911"
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.AlsoReachableAt = []string{"forktower.startos:9911"}
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return []string{"10.0.3.7"}, nil
+		}
+	})
+	// The tower now advertises its onion.
+	h.ourTowerAt(ourTower + "@" + onion)
+
+	// The node still holds what it was given a year ago: the address the sibling
+	// hostname resolved to at the time, and no session yet this pass.
+	h.client.towers = []RegisteredTower{{
+		Pubkey: ourTower, Addresses: []string{"10.0.3.7:9911"},
+	}}
+
+	h.pass()
+
+	if said := h.staleConcern(); said != nil {
+		t.Errorf("a registration made before the tower had an onion — and still "+
+			"reaching it — was reported as pointing at a dead address: %q",
+			said.Message)
+	}
+}
+
+// The same, where the node stored the name rather than a number.
+func TestTheSiblingHostnameItselfIsNotStale(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.AlsoReachableAt = []string{"forktower.startos:9911"}
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return []string{"10.0.3.7"}, nil
+		}
+	})
+	h.ourTowerAt(ourTower + "@abcdef" + strings.Repeat("a", 50) + ".onion:9911")
+	h.client.towers = []RegisteredTower{{
+		Pubkey: ourTower, Addresses: []string{"forktower.startos:9911"},
+	}}
+
+	h.pass()
+
+	if said := h.staleConcern(); said != nil {
+		t.Errorf("a registration holding the sibling hostname was called stale "+
+			"while the tower still answers there: %q", said.Message)
+	}
+}
+
+// And an address that is neither the onion nor any address the tower answers on
+// is still reported — the check has not been defanged.
+func TestAnAddressTheTowerDoesNotAnswerOnIsStillStale(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.AlsoReachableAt = []string{"forktower.startos:9911"}
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return []string{"10.0.3.7"}, nil
+		}
+	})
+	h.ourTowerAt(ourTower + "@abcdef" + strings.Repeat("a", 50) + ".onion:9911")
+	// A container address from two rebuilds ago.
+	h.client.towers = []RegisteredTower{{
+		Pubkey: ourTower, Addresses: []string{"10.0.3.233:9911"},
+	}}
+
+	h.pass()
+
+	if h.staleConcern() == nil {
+		t.Error("an address the tower answers on none of its addresses was not " +
+			"reported, so the check no longer catches what it exists for")
+	}
+}
+
+// A resolver failure while checking *any* of the alternates leaves the whole
+// answer unknown. A half-built set of reachable addresses is exactly how a good
+// registration gets called stale.
+func TestAPartiallyResolvedAddressSetSaysNothing(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.AlsoReachableAt = []string{"forktower.startos:9911"}
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return nil, errors.New("no such host")
+		}
+	})
+	h.ourTowerAt(ourTower + "@abcdef" + strings.Repeat("a", 50) + ".onion:9911")
+	h.client.towers = []RegisteredTower{{
+		Pubkey: ourTower, Addresses: []string{"10.0.3.233:9911"},
+	}}
+
+	h.pass()
+
+	if said := h.staleConcern(); said != nil {
+		t.Errorf("an unresolvable alternate address produced a stale-registration "+
+			"warning on a half-built set: %q", said.Message)
+	}
+}
+
+// **A restart between the fault and its repair must not strand the warning.**
+// The memory of having raised it dies with the process; if withdrawal depends on
+// that memory, a user who fixes their registration while the daemon is down is
+// left with a warning nothing can ever retire. Caught by review rather than by
+// hardware, which is why it is a test.
+func TestARestartStillWithdrawsACorrectedRegistration(t *testing.T) {
+	t.Parallel()
+	resolve := func(context.Context, string) ([]string, error) {
+		return []string{"10.0.3.52"}, nil
+	}
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.Resolve = resolve
+	})
+	h.ourTowerAt(ourTower + "@forktower.startos:9911")
+	h.client.towers = []RegisteredTower{{
+		Pubkey: ourTower, Addresses: []string{"10.0.3.233:9911"},
+	}}
+	h.pass()
+	if h.staleConcern() == nil {
+		t.Fatal("the stale registration was never reported")
+	}
+
+	// The daemon restarts: a new Scout, empty memory, same storage.
+	fresh, err := NewScout(ScoutOptions{
+		Store: h.store, Client: h.client, Bus: h.bus, Now: h.scout.now,
+		RunsOwnWatchtower: true, Resolve: resolve,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// They corrected it while it was down.
+	h.client.towers = []RegisteredTower{{
+		Pubkey: ourTower, Addresses: []string{"10.0.3.52:9911"},
+	}}
+	fresh.pass(context.Background())
+
+	var cleared int
+	for _, e := range h.drain() {
+		if c, ok := e.(bus.TowerConcern); ok &&
+			c.Concern == string(ConcernRegistrationStale) && c.Cleared {
+			cleared++
+		}
+	}
+	if cleared == 0 {
+		t.Fatal("after a restart the corrected registration was never withdrawn, " +
+			"so the warning stands on the dashboard with nothing able to retire it")
+	}
+
+	// And it is said once, not once a minute.
+	fresh.pass(context.Background())
+	fresh.pass(context.Background())
+	for _, e := range h.drain() {
+		if c, ok := e.(bus.TowerConcern); ok &&
+			c.Concern == string(ConcernRegistrationStale) && c.Cleared {
+			t.Error("the withdrawal was repeated on a later pass, which is a bus " +
+				"event a minute saying nothing has happened")
+		}
+	}
+}
+
+// A pass that could not reach a verdict must not withdraw it either — the same
+// rule as the raise side, and the reason "settled" is not the same as "absent".
+func TestARestartWithAnUnjudgeableRegistrationWithdrawsNothing(t *testing.T) {
+	t.Parallel()
+	h := newScoutHarness(t, func(o *ScoutOptions) {
+		o.RunsOwnWatchtower = true
+		o.Resolve = func(context.Context, string) ([]string, error) {
+			return nil, errors.New("no such host")
+		}
+	})
+	h.ourTowerAt(ourTower + "@forktower.startos:9911")
+	h.client.towers = []RegisteredTower{{
+		Pubkey: ourTower, Addresses: []string{"10.0.3.233:9911"},
+	}}
+	h.pass()
+
+	for _, e := range h.drain() {
+		if c, ok := e.(bus.TowerConcern); ok &&
+			c.Concern == string(ConcernRegistrationStale) && c.Cleared {
+			t.Error("a fresh process that could not judge the registration " +
+				"withdrew a warning it had not checked")
+		}
+	}
+}

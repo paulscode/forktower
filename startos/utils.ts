@@ -32,6 +32,21 @@ export const bitcoindHost = 'bitcoind.startos'
  * the watchtower running here. Same convention as every sibling above.
  */
 export const towerHost = 'forktower.startos'
+
+/** The host id the watchtower's port is bound under. */
+export const towerHostId = 'tower'
+
+/**
+ * The platform's Tor package, and the action that attaches an onion to a host.
+ *
+ * **Named here because Forktower cannot create an onion itself.** lnd knows how
+ * to — `tor.control` plus `tor.v3` — but StartOS 0.4.x exposes no control port to
+ * containers: the Tor package listens on 9050 for SOCKS and 9001 for its ORPort
+ * and nothing else. Onions on this platform are plugin hostnames attached to a
+ * host by that package, so this is the only route there is.
+ */
+export const torPackageId = 'tor'
+export const addOnionAction = 'add-onion-service'
 export const bitcoindRpcPort = 8332
 export const bitcoindZmqRawBlockPort = 28332
 export const bitcoindZmqRawTxPort = 28333

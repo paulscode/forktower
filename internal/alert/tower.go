@@ -219,6 +219,31 @@ func mapTowerConcern(ev bus.TowerConcern) (Candidate, bool) {
 			Message:  ev.Message,
 		}, true
 
+	case tower.ConcernRegistrationStale:
+		// **A warning, because the protection is gone and it looks fine.** The
+		// registration is listed on the node, the tower is running, and nothing
+		// between them works. Of everything this arm reports, this is the one most
+		// likely to be believed only after it is too late.
+		return Candidate{
+			Tier: store.TierWarning, Kind: KindTowerNotProtecting,
+			DedupKey: fmt.Sprintf("%s:stale-registration:%d", KindTowerNotProtecting, ev.TowerID),
+			// The subject has to carry the action on its own, because it is what gets
+			// read on a phone banner and in a notification list. "Unreachable" states
+			// a symptom and invites nothing.
+			Subject: "Your watchtower moved — your node needs its new address",
+			Message: ev.Message,
+		}, true
+
+	case tower.ConcernUnreachableFromNode:
+		return Candidate{
+			Tier: store.TierWarning, Kind: KindTowerNotProtecting,
+			DedupKey: fmt.Sprintf("%s:unreachable:%d", KindTowerNotProtecting, ev.TowerID),
+			// Not "cannot reach", which reads as a transient network wobble to wait
+			// out. What makes somebody act is that it has never worked at all.
+			Subject: "Your node has never backed up to your watchtower",
+			Message: ev.Message,
+		}, true
+
 	case tower.ConcernExternalOnly:
 		// A description of the deployment rather than a fault with it. Worth
 		// saying once because it changes what can be done when a tower stops —
@@ -349,6 +374,28 @@ func clearedConcern(ev bus.TowerConcern) (Candidate, bool) {
 			Message: "Your node is backing up to the tower here, which watches " +
 				words.OtherChain + ". That was the one step Forktower could not " +
 				"take for you.",
+		}, true
+
+	case tower.ConcernRegistrationStale, tower.ConcernUnreachableFromNode:
+		// **Announced, because somebody went and did this.** Both are corrected by
+		// the user on their own node — editing a registration, or giving the tower
+		// an address their node can dial — and both are the sort of fiddly remote
+		// change where the only way to know it took is to be told. That is the
+		// complaint that produced half of 0.6.2.
+		return Candidate{
+			Tier: store.TierResolved, Kind: KindTowerProtecting,
+			DedupKey: fmt.Sprintf("%s:reachable:%d", KindTowerNotProtecting, ev.TowerID),
+			Subject:  "Your node is reaching the watchtower again",
+			Message: "Your node and the tower here are talking again, and channel " +
+				"states are reaching it.",
+			// Declared every pass by both producers so that a restart cannot
+			// strand the warning, which means it must say nothing when there was
+			// no warning.
+			OnlyIfStanding: true,
+			Closes: []string{
+				fmt.Sprintf("%s:stale-registration:%d", KindTowerNotProtecting, ev.TowerID),
+				fmt.Sprintf("%s:unreachable:%d", KindTowerNotProtecting, ev.TowerID),
+			},
 		}, true
 
 	case tower.ConcernChannelUncovered, tower.ConcernBackupsStalled,
