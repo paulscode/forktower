@@ -953,3 +953,41 @@ test('an unrecognised tower kind produces no command rather than a guess', () =>
   assert.strictEqual(textOf(byID['tower-command']), '');
   assert.strictEqual(byID['tower-command'].className.includes('hidden'), true);
 });
+
+// The registration address must be Forktower's own, whatever order towers come
+// in.
+//
+// **Found on a live install.** The loop kept the last tower with a URI and never
+// checked `managed`, so once a second tower existed the "how to link your
+// watchtower" panel showed somebody else's address — there, a dead tower's. A
+// user with any third-party watchtower registered was told to register with that
+// one instead of Forktower's.
+test('the link panel offers our own tower, not the last one listed', () => {
+  app.renderTowers({
+    towers: [
+      { id: 1, managed: true, kind: 'lnd', uri: 'ours@ours.onion:9911', display: {} },
+      { id: 2, managed: false, kind: 'lnd', uri: 'theirs@theirs.onion:9911', display: {} },
+    ],
+  });
+
+  const shown = byID['tower-command'].textContent;
+  assert.ok(shown.includes('ours@ours.onion:9911'),
+    'the panel does not offer our own tower');
+  assert.ok(!shown.includes('theirs@theirs.onion:9911'),
+    'the panel offers a watchtower Forktower does not run');
+});
+
+// And ours still wins when it is listed last, which is the ordering the original
+// bug happened to get right.
+test('the link panel offers our own tower when it is listed last', () => {
+  app.renderTowers({
+    towers: [
+      { id: 1, managed: false, kind: 'lnd', uri: 'theirs@theirs.onion:9911', display: {} },
+      { id: 2, managed: true, kind: 'lnd', uri: 'ours@ours.onion:9911', display: {} },
+    ],
+  });
+
+  const shown = byID['tower-command'].textContent;
+  assert.ok(shown.includes('ours@ours.onion:9911'),
+    'the panel does not offer our own tower');
+});

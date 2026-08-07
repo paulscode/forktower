@@ -718,3 +718,112 @@ func TestRegisteredButNotYetCoveredIsNotReportedAsUnregistered(t *testing.T) {
 		t.Error("a session the node agrees on its own was presented as a task")
 	}
 }
+
+// A watchtower the node cannot reach, holding the coverage, is named and its
+// removal spelled out.
+//
+// **Proven on hardware, not reasoned.** A node holding sessions with a
+// watchtower it could no longer reach kept retrying that one and never
+// negotiated with Forktower's: zero sessions for a day, then one within three
+// minutes of the dead registration being removed. Throughout, Forktower said
+// "nothing for you to do".
+func TestAnUnreachableTowerHoldingTheCoverageIsNamed(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.RunsOwnWatchtower = true })
+	ctx := context.Background()
+
+	ours := putTower(t, h, "0315149f"+strings.Repeat("c", 56), true)
+	stalePubkey := "021089ec" + strings.Repeat("b", 56)
+	stale := putTower(t, h, stalePubkey, false)
+	unreachable(t, h, stale)
+
+	ch := addChannel(t, h, "aa"+strings.Repeat("0", 62), nil)
+	for _, c := range []store.Coverage{
+		{ChannelID: ch, TowerID: ours, Coverable: false, Reason: "no session"},
+		{ChannelID: ch, TowerID: stale, Coverable: true, Reason: "holds a session"},
+	} {
+		if err := h.store.UpsertCoverage(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	item := findCheck(t, h.srv.Readiness(ctx), CheckTowerProtection)
+	if strings.Contains(item.Why, "Nothing for you to do") {
+		t.Error("told the user there was nothing to do about the one thing " +
+			"stopping their channels being protected")
+	}
+	if waitingOn(item) {
+		t.Error("presented as something that resolves itself; it never will")
+	}
+	// The key must be filled in. Somebody who needs this message will not go and
+	// find their tower's public key.
+	if !strings.Contains(item.Detail, stalePubkey) {
+		t.Errorf("the command does not carry the key to remove: %q", item.Detail)
+	}
+	if !strings.Contains(item.Detail, "paulscode.com") {
+		t.Error("no offer of help for somebody who cannot run a command")
+	}
+	// Without this line the user does the obvious thing and loses another day.
+	if !strings.Contains(item.Why, "can only add") {
+		t.Errorf("does not say the settings screen will not remove it: %q", item.Why)
+	}
+}
+
+// But not for our own tower merely having no session yet.
+//
+// That is the ordinary state for the minutes after a fresh registration. Raising
+// this for it would tell a healthy user to delete a working watchtower.
+func TestNoSessionOnItsOwnDoesNotAccuseAnotherTower(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.RunsOwnWatchtower = true })
+	ctx := context.Background()
+
+	ours := putTower(t, h, "0315149f"+strings.Repeat("c", 56), true)
+	ch := addChannel(t, h, "aa"+strings.Repeat("0", 62), nil)
+	if err := h.store.UpsertCoverage(ctx, store.Coverage{
+		ChannelID: ch, TowerID: ours, Coverable: false, Reason: "no session",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	item := findCheck(t, h.srv.Readiness(ctx), CheckTowerProtection)
+	if strings.Contains(item.Label, "cannot reach") {
+		t.Errorf("accused a tower that does not exist: %q", item.Label)
+	}
+	if !waitingOn(item) {
+		t.Error("a session the node agrees on its own was presented as a task")
+	}
+}
+
+// A reachable third-party tower holding the coverage is somebody's deliberate
+// arrangement, not a fault.
+func TestAReachableOtherTowerIsNotAccused(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.RunsOwnWatchtower = true })
+	ctx := context.Background()
+
+	ours := putTower(t, h, "0315149f"+strings.Repeat("c", 56), true)
+	theirs := putTower(t, h, "021089ec"+strings.Repeat("b", 56), false)
+	ch := addChannel(t, h, "aa"+strings.Repeat("0", 62), nil)
+	for _, c := range []store.Coverage{
+		{ChannelID: ch, TowerID: ours, Coverable: false, Reason: "no session"},
+		{ChannelID: ch, TowerID: theirs, Coverable: true, Reason: "holds a session"},
+	} {
+		if err := h.store.UpsertCoverage(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	item := findCheck(t, h.srv.Readiness(ctx), CheckTowerProtection)
+	if strings.Contains(item.Label, "cannot reach") {
+		t.Errorf("a working third-party watchtower was reported as blocking: %q",
+			item.Label)
+	}
+}
+
+// unreachable marks a tower as one the node can no longer reach.
+func unreachable(t *testing.T, h *harness, id int64) {
+	t.Helper()
+	if err := h.store.SetTowerStatus(context.Background(), id,
+		store.TowerHealth{Status: store.TowerUnreachable, Detail: "no answer"},
+		1_790_000_200); err != nil {
+		t.Fatal(err)
+	}
+}

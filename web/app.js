@@ -657,6 +657,7 @@ function renderTowers(payload) {
 
   let anyUri = '';
   let anyKind = '';
+  let anyManaged = false;
   for (const tower of towers) {
     const display = tower.display || {};
     const item = make('li', display.state === TOWER_BAD ? 'tower at-risk' : 'tower');
@@ -679,9 +680,15 @@ function renderTowers(payload) {
       item.appendChild(make('p', 'quiet', fee));
     }
 
-    if (tower.uri) {
+    // **Ours wins, whatever order they arrive in.** This kept the *last* tower
+    // with a URI and never looked at `managed`, so the moment a second tower
+    // existed the "how to link your watchtower" panel showed somebody else's
+    // address — on one install, a dead tower's. A user with any third-party
+    // watchtower registered was told to register with that one instead.
+    if (tower.uri && (tower.managed || !anyManaged)) {
       anyUri = tower.uri;
       anyKind = tower.kind;
+      anyManaged = Boolean(tower.managed);
     }
     list.appendChild(item);
   }

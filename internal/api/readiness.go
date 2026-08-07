@@ -190,6 +190,21 @@ func (s *Server) checkTowerProtection(ctx context.Context) ReadinessItem {
 					Action: actionSetUpTower(),
 				}
 			}
+			// **A stale registration stops the live one ever being used.** Proven
+			// on hardware: a node holding sessions with a watchtower it can no
+			// longer reach keeps retrying that one and never negotiates with ours
+			// — zero sessions for a day, then one within three minutes of the
+			// dead registration being removed. Saying "nothing for you to do"
+			// through all of that is what cost the day.
+			if stale, found := s.staleTowerCrowdingOut(ctx, towers); found {
+				return ReadinessItem{
+					ID: CheckTowerProtection, OK: false, informational: true,
+					Label:  "A watchtower your node cannot reach is blocking this one",
+					Why:    crowdedOutWhy(),
+					Detail: removeTowerCommand(stale),
+					Action: actionSetUpTower(),
+				}
+			}
 			return ReadinessItem{
 				ID: CheckTowerProtection, OK: false,
 				informational: true, settling: true,
@@ -277,6 +292,67 @@ func (s *Server) stillUnregisteredWithOurs(ctx context.Context) bool {
 		}
 	}
 	return false
+}
+
+// staleTowerCrowdingOut finds a watchtower the node is using but cannot reach,
+// while ours covers nothing.
+//
+// **All three facts, never fewer.** Our tower covering nothing is the ordinary
+// state for the minutes after a fresh registration and is answered elsewhere;
+// raising this for it would tell a healthy user to delete a working watchtower,
+// which is worse than the silence it replaces. What distinguishes the real thing
+// is that *another* tower holds the coverage and that tower is not reachable.
+func (s *Server) staleTowerCrowdingOut(
+	ctx context.Context, towers []store.Tower,
+) (store.Tower, bool) {
+	rows, err := s.store.ListCoverage(ctx, store.CoverageFilter{})
+	if err != nil || len(rows) == 0 {
+		return store.Tower{}, false
+	}
+	covering := make(map[int64]bool, len(rows))
+	for _, c := range rows {
+		if c.Coverable {
+			covering[c.TowerID] = true
+		}
+	}
+	for _, t := range towers {
+		if t.Managed || !covering[t.ID] || t.Status == store.TowerReachable {
+			continue
+		}
+		return t, true
+	}
+	return store.Tower{}, false
+}
+
+// crowdedOutWhy is the explanation, written for somebody who has never heard of
+// a session.
+//
+// **It has to say that the settings screen will not do it.** That screen offers
+// only "Add Watchtowers" — measured, and its own field is named for adding —
+// so a user who does the obvious thing believes it worked and loses another day.
+// That is exactly what happened to the person who found this.
+func crowdedOutWhy() string {
+	return "Your node is still registered with a watchtower it can no longer " +
+		"reach, and it keeps retrying that one instead of agreeing with " +
+		"Forktower's. Until the old registration is removed, none of your " +
+		"channels are backed up to any watchtower, and a breach on " +
+		words.OtherChain + " would go unanswered. Removing it from your node's " +
+		"own settings screen will not work — that screen can only add " +
+		"watchtowers, not remove them."
+}
+
+// removeTowerCommand is the one line that fixes it, with nothing left to fill in.
+//
+// The key is written out in full rather than as a placeholder: somebody who
+// needs this message is not somebody who will go and find their tower's public
+// key. The offer of help is part of it, because the people who cannot run a
+// command are the ones who most need the outcome, and a dead end is worse than
+// an ask.
+func removeTowerCommand(stale store.Tower) string {
+	return "On your server, run:\n\n    lncli wtclient remove " + stale.Pubkey +
+		"\n\nA session with Forktower's watchtower should appear within a few " +
+		"minutes. If you would rather not do this yourself, post on the forum at " +
+		"paulscode.com and Paul will help you through it."
 }
 
 // notUsingOurs reports whether the node is demonstrably not backing up to a
