@@ -131,6 +131,23 @@ class Element {
     return child;
   }
 
+  // Enough of the real thing for the clipboard fallback, which creates a
+  // textarea off-viewport, selects it and asks the document to copy it.
+  select() {
+    this.selected = true;
+  }
+
+  remove() {
+    const parent = this.parent;
+    if (parent && parent.children) {
+      const at = parent.children.indexOf(this);
+      if (at >= 0) {
+        parent.children.splice(at, 1);
+      }
+    }
+    this.parent = null;
+  }
+
   setAttribute(name, value) {
     this.attributes[name] = String(value);
   }
@@ -190,8 +207,25 @@ function install() {
     byID[id] = node;
   }
 
+  const body = new Element('body');
   const document = {
     readyState: 'complete',
+    body,
+    // execCommand('copy') is the only route to the clipboard without HTTPS, and
+    // this dashboard is served over plain HTTP on at least one platform — so it
+    // is the path most users take, and worth being able to test.
+    copied: '',
+    execCommand(name) {
+      if (name !== 'copy') {
+        return false;
+      }
+      const area = body.children.find((c) => c.selected);
+      if (!area) {
+        return false;
+      }
+      document.copied = area.value;
+      return true;
+    },
     getElementById(id) {
       return Object.prototype.hasOwnProperty.call(byID, id) ? byID[id] : null;
     },

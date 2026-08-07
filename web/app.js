@@ -757,21 +757,52 @@ function renderTowerCommand(uri, kind) {
   copy.onclick = () => copyText(box.textContent, copy);
 }
 
-// copyText puts a string on the clipboard and says whether it worked.
+// copyText puts a string on the clipboard, by whichever route is available.
 //
-// Falls back to the old selection method because the clipboard API is refused
-// outside a secure context, and this dashboard is reached over a LAN address on
-// at least one platform.
+// **The modern API is not available here as often as it looks.** It is refused
+// outside a secure context, and this dashboard is reached over a plain LAN
+// address on at least one platform — so on the deployment where copying matters
+// most, `navigator.clipboard` is either missing or its promise rejects.
+//
+// The fallback is the off-viewport textarea and `document.execCommand('copy')`.
+// Deprecated, and the only thing that works without HTTPS. Marked readonly so a
+// phone does not raise its keyboard, and removed immediately either way.
 function copyText(text, button) {
   const done = (ok) => {
-    setText(button, ok ? 'Copied' : 'Press Ctrl+C to copy');
+    setText(button, ok ? 'Copied' : 'Could not copy — select the address above');
     setTimeout(() => setText(button, 'Copy address'), 4000);
   };
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
+    navigator.clipboard.writeText(text).then(
+      () => done(true),
+      () => done(copyByTextarea(text)),
+    );
     return;
   }
-  done(false);
+  done(copyByTextarea(text));
+}
+
+// copyByTextarea is the pre-clipboard-API method, kept because it is the only
+// one that works over plain HTTP.
+function copyByTextarea(text) {
+  if (!document.createElement || !document.execCommand) {
+    return false;
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', 'true');
+  area.style.opacity = '0';
+  area.style.position = 'fixed';
+  document.body.appendChild(area);
+  let ok = false;
+  try {
+    area.select();
+    ok = document.execCommand('copy');
+  } catch (err) {
+    ok = false;
+  }
+  area.remove();
+  return ok;
 }
 
 // ---------------------------------------------------------------------------

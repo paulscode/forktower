@@ -1018,3 +1018,29 @@ test('the watchtower address has a working copy button', () => {
     'the button copied ' + JSON.stringify(copied) + ' rather than the address',
   );
 });
+
+// And it still copies where the modern clipboard API is refused.
+//
+// **Which is the common case, not the edge case.** `navigator.clipboard` is
+// unavailable outside a secure context, and this dashboard is reached over a
+// plain LAN address on at least one platform — so on the deployment where
+// copying matters most, the modern route is the one that does not work.
+test('the address copies without the clipboard API', () => {
+  global.navigator = {};
+  document.copied = '';
+
+  app.renderTowers({
+    towers: [
+      { id: 1, managed: true, kind: 'lnd', uri: 'ours@ours.onion:9911', display: {} },
+    ],
+  });
+  byID['tower-copy'].onclick();
+
+  assert.ok(
+    document.copied.includes('ours@ours.onion:9911'),
+    'nothing reached the clipboard by the fallback route: ' +
+      JSON.stringify(document.copied),
+  );
+  assert.strictEqual(document.body.children.length, 0,
+    'the temporary textarea was left behind in the page');
+});
