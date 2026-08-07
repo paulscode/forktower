@@ -827,3 +827,66 @@ func unreachable(t *testing.T, h *harness, id int64) {
 		t.Fatal(err)
 	}
 }
+
+// The command has to be the one that works on the platform the user is on.
+//
+// **A command that fails when pasted is worse than none**, and the generic form
+// fails on all three packaged platforms: lnd is inside a container on each, and
+// on StartOS 0.4.x its TLS certificate does not match localhost. The two StartOS
+// forms below were run on real hardware.
+func TestTheRemovalCommandFitsThePlatform(t *testing.T) {
+	t.Parallel()
+	const key = "021089ecbbbb"
+
+	for _, tc := range []struct {
+		platform config.Platform
+		wants    []string
+	}{
+		{config.PlatformStartOS04, []string{
+			"start-cli package attach lnd", "--rpcserver=127.0.0.1:10009",
+		}},
+		{config.PlatformStartOS035, []string{
+			"podman exec lnd.embassy", "--rpcserver=lnd.embassy:10009",
+		}},
+		{config.PlatformUmbrel, []string{"docker exec"}},
+		{config.PlatformUnknown, []string{"lncli wtclient remove"}},
+	} {
+		got := removeTowerLine(tc.platform, key)
+		for _, want := range tc.wants {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: command %q does not contain %q", tc.platform, got, want)
+			}
+		}
+		if !strings.HasSuffix(got, key) {
+			t.Errorf("%s: the key is not in the command: %q", tc.platform, got)
+		}
+	}
+}
+
+// And the platform's own form reaches the user, not the generic one.
+func TestTheMessageCarriesThePlatformsCommand(t *testing.T) {
+	h := newHarness(t, func(c *Config) {
+		c.RunsOwnWatchtower = true
+		c.Platform = config.PlatformStartOS04
+	})
+	ctx := context.Background()
+
+	ours := putTower(t, h, "0315149f"+strings.Repeat("c", 56), true)
+	stale := putTower(t, h, "021089ec"+strings.Repeat("b", 56), false)
+	unreachable(t, h, stale)
+	ch := addChannel(t, h, "aa"+strings.Repeat("0", 62), nil)
+	for _, c := range []store.Coverage{
+		{ChannelID: ch, TowerID: ours, Coverable: false, Reason: "no session"},
+		{ChannelID: ch, TowerID: stale, Coverable: true, Reason: "holds a session"},
+	} {
+		if err := h.store.UpsertCoverage(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	item := findCheck(t, h.srv.Readiness(ctx), CheckTowerProtection)
+	if !strings.Contains(item.Detail, "start-cli package attach lnd") {
+		t.Errorf("the user is given a command that will not run on their "+
+			"platform: %q", item.Detail)
+	}
+}

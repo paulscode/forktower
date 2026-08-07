@@ -201,7 +201,7 @@ func (s *Server) checkTowerProtection(ctx context.Context) ReadinessItem {
 					ID: CheckTowerProtection, OK: false, informational: true,
 					Label:  "A watchtower your node cannot reach is blocking this one",
 					Why:    crowdedOutWhy(),
-					Detail: removeTowerCommand(stale),
+					Detail: s.removeTowerCommand(stale),
 					Action: actionSetUpTower(),
 				}
 			}
@@ -348,11 +348,48 @@ func crowdedOutWhy() string {
 // key. The offer of help is part of it, because the people who cannot run a
 // command are the ones who most need the outcome, and a dead end is worse than
 // an ask.
-func removeTowerCommand(stale store.Tower) string {
-	return "On your server, run:\n\n    lncli wtclient remove " + stale.Pubkey +
+func (s *Server) removeTowerCommand(stale store.Tower) string {
+	return "Connect to your server over SSH and run this one line:\n\n    " +
+		removeTowerLine(s.cfg.Platform, stale.Pubkey) +
 		"\n\nA session with Forktower's watchtower should appear within a few " +
-		"minutes. If you would rather not do this yourself, post on the forum at " +
-		"paulscode.com and Paul will help you through it."
+		"minutes, and this message will go away on its own. If you would rather " +
+		"not do this yourself, post on the forum at paulscode.com and Paul will " +
+		"help you through it."
+}
+
+// removeTowerLine is the command as it must actually be typed, per platform.
+//
+// **Each of these was run on real hardware, because a command that fails when
+// pasted is worse than no command at all.** The generic form works on none of
+// the packaged platforms: lnd is inside a container on all three, and on StartOS
+// 0.4.x its TLS certificate does not match `localhost` — which cost an hour to
+// discover the first time.
+//
+// The Umbrel form is the one Umbrel documents for its Lightning app and is the
+// only one here **not** verified on hardware: this project's account on that
+// machine has no access to its container runtime. If it turns out to be wrong,
+// the forum line beneath it is what catches the user.
+func removeTowerLine(platform config.Platform, pubkey string) string {
+	switch platform {
+	case config.PlatformStartOS04:
+		// Verified. `package attach` finds lncli on the path; 127.0.0.1 is the
+		// only name the certificate matches from inside the container.
+		return "sudo start-cli package attach lnd lncli --network=mainnet " +
+			"--rpcserver=127.0.0.1:10009 wtclient remove " + pubkey
+	case config.PlatformStartOS035:
+		// Verified. The sibling hostname is stable here, unlike the container
+		// address, which changes whenever the container is recreated.
+		return "sudo podman exec lnd.embassy lncli --network=mainnet " +
+			"--rpcserver=lnd.embassy:10009 wtclient remove " + pubkey
+	case config.PlatformUmbrel:
+		return "docker exec lightning_lnd_1 lncli wtclient remove " + pubkey
+	case config.PlatformUnknown:
+		// A self-hoster knows where their own lnd is, and guessing at their
+		// container name would be worse than the plain form.
+		return "lncli wtclient remove " + pubkey
+	default:
+		return "lncli wtclient remove " + pubkey
+	}
 }
 
 // notUsingOurs reports whether the node is demonstrably not backing up to a
