@@ -5,18 +5,14 @@ export const current = VersionInfo.of({
   version: `${appVersion}:${packageRevision}`,
   releaseNotes: {
     en_US:
-      'If you update your Lightning node, Forktower now follows it. Updating ' +
-      'LND rebuilds its container on a new address, and Forktower kept ' +
-      'dialling the old one — every read failing while the dashboard went on ' +
-      'showing channels from the last successful read, so nothing looked wrong ' +
-      'until a channel changed. Restarting Forktower fixed it; now nothing ' +
-      'needs to. Also: a watchtower registration left over from a reinstall ' +
-      'stops your node ever agreeing a session with Forktower\'s, and Forktower ' +
-      'used to say there was nothing to do about it. It now names the tower, ' +
-      'gives the exact command for your platform with the key already filled ' +
-      'in, and offers help on the forum. The watchtower setup steps have been ' +
-      'rewritten to match what is actually on each screen, and the address has ' +
-      'a copy button that works over a plain LAN connection.',
+      'Two corrections to 0.6.11. The Copy address button copied the whole ' +
+      'line beneath it — "lncli wtclient add" and then the address — rather ' +
+      'than the address alone. On StartOS that value is pasted into a settings ' +
+      'field rather than a terminal, so what it put on the clipboard was ' +
+      'something your node\'s form would reject. And the watchtower card said ' +
+      'only that the setup steps elsewhere on the page name the right settings ' +
+      'for your platform. They do, on a part of the page you may never open; ' +
+      'the steps for your platform are now shown on the card itself.',
   },
   migrations: {
     up: async ({ effects }) => {},
