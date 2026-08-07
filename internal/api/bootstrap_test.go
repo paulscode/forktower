@@ -848,7 +848,7 @@ func TestTheRemovalCommandFitsThePlatform(t *testing.T) {
 		{config.PlatformStartOS035, []string{
 			"podman exec lnd.embassy", "--rpcserver=lnd.embassy:10009",
 		}},
-		{config.PlatformUmbrel, []string{"docker exec"}},
+		{config.PlatformUmbrel, []string{"sudo docker exec lightning_lnd_1"}},
 		{config.PlatformUnknown, []string{"lncli wtclient remove"}},
 	} {
 		got := removeTowerLine(tc.platform, key)

@@ -351,10 +351,12 @@ func crowdedOutWhy() string {
 func (s *Server) removeTowerCommand(stale store.Tower) string {
 	return "Connect to your server over SSH and run this one line:\n\n    " +
 		removeTowerLine(s.cfg.Platform, stale.Pubkey) +
-		"\n\nA session with Forktower's watchtower should appear within a few " +
-		"minutes, and this message will go away on its own. If you would rather " +
-		"not do this yourself, post on the forum at paulscode.com and Paul will " +
-		"help you through it."
+		"\n\nIt will ask for your password. Nothing appears on screen as you " +
+		"type it, which is normal — type it and press enter.\n\nA session with " +
+		"Forktower's watchtower should appear within a few minutes, and this " +
+		"message will go away on its own. If you would rather not do this " +
+		"yourself, post on the forum at paulscode.com and Paul will help you " +
+		"through it."
 }
 
 // removeTowerLine is the command as it must actually be typed, per platform.
@@ -365,10 +367,10 @@ func (s *Server) removeTowerCommand(stale store.Tower) string {
 // 0.4.x its TLS certificate does not match `localhost` — which cost an hour to
 // discover the first time.
 //
-// The Umbrel form is the one Umbrel documents for its Lightning app and is the
-// only one here **not** verified on hardware: this project's account on that
-// machine has no access to its container runtime. If it turns out to be wrong,
-// the forum line beneath it is what catches the user.
+// All three packaged forms were run on the platform they name. The first Umbrel
+// version written here was wrong — it omitted `sudo`, without which the Docker
+// socket refuses the connection — which is the argument for measuring each of
+// them rather than reasoning about any.
 func removeTowerLine(platform config.Platform, pubkey string) string {
 	switch platform {
 	case config.PlatformStartOS04:
@@ -382,7 +384,9 @@ func removeTowerLine(platform config.Platform, pubkey string) string {
 		return "sudo podman exec lnd.embassy lncli --network=mainnet " +
 			"--rpcserver=lnd.embassy:10009 wtclient remove " + pubkey
 	case config.PlatformUmbrel:
-		return "docker exec lightning_lnd_1 lncli wtclient remove " + pubkey
+		// Verified. **The sudo is not optional** — without it the Docker socket
+		// refuses the connection, and the first form written here omitted it.
+		return "sudo docker exec lightning_lnd_1 lncli wtclient remove " + pubkey
 	case config.PlatformUnknown:
 		// A self-hoster knows where their own lnd is, and guessing at their
 		// container name would be worse than the plain form.
