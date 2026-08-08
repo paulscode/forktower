@@ -5,14 +5,17 @@ export const current = VersionInfo.of({
   version: `${appVersion}:${packageRevision}`,
   releaseNotes: {
     en_US:
-      'A second place where Forktower could lose track of a Lightning node ' +
-      'that moved. Updating or restarting your node gives it a new address, ' +
-      'and 0.6.11 taught Forktower to follow that — but only for reading your ' +
-      'channels. The check that reports whether your channels are actually ' +
-      'backed up to a watchtower kept dialling the old address, so the ' +
-      'dashboard recovered on its own while that check went on failing in the ' +
-      'log. Both now share one way of following a node, and a check in the ' +
-      'build refuses any future client that cannot.',
+      'Install this if you are watching the current fork. Forktower could fail ' +
+      'to report a split that was really happening. It confirmed one only when ' +
+      'both chains built several blocks past the point they separated — and a ' +
+      'split is often exactly what stops one of them building. In the fork of ' +
+      '8 August the user\'s own chain held one block past the separation and ' +
+      'stopped while the other went on, so the dashboard reported the two as ' +
+      'being on the same chain for as long as it lasted, while a block explorer ' +
+      'showed otherwise. A split is now also confirmed when the separation ' +
+      'simply persists, and you are warned within two minutes that one may be ' +
+      'happening — a warning that confirms nothing and starts no countdown. ' +
+      'The fork observed in production is replayed as a standing test.',
   },
   migrations: {
     up: async ({ effects }) => {},
