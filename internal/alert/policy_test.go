@@ -3,6 +3,7 @@ package alert
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -512,5 +513,84 @@ func TestRoutesFromConfigForEveryM1Transport(t *testing.T) {
 		if _, err := RoutesFromConfig([]config.TransportConfig{tc}, 0); err == nil {
 			t.Errorf("accepted a %q transport that could never deliver", tc.Type)
 		}
+	}
+}
+
+// A possible split has to become an alert, because on the platforms this runs on
+// an alert is the only thing that reaches anybody.
+//
+// The daemon cannot notify from inside its container; the wrapper reads the alert
+// list and announces what it finds. So an early warning that stayed on the
+// dashboard would be seen only by somebody who thought to go and look — during the
+// one event where that is least likely to be true.
+func TestASuspectedSplitIsAnnouncedAndThenSuperseded(t *testing.T) {
+	t.Parallel()
+
+	got, ok := MapEventToAlert(bus.SplitSuspected{
+		Suspected: true, Height: 961_632,
+		SFHash: "0000000000000000000169eb6f811ddbd0daf343af7b62180cdb13e7c78dbc16",
+		SQHash: "00000000000000000000d1e01392faa65ceeaed307f0a3159144b84146ff24ba",
+		Since:  1_790_000_000,
+	})
+	if !ok {
+		t.Fatal("a possible split raised nothing at all")
+	}
+	if got.Tier != store.TierWarning {
+		t.Errorf("tier = %q, want %q — not yet a finding, but not silence either",
+			got.Tier, store.TierWarning)
+	}
+	if got.Kind != KindSplitSuspected {
+		t.Errorf("kind = %q, want %q", got.Kind, KindSplitSuspected)
+	}
+	// The message carries the numbers, so somebody can check it against a block
+	// explorer without opening the dashboard at all.
+	if !strings.Contains(got.Message, "961632") {
+		t.Errorf("message does not say which block is disputed: %q", got.Message)
+	}
+	if !strings.Contains(got.Message, "c78dbc16") || !strings.Contains(got.Message, "46ff24ba") {
+		t.Errorf("message does not carry both chains' answers: %q", got.Message)
+	}
+	if !strings.Contains(got.Message, "Nothing to do yet") {
+		t.Errorf("a warning with no action reads as an emergency: %q", got.Message)
+	}
+
+	// Confirmation supersedes it, or the two stand side by side saying "may be
+	// splitting" and "have separated" about one event.
+	confirmed, ok := MapEventToAlert(bus.SplitStateChanged{Old: "ARMED", New: "SPLIT"})
+	if !ok {
+		t.Fatal("a confirmed split raised nothing")
+	}
+	if !slices.Contains(confirmed.Closes, KindSplitSuspected) {
+		t.Errorf("a confirmed split leaves the earlier warning standing: %+v", confirmed.Closes)
+	}
+
+	// And a disagreement that passes without becoming a split closes it too, rather
+	// than leaving a warning up for ever about something that has ended.
+	passed, ok := MapEventToAlert(bus.SplitSuspected{Suspected: false})
+	if !ok {
+		t.Fatal("a possible split that passed said nothing")
+	}
+	if passed.Tier != store.TierResolved {
+		t.Errorf("tier = %q, want %q", passed.Tier, store.TierResolved)
+	}
+	if !slices.Contains(passed.Closes, KindSplitSuspected) {
+		t.Errorf("the warning was not withdrawn: %+v", passed.Closes)
+	}
+}
+
+// Without a direct comparison there are no numbers to quote, and the warning still
+// has to be intelligible.
+func TestASuspectedSplitReadsWellWithoutTheBlockNumbers(t *testing.T) {
+	t.Parallel()
+
+	got, ok := MapEventToAlert(bus.SplitSuspected{Suspected: true, Since: 1_790_000_000})
+	if !ok {
+		t.Fatal("nothing was raised")
+	}
+	if strings.Contains(got.Message, "block 0") || strings.Contains(got.Message, "…") {
+		t.Errorf("an absent comparison was rendered as an empty one: %q", got.Message)
+	}
+	if !strings.Contains(got.Message, "may be splitting") {
+		t.Errorf("message = %q, want it to say what is suspected", got.Message)
 	}
 }

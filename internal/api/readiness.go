@@ -574,12 +574,23 @@ func (s *Server) checkSQOnBranch(c sentinel.Checks) ReadinessItem {
 	// Not yet checked is different from checked and wrong, and the daemon
 	// distinguishes them; both leave the user without the assurance, so both are
 	// reported honestly rather than as a pass.
-	if c.BranchVerifiedAt == 0 {
+	//
+	// Read from BranchCheckedAt, not BranchVerifiedAt. Only the first is stamped by
+	// a *failing* verdict, and asking the second whether the check had ever run
+	// meant a view proven to be on the wrong chain — with watching paused — was
+	// shown under the reassuring branch below.
+	if c.BranchCheckedAt == 0 {
+		// **Says why, and the why used to be wrong.** This read "there is nothing to
+		// compare until the chains actually differ", which is untrue twice over: the
+		// check compares shared history, so it needs no divergence to run at all, and
+		// it was displayed unchanged while the two chains held different blocks at the
+		// same height. Somebody looking at this line during the opening blocks of a
+		// split was told, in those words, that a split had not started.
 		return ReadinessItem{
 			ID: CheckSQOnBranch, OK: false, informational: true,
-			Label: "Not yet checked which chain the second view follows",
-			Why: "There is nothing to compare until the chains actually differ. " +
-				"Nothing for you to do.",
+			Label: "Still checking which chain the second view follows",
+			Why: "This runs within a few minutes of starting up, and again as the " +
+				"chains grow. Nothing for you to do.",
 		}
 	}
 	return ReadinessItem{

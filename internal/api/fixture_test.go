@@ -45,6 +45,15 @@ func TestTheDashboardFixtureMatchesWhatTheApiSends(t *testing.T) {
 		}
 	})
 
+	assertFixtureMatches(t, h, fixturePath)
+}
+
+// assertFixtureMatches records, or checks, one status response against a committed
+// fixture. Shared so a second state cannot drift into being compared differently
+// from the first.
+func assertFixtureMatches(t *testing.T, h *harness, path string) {
+	t.Helper()
+
 	resp := h.do(t, http.MethodGet, "/api/v1/status", "")
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -63,16 +72,16 @@ func TestTheDashboardFixtureMatchesWhatTheApiSends(t *testing.T) {
 	pretty = append(pretty, '\n')
 
 	if *update {
-		if err := os.MkdirAll(filepath.Dir(fixturePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(fixturePath, pretty, 0o600); err != nil {
+		if err := os.WriteFile(path, pretty, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
 
-	want, err := os.ReadFile(fixturePath)
+	want, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("%v — run `go test ./internal/api -update` to create it", err)
 	}
@@ -82,6 +91,52 @@ func TestTheDashboardFixtureMatchesWhatTheApiSends(t *testing.T) {
 			"If the change is intended, run `go test ./internal/api -update` and check "+
 			"that web/app_test.js still renders it.", pretty, want)
 	}
+}
+
+// suspectedFixturePath is the same contract for the state *before* a split is
+// confirmed.
+//
+// A second fixture because the first cannot reach this shape: `fork_candidate` is
+// suppressed once a separation is recorded, so a confirmed-split response omits it
+// by design. Without this the two newest fields on the response were drawn by the
+// dashboard from a hand-written object in the rendering test, which agrees with
+// itself no matter what the Go side is called — exactly the silent rename this
+// mechanism exists to catch, and it would show a blank panel during a split.
+var suspectedFixturePath = filepath.Join("..", "..", "web", "testdata", "status-suspected.json")
+
+// The state a user is looking at while a split is building: the chains disagree,
+// the daemon has not committed to it, and the screen must still say where they
+// parted and what each says the disputed block is.
+func TestTheSuspectedSplitFixtureMatchesWhatTheApiSends(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil)
+
+	h.sen.set(func(f *fakeSentinel) {
+		f.state = sentinel.State{
+			Phase: sentinel.PhaseArmed,
+			ForkCandidate: &chainview.BlockRef{
+				Hash: hashOf("separation-candidate"), Height: 961_631,
+			},
+			ForkCandidateSince: 1_790_000_000,
+			SplitSuspected:     true,
+			Disagreement: &sentinel.HeightDisagreement{
+				Height: 961_632,
+				SFHash: hashOf("your-node-block"),
+				SQHash: hashOf("other-chain-block"),
+			},
+			DisagreementSince: 1_790_000_000,
+			SFTip: &chainview.BlockMeta{
+				BlockRef: chainview.BlockRef{Hash: hashOf("sf-tip"), Height: 961_632},
+			},
+			SQTip: &chainview.BlockMeta{
+				BlockRef: chainview.BlockRef{Hash: hashOf("sq-tip"), Height: 961_634},
+			},
+			SFHealth: chainview.HealthOK,
+			SQHealth: chainview.HealthOK,
+		}
+	})
+
+	assertFixtureMatches(t, h, suspectedFixturePath)
 }
 
 // The exposure table's own fixture: a channel under an active threat, with a

@@ -121,6 +121,22 @@ type HeadlineInput struct {
 	// they are listed. Informational items are already excluded.
 	FailingChecks []ReadinessItem
 
+	// Diverging means the two chains are holding incompatible blocks right now,
+	// without that yet amounting to a confirmed split.
+	//
+	// Carried because the calm line below it used to be a statement of fact —
+	// "your node and the rest of the network are on the same chain" — printed
+	// without anything having checked whether that was true. It went on being
+	// printed while the daemon's own records held two different blocks at one
+	// height. Being slow to *declare* a split is a deliberate guard against
+	// reorganisation noise; asserting the opposite meanwhile is not part of it.
+	Diverging bool
+	// SplitSuspected means that disagreement has gone beyond what an ordinary pair
+	// of simultaneously-found blocks would explain, without being confirmed.
+	SplitSuspected bool
+	// DivergingSince is when the chains were first seen to disagree.
+	DivergingSince int64
+
 	// ExposedDeadline is set when a channel is being closed unfairly and there is
 	// a running deadline to respond.
 	//
@@ -186,9 +202,38 @@ func ComputeHeadline(in HeadlineInput) Headline {
 			Since:  in.DetectedAt,
 		}
 
+	case in.SplitSuspected:
+		// **Said before it is certain, on purpose.** Anyone can open a block explorer
+		// and see two chains the moment there are two; a dashboard that stays calm
+		// through that is not being careful, it is being wrong in the one direction
+		// that matters, and it teaches the user that this page is not worth checking.
+		//
+		// So the confirmed split below and this are separated by what is *claimed*,
+		// not by whether anything is said at all. Confirming fixes a separation
+		// point, anchors rescans and decides which channels count as exposed, and it
+		// is right to be slow about that. Telling somebody what their own node is
+		// showing costs nothing to be early about.
+		return Headline{
+			State: StateAttention,
+			Title: "This may be a chain split.",
+			Detail: "Your node and the rest of the network are following different " +
+				"blocks, and have not reconciled. Forktower is watching both chains " +
+				"and will confirm shortly. Nothing for you to do yet.",
+			Since: in.DivergingSince,
+		}
+
 	case in.Phase == store.StateUnarmed:
 		// Starting up. A backend still syncing here is expected rather than a
 		// fault, which is why this is checked before the degraded-view case.
+		//
+		// **Below the possible-split case above, though.** Two healthy views that
+		// disagree hold the phase here — the transition table has nowhere else to
+		// put them until the evidence accrues — so a daemon started next to a fork
+		// sits in this state, and somebody who installed Forktower *because* they
+		// heard the chains had split is the likely reader, not an edge case. They
+		// were shown the calmest sentence this software has, indefinitely. Nothing
+		// is lost by the ordering: a suspicion needs a tip from both views, and a
+		// view that is genuinely still syncing does not report one.
 		return Headline{
 			State:  StateGettingReady,
 			Title:  "Getting set up — nothing to do yet.",
@@ -238,6 +283,23 @@ func ComputeHeadline(in HeadlineInput) Headline {
 			Title:  "Watching. The split has ended.",
 			Detail: "The chains agree again. Forktower is still watching, just in case.",
 			Since:  in.DetectedAt,
+		}
+
+	case in.Diverging:
+		// The first moments of a disagreement, before it has outlasted what two
+		// blocks found at the same instant would explain. Stated as a fact and left
+		// calm: that happens routinely and settles itself, and colouring the
+		// dashboard every time it does is how a warning becomes wallpaper.
+		//
+		// What it may not do is claim the opposite, which is what the line below
+		// this one was doing throughout.
+		return Headline{
+			State: StateProtected,
+			Title: "Watching. Your channels look fine.",
+			Detail: "Your node and the rest of the network are on different blocks just " +
+				"now. That usually settles by itself within minutes — Forktower is " +
+				"watching both and will say so plainly if it does not.",
+			Since: in.DivergingSince,
 		}
 
 	default:

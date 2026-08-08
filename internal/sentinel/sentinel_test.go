@@ -81,6 +81,21 @@ func newHarness(t *testing.T, mutate func(*Config)) *harness {
 	return &harness{sf: sf, sq: sq, store: st, bus: b, sen: sen, clock: clock}
 }
 
+// newSentinelOver builds a second sentinel over the same storage, views and clock.
+//
+// That is what a restart is, from the daemon's point of view, and it is the only
+// way to test what does and does not survive one: everything the process kept in
+// memory is gone, everything it wrote is still there.
+func newSentinelOver(t *testing.T, h *harness) *Sentinel {
+	t.Helper()
+
+	sen, err := New(h.sf, h.sq, h.store, h.bus, h.sen.cfg, nil, h.sen.now)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return sen
+}
+
 // start runs the sentinel for the duration of the test.
 //
 // One run per test: starting a fresh one for each wait would reload state from

@@ -1,0 +1,147 @@
+{
+  "headline": {
+    "state": "attention",
+    "title": "This may be a chain split.",
+    "detail": "Your node and the rest of the network are following different blocks, and have not reconciled. Forktower is watching both chains and will confirm shortly. Nothing for you to do yet.",
+    "action": null,
+    "since": 1790000000
+  },
+  "split": {
+    "state": "ARMED",
+    "fork": null,
+    "fork_candidate": {
+      "hash": "0000000000000000000000006574616469646e61632d6e6f6974617261706573",
+      "height": 961631,
+      "detected_at": 1790000000
+    },
+    "disagreement": {
+      "height": 961632,
+      "sf_hash": "00000000000000000000000000000000006b636f6c622d65646f6e2d72756f79",
+      "sq_hash": "0000000000000000000000000000006b636f6c622d6e696168632d726568746f",
+      "since": 1790000000
+    },
+    "branches": {
+      "sf": {
+        "tip_hash": "00000000000000000000000000000000000000000000000000007069742d6673",
+        "tip_height": 961632,
+        "since_fork_depth": 1,
+        "avg_interval_secs": 600
+      },
+      "sq": {
+        "tip_hash": "00000000000000000000000000000000000000000000000000007069742d7173",
+        "tip_height": 961634,
+        "since_fork_depth": 3,
+        "avg_interval_secs": 600
+      }
+    }
+  },
+  "views": {
+    "sf": {
+      "state": "OK",
+      "peer_count": 10,
+      "sync_progress": 1,
+      "detail": "",
+      "software": "/Satoshi:29.3.0/Knots:20260508/"
+    },
+    "sq": {
+      "state": "OK",
+      "peer_count": 4,
+      "sync_progress": 1,
+      "detail": "",
+      "software": "/Satoshi:29.0.0/"
+    }
+  },
+  "readiness": [
+    {
+      "id": "sq_backend_distinct",
+      "ok": true,
+      "label": "Watching two independent views of the chain",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "sq_synced",
+      "ok": true,
+      "label": "Watching the other chain",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "sq_on_branch",
+      "ok": true,
+      "label": "The other chain is the one it should be",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "sf_enforcing",
+      "ok": true,
+      "label": "Your node most likely follows the new rules",
+      "why": "If the network splits, your node would be on the side enforcing them. Forktower watches the other side for you.",
+      "detail": "Based on how your node describes itself.",
+      "action": null
+    },
+    {
+      "id": "alert_transports",
+      "ok": true,
+      "label": "Alerts can reach you",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "watching_active",
+      "ok": true,
+      "label": "Watching the other chain",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "watcher_progressing",
+      "ok": true,
+      "label": "Reading the other chain",
+      "why": "",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "ln_connected",
+      "ok": false,
+      "label": "No Lightning node connected",
+      "why": "Forktower is watching the chains, which is what matters first. Connect your Lightning node and it will also track which of your channels are exposed.",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "channels_inventoried",
+      "ok": false,
+      "label": "No channels found yet",
+      "why": "Forktower has not seen any channels to protect. If you have some, check that your Lightning node is connected.",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "deadline_inputs_known",
+      "ok": true,
+      "label": "No countdown is running",
+      "why": "Nothing has closed any of your channels on the other chain.",
+      "detail": "",
+      "action": null
+    },
+    {
+      "id": "tower_protection",
+      "ok": false,
+      "label": "No watchtower is protecting your channels",
+      "why": "If somebody publishes an old channel state on the other chain, nothing would answer it unless your own node happened to be watching that chain — and it is not.",
+      "detail": "",
+      "action": {
+        "label": "Set up a watchtower",
+        "href": "#towers-card"
+      }
+    }
+  ]
+}

@@ -19,9 +19,33 @@ import (
 // value" rather than a zero. Anything security-relevant is deliberately absent
 // from this list: see ForkDescriptor.
 const (
-	DefaultUIListen           = "127.0.0.1:8330"
-	DefaultPollIntervalSecs   = 10
-	DefaultSplitConfirmDepth  = 3
+	DefaultUIListen          = "127.0.0.1:8330"
+	DefaultPollIntervalSecs  = 10
+	DefaultSplitConfirmDepth = 3
+	// DefaultSplitConfirmSecs is how long a disagreement must stand before one
+	// chain having built past it is enough to confirm a split on its own.
+	//
+	// Ten minutes — about one block interval. It is there to absorb relay: a view
+	// may legitimately trail by a block or two for a short while, and nothing
+	// should be concluded from that. Nothing else needs absorbing. A pair of stale
+	// blocks is reconciled by the next block on either side, and a node that can
+	// see a heavier valid chain switches to it in seconds, so a view still sitting
+	// behind one after ten minutes is partitioned from it or refusing it.
+	//
+	// Deliberately not longer. A user can open a block explorer and see a fork the
+	// moment it happens; software that takes an hour to reach the same conclusion
+	// has taught them not to consult it.
+	DefaultSplitConfirmSecs = 600
+	// DefaultSplitSuspectSecs is how long a disagreement must stand before the user
+	// is warned it may be a split.
+	//
+	// Two minutes, and it confirms nothing — it decides only when a calm statement
+	// of fact becomes a warning. Short, because the cost of being early here is a
+	// sentence someone reads and the cost of being late is silence during the one
+	// event this software exists for. Not zero, because two blocks found at the
+	// same moment is an ordinary occurrence that settles itself, and colouring the
+	// dashboard every time it happens is how a warning becomes wallpaper.
+	DefaultSplitSuspectSecs   = 120
 	DefaultMaxAncestorWalk    = 20000
 	DefaultSQStallFactor      = 6.0
 	DefaultSelfTestIntervalHr = 168
@@ -285,10 +309,17 @@ func (l LNConfig) Configured() bool { return len(l.LND)+len(l.CLN) > 0 }
 
 // SentinelConfig tunes split detection.
 type SentinelConfig struct {
-	PollIntervalSecs  int     `toml:"poll_interval_secs"`
-	SplitConfirmDepth int32   `toml:"split_confirm_depth"`
-	MaxAncestorWalk   int32   `toml:"max_ancestor_walk"`
-	SQStallFactor     float64 `toml:"sq_stall_factor"`
+	PollIntervalSecs  int   `toml:"poll_interval_secs"`
+	SplitConfirmDepth int32 `toml:"split_confirm_depth"`
+	// SplitConfirmSecs confirms a split from persistence when the depth rule
+	// cannot, because that rule needs both chains to keep producing blocks and a
+	// split may be exactly what stops one of them.
+	SplitConfirmSecs int64 `toml:"split_confirm_secs"`
+	// SplitSuspectSecs decides when the user is warned a split may be happening.
+	// Presentation only: it confirms nothing and changes no behaviour.
+	SplitSuspectSecs int64   `toml:"split_suspect_secs"`
+	MaxAncestorWalk  int32   `toml:"max_ancestor_walk"`
+	SQStallFactor    float64 `toml:"sq_stall_factor"`
 	// ReorgMargin is the safety margin below the user's node's tip when
 	// computing the trust anchor. Zero means "choose for me", which resolves to
 	// ReorgMarginKnown or ReorgMarginUnknown depending on whether the divergence
@@ -557,6 +588,8 @@ func Default() Config {
 		Sentinel: SentinelConfig{
 			PollIntervalSecs:  DefaultPollIntervalSecs,
 			SplitConfirmDepth: DefaultSplitConfirmDepth,
+			SplitConfirmSecs:  DefaultSplitConfirmSecs,
+			SplitSuspectSecs:  DefaultSplitSuspectSecs,
 			MaxAncestorWalk:   DefaultMaxAncestorWalk,
 			SQStallFactor:     DefaultSQStallFactor,
 		},

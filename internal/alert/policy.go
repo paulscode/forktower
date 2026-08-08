@@ -16,6 +16,7 @@ import (
 const (
 	KindWatchingStarted = "watching_started"
 	KindWatchingStopped = "watching_stopped"
+	KindSplitSuspected  = "split_suspected"
 	KindSplitDetected   = "split_detected"
 	KindSplitResolving  = "split_resolving"
 	KindSplitResolved   = "split_resolved"
@@ -192,11 +193,62 @@ func MapEventToAlert(e bus.Event) (Candidate, bool) {
 		return mapExpiredLoss(ev)
 	case bus.TowerHealthChanged:
 		return mapTowerHealth(ev)
+	case bus.SplitSuspected:
+		return mapSplitSuspected(ev)
 	case bus.TowerConcern:
 		return mapTowerConcern(ev)
 	default:
 		return Candidate{}, false
 	}
+}
+
+// mapSplitSuspected carries the early warning to wherever the user actually is.
+//
+// **Raised before anything is certain, on purpose.** On the platforms this runs
+// on the daemon cannot notify anybody directly: the wrapper reads the alert list
+// and announces what it finds, so an observation that never becomes an alert
+// reaches nobody unless they happen to open the dashboard. A possible chain split
+// is exactly the thing nobody should have to happen to look at.
+//
+// A warning rather than a critical, because it is not yet a finding and there is
+// nothing for the user to do about it. The message says so, and says where to
+// check for themselves.
+func mapSplitSuspected(ev bus.SplitSuspected) (Candidate, bool) {
+	if !ev.Suspected {
+		return Candidate{
+			Tier:     store.TierResolved,
+			Kind:     KindSplitResolved,
+			DedupKey: KindSplitResolved + ":suspected",
+			Closes:   []string{KindSplitSuspected},
+			Message:  "The chains agree again. What looked like it might be a split has passed.",
+		}, true
+	}
+
+	msg := "The chains may be splitting: your node and the rest of the network are " +
+		"following different blocks. Forktower is watching both. Nothing to do yet."
+	if ev.Height > 0 {
+		msg = fmt.Sprintf(
+			"The chains may be splitting: at block %d your node has %s and the other "+
+				"chain has %s. Forktower is watching both. Nothing to do yet.",
+			ev.Height, shortHash(ev.SFHash), shortHash(ev.SQHash))
+	}
+	return Candidate{
+		Tier:     store.TierWarning,
+		Kind:     KindSplitSuspected,
+		DedupKey: KindSplitSuspected,
+		Message:  msg,
+	}, true
+}
+
+// shortHash trims a block hash to something readable in a notification, keeping
+// the end rather than the start: the leading zeroes are the part every block hash
+// has in common and the part that identifies one is at the other end.
+func shortHash(h string) string {
+	const keep = 12
+	if len(h) <= keep {
+		return h
+	}
+	return "…" + h[len(h)-keep:]
 }
 
 func mapSplitState(ev bus.SplitStateChanged) (Candidate, bool) {
@@ -230,6 +282,9 @@ func mapSplitState(ev bus.SplitStateChanged) (Candidate, bool) {
 			Tier:     store.TierWarning,
 			Kind:     KindSplitDetected,
 			DedupKey: KindSplitDetected,
+			// Supersedes the earlier warning, or the two stand side by side saying
+			// "may be splitting" and "have separated" about the same event.
+			Closes: []string{KindSplitSuspected},
 			Message: "The chains have separated: your node's chain and the other chain " +
 				"no longer agree. Open Forktower to see what this means for you.",
 		}, true
@@ -253,7 +308,7 @@ func mapSplitState(ev bus.SplitStateChanged) (Candidate, bool) {
 			// above it — on the one alert this whole program exists to raise.
 			// Same defect as the chain views had, found by sweeping for it rather
 			// than by anybody hitting it.
-			Closes:  []string{KindSplitDetected, KindSplitResolving},
+			Closes:  []string{KindSplitDetected, KindSplitResolving, KindSplitSuspected},
 			Message: "The split has ended.",
 		}, true
 

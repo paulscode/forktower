@@ -424,6 +424,7 @@ func TestEventKindsMatchTheirConstants(t *testing.T) {
 		want  string
 	}{
 		{SplitStateChanged{}, KindSplitStateChanged},
+		{SplitSuspected{}, KindSplitSuspected},
 		{SplitBranchExtended{}, KindSplitBranchExtended},
 		{ViewHealthChanged{}, KindViewHealthChanged},
 		{AlertRaised{}, KindAlertRaised},

@@ -205,18 +205,40 @@ func branchSampleHeights(anchor int32) []int32 {
 // which case only the first half applies.
 //
 // Returns ErrCannotVerifyBranch when a view has not enough history to judge, which
-// callers report as an unavailable check rather than a failure.
+// callers report as an unavailable check rather than a failure. **Silence is one
+// of those cases.** Heights a view has not reached are skipped, so a view early in
+// its sync can skip every sample and reach the end without a single comparison
+// having been made; returning success there would report a check as passed that
+// was never performed, which is the one outcome this whole file exists to prevent.
 func VerifyBranch(ctx context.Context, sf, sq ChainView, anchorHeight int32, fork *BlockRef) error {
-	if err := verifySharedHistory(ctx, sf, sq, anchorHeight); err != nil {
+	compared, err := verifySharedHistory(ctx, sf, sq, anchorHeight)
+	if err != nil {
 		return err
 	}
-	if fork == nil {
-		return nil
+	if fork != nil {
+		// Divergence above a known separation point is the stronger evidence and
+		// settles it on its own, so it stands whatever shared history could offer.
+		return verifyDivergence(ctx, sf, sq, *fork)
 	}
-	return verifyDivergence(ctx, sf, sq, *fork)
+	if compared == 0 {
+		return fmt.Errorf(
+			"the two views have no history in common to compare at or below height %d yet: %w",
+			anchorHeight, ErrCannotVerifyBranch)
+	}
+	return nil
 }
 
-func verifySharedHistory(ctx context.Context, sf, sq ChainView, anchorHeight int32) error {
+// verifySharedHistory compares the two views below the anchor and reports how many
+// heights it was actually able to compare.
+//
+// The count is returned rather than kept private because agreement at genesis
+// alone is not evidence about a branch: VerifyNetwork already establishes it for
+// every view, and a node that has loaded nothing but its first block would
+// otherwise match here and be reported as confirmed. Only heights above genesis
+// count as a comparison.
+func verifySharedHistory(
+	ctx context.Context, sf, sq ChainView, anchorHeight int32,
+) (compared int, err error) {
 	for _, h := range branchSampleHeights(anchorHeight) {
 		sfHash, err := sf.BlockHashByHeight(ctx, h)
 		if err != nil {
@@ -224,24 +246,28 @@ func verifySharedHistory(ctx context.Context, sf, sq ChainView, anchorHeight int
 				// The view does not reach this height yet. Not a disagreement.
 				continue
 			}
-			return fmt.Errorf("reading height %d from the chain your node follows: %w", h, err)
+			return compared, fmt.Errorf(
+				"reading height %d from the chain your node follows: %w", h, err)
 		}
 		sqHash, err := sq.BlockHashByHeight(ctx, h)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				continue
 			}
-			return fmt.Errorf("reading height %d from the other chain: %w", h, err)
+			return compared, fmt.Errorf("reading height %d from the other chain: %w", h, err)
 		}
 		if sfHash != sqHash {
-			return fmt.Errorf(
+			return compared, fmt.Errorf(
 				"the two views disagree at height %d, which is below where the rules could "+
 					"differ: your node has %s and the other view has %s. Shared history cannot "+
 					"differ, so the second view is on a different chain or network: %w",
 				h, sfHash, sqHash, ErrWrongBranch)
 		}
+		if h > 0 {
+			compared++
+		}
 	}
-	return nil
+	return compared, nil
 }
 
 func verifyDivergence(ctx context.Context, sf, sq ChainView, fork BlockRef) error {

@@ -77,6 +77,10 @@ func TestTheTimelineRecordsEveryKindOfEvent(t *testing.T) {
 		bus.SecondOrderSpent{SpendEventID: 2, SourceSpendEventID: 1, Role: "to_local"},
 		bus.SpendReorgedOut{SpendEventID: 1, Branch: "sq"},
 		bus.MempoolSighting{SpendEventID: 3, ChannelID: 1, Branch: "sq"},
+		bus.SplitSuspected{
+			Suspected: true, Height: 961_632,
+			SFHash: "0000ours", SQHash: "0000theirs", Since: 1,
+		},
 		bus.TowerHealthChanged{TowerID: 1, TowerKind: "lnd", Status: "unreachable"},
 		bus.TowerConcern{
 			TowerID: 1, Concern: "tower.channel_uncovered",
@@ -267,6 +271,8 @@ func everyEventKind() []bus.Event {
 		bus.SplitStateChanged{Old: "SPLIT", New: "RESOLVING"},
 		bus.SplitStateChanged{Old: "ARMED", New: "UNARMED"},
 		bus.SplitStateChanged{Old: "ARMED", New: "RESOLVED_SF_WON"},
+		bus.SplitSuspected{Suspected: true, Height: 961_632, Since: 1},
+		bus.SplitSuspected{Suspected: false},
 		bus.SplitBranchExtended{Branch: "sq", Block: bus.BlockMetaJSON{Height: 961753}},
 		bus.SplitBranchExtended{Branch: "sf"},
 		bus.SplitBranchExtended{Branch: "elsewhere"},

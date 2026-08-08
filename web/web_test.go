@@ -115,7 +115,10 @@ func TestEverythingTheDashboardNeedsIsEmbedded(t *testing.T) {
 
 	// The tests, the shim and the response fixture live beside the assets and
 	// must not travel with them.
-	for _, name := range []string{"app_test.js", "domshim.js", "testdata/status.json"} {
+	for _, name := range []string{
+		"app_test.js", "domshim.js",
+		"testdata/status.json", "testdata/status-suspected.json",
+	} {
 		if _, err := fs.ReadFile(web.Files, name); err == nil {
 			t.Errorf("%s ships inside the binary", name)
 		}

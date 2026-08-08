@@ -468,7 +468,11 @@ function renderAdvanced(status) {
     const dl = document.createElement('dl');
     addPair(dl, 'Latest block', info.tip_height ? String(info.tip_height) : 'not known yet');
     addPair(dl, 'Block hash', info.tip_hash || '—');
-    if (split.fork) {
+    // Shown for a separation that is still only suspected, not just a confirmed
+    // one. Gating on `fork` alone meant that for the whole time a split was
+    // building — the time somebody is most likely to be looking — the daemon knew
+    // where the chains had parted and how far each had gone, and showed neither.
+    if (split.fork || split.fork_candidate) {
       addPair(dl, 'Blocks since the chains separated', String(info.since_fork_depth || 0));
     }
     if (info.avg_interval_secs) {
@@ -485,6 +489,37 @@ function renderAdvanced(status) {
     addPair(dl, 'Height', String(split.fork.height));
     addPair(dl, 'Block hash', split.fork.hash);
     addPair(dl, 'Noticed', formatTime(split.fork.detected_at));
+    tile.appendChild(dl);
+    branches.appendChild(tile);
+  } else if (split.fork_candidate) {
+    // Titled as a question rather than a finding, because that is what it is: the
+    // daemon has not committed to this yet. Saying nothing at all was the previous
+    // behaviour, and it left the screen blank about the thing the user came to look
+    // at.
+    const tile = make('div', 'tile');
+    tile.appendChild(make('h4', null, 'Where the chains appear to have parted'));
+    const dl = document.createElement('dl');
+    addPair(dl, 'Height', String(split.fork_candidate.height));
+    addPair(dl, 'Block hash', split.fork_candidate.hash);
+    addPair(dl, 'First seen', formatTime(split.fork_candidate.detected_at));
+    addPair(dl, 'Confirmed', 'not yet — still watching');
+    tile.appendChild(dl);
+    branches.appendChild(tile);
+  }
+
+  // The one thing on this page that can be checked without trusting Forktower:
+  // each chain's own answer for the same block number. Any block explorer settles
+  // which is which.
+  if (split.disagreement) {
+    const tile = make('div', 'tile');
+    tile.appendChild(make('h4', null, 'What each chain says block ' +
+      split.disagreement.height + ' is'));
+    const dl = document.createElement('dl');
+    addPair(dl, names.sf, split.disagreement.sf_hash);
+    addPair(dl, names.sq, split.disagreement.sq_hash);
+    if (split.disagreement.since) {
+      addPair(dl, 'Differing since', formatTime(split.disagreement.since));
+    }
     tile.appendChild(dl);
     branches.appendChild(tile);
   }

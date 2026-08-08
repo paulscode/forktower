@@ -185,6 +185,8 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger, deps Deps) (*
 	a.sentinel, err = sentinel.New(a.sf, a.sq, st, a.bus, sentinel.Config{
 		PollInterval:      time.Duration(cfg.Sentinel.PollIntervalSecs) * time.Second,
 		SplitConfirmDepth: cfg.Sentinel.SplitConfirmDepth,
+		SplitConfirmSecs:  cfg.Sentinel.SplitConfirmSecs,
+		SplitSuspectSecs:  cfg.Sentinel.SplitSuspectSecs,
 		StallFactor:       cfg.Sentinel.SQStallFactor,
 		ReorgMargin:       cfg.EffectiveReorgMargin(),
 		DivergenceHeight:  cfg.Fork.DivergenceHeight,

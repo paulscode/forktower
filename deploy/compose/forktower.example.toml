@@ -74,7 +74,18 @@ expiry_height = 0                     # 0 = permanent, or read it from the node
 # ── Split detection ───────────────────────────────────────────────────────────
 [sentinel]
 poll_interval_secs = 10
-split_confirm_depth = 3               # blocks past the split point, on both chains
+split_confirm_depth = 3               # blocks past the split point
+# A split is confirmed when both chains build `split_confirm_depth` past the
+# separation, or when one does and the other has not followed it for this long.
+# The second rule exists because the first needs both chains to keep producing
+# blocks, and a split may be exactly what stops one of them — which, in a split
+# with any imbalance of hashing power, is as likely to be yours as anyone's.
+split_confirm_secs = 600
+# When you are *told* a split may be happening, which confirms nothing and starts
+# no countdown. Deliberately short: anyone can see a fork on a block explorer the
+# moment there is one, and a dashboard that stays quiet until it is certain is
+# less use than a web page.
+split_suspect_secs = 120
 max_ancestor_walk = 20000             # how far back to search for the split point
 sq_stall_factor = 6.0                 # how quiet a chain must go to count as stalled
 reorg_margin = 0                      # 0 = choose automatically (see fork above)
