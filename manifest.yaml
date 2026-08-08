@@ -1,7 +1,7 @@
 id: forktower
 title: "Forktower"
-version: 0.6.12
-release-notes: "Two corrections to 0.6.11. The Copy address button copied the whole line beneath it — 'lncli wtclient add' and then the address — rather than the address alone. On every packaged platform that value is pasted into a settings field rather than a terminal, so what it put on the clipboard was something your node's form would reject. And the watchtower card said only that the setup steps elsewhere on the page name the right settings for your platform. They do, on a part of the page you may never open; the steps for your platform are now shown on the card itself."
+version: 0.6.13
+release-notes: "A second place where Forktower could lose track of a Lightning node that moved. Updating or restarting your node gives it a new address, and 0.6.11 taught Forktower to follow that — but only for reading your channels. The check that reports whether your channels are actually backed up to a watchtower kept dialling the old address, so the dashboard recovered on its own while that check went on failing in the log. Both now share one way of following a node, and a check in the build refuses any future client that cannot."
 license: MIT
 wrapper-repo: "https://github.com/paulscode/forktower"
 upstream-repo: "https://github.com/paulscode/forktower"
