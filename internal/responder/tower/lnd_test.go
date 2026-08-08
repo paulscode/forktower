@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/paulscode/forktower/internal/nodeaddr"
 )
 
 // serve stands up a fake LND REST API and returns a reader pointed at it.
@@ -371,5 +375,46 @@ func TestTheTowerIdentityARealTowerSendsIsDecoded(t *testing.T) {
 	}
 	if len(got.Listeners) == 0 {
 		t.Errorf("the listeners were not read: %+v", got.Listeners)
+	}
+}
+
+// The tower's client follows a node that moved, like the registry's does.
+//
+// **This is the sibling that was forgotten.** The registry's client learned to
+// re-resolve in 0.6.11; this one kept dialling a container address that no
+// longer existed, so a user saw a healthy dashboard — the channel list had
+// recovered — and a recurring "no route to host" in the log from the coverage
+// check that had not.
+func TestTheTowerClientFollowsANodeThatMoved(t *testing.T) {
+	t.Parallel()
+
+	ln, err := net.Listen("tcp", "127.0.0.2:0")
+	if err != nil {
+		t.Skipf("this system has no second loopback address: %v", err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"towers":[]}`))
+		}))
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, _, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l := &LND{
+		// Pointed where nothing listens, with the name that now answers elsewhere.
+		addr: nodeaddr.New("http://127.0.0.1:"+port, host, nil),
+		http: &http.Client{Timeout: 2 * time.Second},
+	}
+	if _, err := l.Towers(t.Context()); err != nil {
+		t.Fatalf("a node that had moved was not followed: %v", err)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulscode/forktower/internal/nodeaddr"
 	"github.com/paulscode/forktower/internal/store"
 )
 
@@ -375,26 +376,6 @@ func TestANodeThatMovedIsFollowed(t *testing.T) {
 	}
 }
 
-// It does not retry when the address has not changed, so a node that is simply
-// down costs one lookup rather than one per request.
-func TestANodeThatIsDownIsNotRetriedForEveryRequest(t *testing.T) {
-	t.Parallel()
-
-	c := clientForTest(t, "http://127.0.0.1:1", "127.0.0.1:1")
-	if _, err := c.Info(t.Context()); err == nil {
-		t.Fatal("a node that is down reported success")
-	}
-	// A second call must not re-resolve at all: the cooldown has not passed.
-	before := c.lastResolve
-	if _, err := c.Info(t.Context()); err == nil {
-		t.Fatal("a node that is down reported success")
-	}
-	if !c.lastResolve.Equal(before) {
-		t.Error("the name was looked up again inside the cooldown, so a node " +
-			"that stays down would produce a lookup for every request")
-	}
-}
-
 // clientForTest builds a client pointed at one address with a name that resolves
 // to another, without the TLS pinning the real constructor requires.
 func clientForTest(t *testing.T, base, resolvesTo string) *Client {
@@ -404,25 +385,9 @@ func clientForTest(t *testing.T, base, resolvesTo string) *Client {
 		t.Fatal(err)
 	}
 	return &Client{
-		baseURL: base,
 		// A literal address resolves to itself, which is all the lookup needs.
-		resolveHost: host,
-		now:         time.Now,
-		http:        &http.Client{Timeout: 2 * time.Second},
-		log:         slog.New(discardHandler{}),
-	}
-}
-
-// swapHost keeps everything but the host, and reports honestly when nothing
-// changed — which is what stops the retry happening at all.
-func TestSwappingTheHostKeepsTheRest(t *testing.T) {
-	t.Parallel()
-	got, changed := swapHost("https://10.0.3.72:8080", "10.0.3.99")
-	if !changed || got != "https://10.0.3.99:8080" {
-		t.Errorf("swapHost = %q, %v", got, changed)
-	}
-	if _, changed := swapHost("https://10.0.3.72:8080", "10.0.3.72"); changed {
-		t.Error("an unchanged address was reported as a move, which would retry " +
-			"every failed request")
+		addr: nodeaddr.New(base, host, nil),
+		http: &http.Client{Timeout: 2 * time.Second},
+		log:  slog.New(discardHandler{}),
 	}
 }

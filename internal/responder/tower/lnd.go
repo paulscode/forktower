@@ -14,6 +14,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/paulscode/forktower/internal/nodeaddr"
 )
 
 // DefaultTimeout bounds one read of a tower or a node.
@@ -26,6 +28,9 @@ const maxErrorSnippet = 256
 type LNDOptions struct {
 	// BaseURL is the REST address, e.g. "https://tower-lnd:8080".
 	BaseURL string
+	// ResolveHost is the stable name BaseURL's address was resolved from, where
+	// the packaging resolved one. Empty leaves the address fixed.
+	ResolveHost string
 	// TLSCertPath is LND's self-signed certificate, pinned rather than trusted
 	// through the system roots: the certificate is the identity here, and
 	// accepting any certificate for this address would leave no way to notice
@@ -45,9 +50,9 @@ type LNDOptions struct {
 // is the user's action on their own node and doing it for them would mean
 // holding a write credential for the life of the daemon.
 type LND struct {
-	baseURL string
-	macHex  string
-	http    *http.Client
+	addr   *nodeaddr.Follower
+	macHex string
+	http   *http.Client
 }
 
 // NewLND builds a reader.
@@ -70,8 +75,8 @@ func NewLND(opts LNDOptions) (*LND, error) {
 	}
 
 	return &LND{
-		baseURL: strings.TrimRight(opts.BaseURL, "/"),
-		macHex:  hex.EncodeToString(raw),
+		addr:   nodeaddr.New(opts.BaseURL, opts.ResolveHost, nil),
+		macHex: hex.EncodeToString(raw),
 		http: &http.Client{
 			Timeout:   opts.Timeout,
 			Transport: &http.Transport{TLSClientConfig: tlsCfg},
@@ -98,9 +103,24 @@ func pinnedTLS(certPath string) (*tls.Config, error) {
 	return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, nil
 }
 
-// get performs one read.
+// get performs one read, and follows the node if it has moved.
+//
+// **The sibling of the registry's client, and it had the same bug.** That one
+// learned to re-resolve in 0.6.11; this one kept dialling a container address
+// that no longer existed, so the coverage check went on failing while the
+// channel inventory recovered on its own — which is why a user saw a healthy
+// dashboard and a recurring error in the log. One retry, never a loop; nodeaddr
+// owns that rule.
 func (l *LND) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.baseURL+path, http.NoBody)
+	err := l.getOnce(ctx, path, out)
+	if err == nil || !l.addr.Moved(ctx) {
+		return err
+	}
+	return l.getOnce(ctx, path, out)
+}
+
+func (l *LND) getOnce(ctx context.Context, path string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.addr.Base()+path, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("building the request for %s: %w", path, err)
 	}

@@ -136,7 +136,11 @@ func (a *App) towerClient(
 	}
 	for _, node := range cfg.LN.LND {
 		client, err := tower.NewLND(tower.LNDOptions{
-			BaseURL:      node.RESTAddr,
+			BaseURL: node.RESTAddr,
+			// The same name the registry follows. Without it this client keeps
+			// dialling wherever the node used to be, which is what a user saw:
+			// the channel list recovering while the coverage check did not.
+			ResolveHost:  node.RESTHost,
 			TLSCertPath:  node.TLSCertPath,
 			MacaroonPath: node.MacaroonPath,
 		})
