@@ -90,11 +90,19 @@ func TestEveryReadinessCheckReadsWell(t *testing.T) {
 		chainview.HealthState("SOMETHING_NEW"),
 	}
 	checkStates := []sentinel.Checks{
-		{DistinctNodes: true, DistinctVerified: true, OnExpectedBranch: true, BranchVerifiedAt: 1},
+		{
+			DistinctNodes: true, DistinctVerified: true, OnExpectedBranch: true,
+			BranchVerifiedAt: 1, BranchCheckedAt: 1,
+		},
 		{DistinctNodes: false, DistinctVerified: false, Detail: "could not confirm"},
 		{DistinctNodes: false, DistinctVerified: true},
-		{DistinctVerified: true, DistinctNodes: true, OnExpectedBranch: false, BranchVerifiedAt: 0},
-		{DistinctVerified: true, DistinctNodes: true, OnExpectedBranch: false, BranchVerifiedAt: 5},
+		{DistinctVerified: true, DistinctNodes: true, OnExpectedBranch: false, BranchCheckedAt: 0},
+		// Checked and wrong, in the shape the daemon actually produces it: a failing
+		// verdict stamps BranchCheckedAt and leaves BranchVerifiedAt alone.
+		{
+			DistinctVerified: true, DistinctNodes: true, OnExpectedBranch: false,
+			BranchCheckedAt: 5, Detail: "wrong chain",
+		},
 	}
 
 	for _, health := range healthStates {
@@ -147,12 +155,17 @@ func TestTheDistinctNodeCheckSeparatesProvenFromUnknown(t *testing.T) {
 }
 
 // Not yet checked and checked-and-wrong are different things. The first is
-// expected until the chains actually differ; the second means watching stopped.
+// expected for the first minutes after a start; the second means watching stopped.
+//
+// Which of the two is shown turns on BranchCheckedAt, not BranchVerifiedAt. Only
+// the former is stamped by a failing verdict, and the pause case below is the one
+// that regressed when they were conflated: a view proven to be on the wrong chain
+// was shown as "not checked yet, nothing for you to do".
 func TestTheBranchCheckSeparatesNotYetFromWrong(t *testing.T) {
 	t.Parallel()
 
 	notYet := itemByID(t, readinessFor(t, sentinel.Checks{
-		DistinctNodes: true, DistinctVerified: true, BranchVerifiedAt: 0,
+		DistinctNodes: true, DistinctVerified: true, BranchCheckedAt: 0,
 	}), CheckSQOnBranch)
 	if notYet.Action != nil {
 		t.Errorf("a check that has not run yet asks the user to do something: %+v", notYet.Action)
@@ -160,12 +173,31 @@ func TestTheBranchCheckSeparatesNotYetFromWrong(t *testing.T) {
 	if !strings.Contains(notYet.Why, "Nothing for you to do") {
 		t.Errorf("why = %q, want it to say plainly there is nothing to do", notYet.Why)
 	}
+	// The old wording explained the wait with "there is nothing to compare until the
+	// chains actually differ", and went on saying it while the two chains held
+	// different blocks at the same height.
+	if strings.Contains(notYet.Why, "until the chains actually differ") {
+		t.Errorf("why = %q, want it not to claim the chains have not diverged", notYet.Why)
+	}
 
 	wrong := itemByID(t, readinessFor(t, sentinel.Checks{
-		DistinctNodes: true, DistinctVerified: true, BranchVerifiedAt: 5, Detail: "wrong chain",
+		DistinctNodes: true, DistinctVerified: true, BranchCheckedAt: 5, Detail: "wrong chain",
 	}), CheckSQOnBranch)
 	if wrong.Action == nil {
 		t.Error("a broken setup was reported with nothing to do about it")
+	}
+
+	// A failing verdict never stamps BranchVerifiedAt, so this is exactly the shape
+	// the daemon produces when it has checked and paused.
+	paused := itemByID(t, readinessFor(t, sentinel.Checks{
+		DistinctNodes: true, DistinctVerified: true,
+		BranchCheckedAt: 5, BranchVerifiedAt: 0, Detail: "wrong chain",
+	}), CheckSQOnBranch)
+	if paused.OK || paused.Action == nil {
+		t.Errorf("a paused daemon was not reported as needing attention: %+v", paused)
+	}
+	if strings.Contains(paused.Why, "Nothing for you to do") {
+		t.Errorf("why = %q, want a paused daemon not described as nothing to do", paused.Why)
 	}
 }
 

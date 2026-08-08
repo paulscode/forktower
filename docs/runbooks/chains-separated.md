@@ -3,6 +3,20 @@
 Forktower is reporting a real split: the two nodes disagree about the chain, and
 it has confirmed the disagreement is not a temporary reorganisation.
 
+## If it says the chains *may* be splitting
+
+That is a different, earlier message, and it means what it says: the two nodes are
+following different blocks and have not reconciled, but Forktower has not
+committed to calling it a split yet. It is deliberately said early, because you
+can see a fork on any block explorer the moment there is one and a dashboard that
+waits until it is certain is less use than a web page.
+
+There is nothing to do while it says that. Under Advanced you will find the block
+number they disagree about and each chain's answer for it, which you can check
+against any explorer yourself. If it is real, the message below replaces it,
+usually within minutes. If it was an ordinary pair of blocks found at the same
+moment, it goes away on its own and Forktower says so.
+
 ## First, do nothing irreversible
 
 There is no action that has to be taken in the next few minutes. The deadlines

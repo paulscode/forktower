@@ -317,3 +317,178 @@ func TestAMissingAlarmDoesNotHideASplit(t *testing.T) {
 		t.Errorf("a split was reported when there was none: %q", quiet.Detail)
 	}
 }
+
+// The calm line must not assert something nobody checked.
+//
+// "Your node and the rest of the network are on the same chain" was the default
+// case, reached whenever no louder state applied — and it went on being shown
+// while the daemon's own records held two different blocks at one height. Being
+// slow to declare a split is deliberate; stating the opposite in the meantime was
+// not part of that design, it was the absence of one.
+func TestTheCalmHeadlineDoesNotClaimTheChainsAgreeWhileTheyDiffer(t *testing.T) {
+	t.Parallel()
+
+	agreeing := ComputeHeadline(HeadlineInput{
+		Phase: store.StateArmed, AlertsReachable: true,
+		SFHealth: chainview.HealthOK, SQHealth: chainview.HealthOK,
+	})
+	if !strings.Contains(agreeing.Detail, "same chain") {
+		t.Errorf("the ordinary case stopped saying the ordinary thing: %q", agreeing.Detail)
+	}
+
+	diverging := ComputeHeadline(HeadlineInput{
+		Phase: store.StateArmed, AlertsReachable: true,
+		SFHealth: chainview.HealthOK, SQHealth: chainview.HealthOK,
+		Diverging: true, DivergingSince: 1_790_000_000,
+	})
+	if strings.Contains(diverging.Detail, "same chain") {
+		t.Errorf("claimed the chains agree while they were holding different blocks: %q",
+			diverging.Detail)
+	}
+	if !strings.Contains(diverging.Detail, "different blocks") {
+		t.Errorf("did not say what is actually the case: %q", diverging.Detail)
+	}
+	if diverging.Since != 1_790_000_000 {
+		t.Errorf("since = %d, want when the disagreement began", diverging.Since)
+	}
+	// Still calm. Two chains briefly holding different blocks is ordinary, and
+	// colouring the dashboard for it would teach the user to ignore the colour.
+	if diverging.State != StateProtected {
+		t.Errorf("state = %q, want %q for an unconfirmed disagreement",
+			diverging.State, StateProtected)
+	}
+	if diverging.Action != nil {
+		t.Errorf("asked the user to do something about a routine event: %+v", diverging.Action)
+	}
+}
+
+// A confirmed split outranks it, so the softer line cannot mask the real one.
+func TestAConfirmedSplitOutranksAnUnconfirmedDisagreement(t *testing.T) {
+	t.Parallel()
+
+	got := ComputeHeadline(HeadlineInput{
+		Phase: store.StateSplit, AlertsReachable: true,
+		SFHealth: chainview.HealthOK, SQHealth: chainview.HealthOK,
+		Diverging: true, DivergingSince: 1_790_000_000,
+	})
+	if !strings.Contains(got.Detail, "separated") {
+		t.Errorf("a confirmed split was reported as an unconfirmed one: %q", got.Detail)
+	}
+}
+
+// A possible split must not be buried under the noise of the thing causing it.
+//
+// The second node dips into resynchronising as it follows a chain, and that raises
+// a failing check and a degraded-view state. Both of those used to outrank anything
+// said about the chains themselves, so during the one event that matters the
+// headline read "still catching up" — while a block explorer showed two chains.
+func TestASuspectedSplitOutranksTheNoiseOfASyncingView(t *testing.T) {
+	t.Parallel()
+
+	got := ComputeHeadline(HeadlineInput{
+		Phase: store.StateArmed, AlertsReachable: true,
+		SFHealth: chainview.HealthOK, SQHealth: chainview.HealthSyncing,
+		FailingChecks: []ReadinessItem{{
+			ID: CheckSQSynced, Label: "Still catching up with the other chain",
+			Why: "Forktower cannot see the whole picture yet.",
+		}},
+		Diverging: true, SplitSuspected: true, DivergingSince: 1_790_000_000,
+	})
+
+	if got.State != StateAttention {
+		t.Errorf("state = %q, want %q for a possible split", got.State, StateAttention)
+	}
+	if !strings.Contains(got.Title, "chain split") {
+		t.Errorf("title = %q, want it to name the possibility", got.Title)
+	}
+	if strings.Contains(got.Detail, "catching up") {
+		t.Errorf("a possible split was masked by a resyncing view: %q", got.Detail)
+	}
+}
+
+// Three levels, and the difference between them is what is *claimed* — never
+// whether anything is said at all. A user can see a fork on a block explorer the
+// moment it exists, so silence is the one thing none of these may be.
+func TestTheChainDisagreementLadderSaysSomethingAtEveryLevel(t *testing.T) {
+	t.Parallel()
+
+	base := HeadlineInput{
+		Phase: store.StateArmed, AlertsReachable: true,
+		SFHealth: chainview.HealthOK, SQHealth: chainview.HealthOK,
+	}
+
+	fresh := base
+	fresh.Diverging, fresh.DivergingSince = true, 1_790_000_000
+	suspected := fresh
+	suspected.SplitSuspected = true
+	confirmed := base
+	confirmed.Phase, confirmed.DetectedAt = store.StateSplit, 1_790_000_000
+
+	for name, tc := range map[string]struct {
+		in        HeadlineInput
+		wantState HeadlineState
+		wantSays  string
+	}{
+		"just noticed": {fresh, StateProtected, "different blocks"},
+		"suspected":    {suspected, StateAttention, "different"},
+		"confirmed":    {confirmed, StateAttention, "separated"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := ComputeHeadline(tc.in)
+			if got.State != tc.wantState {
+				t.Errorf("state = %q, want %q", got.State, tc.wantState)
+			}
+			if !strings.Contains(got.Detail, tc.wantSays) {
+				t.Errorf("detail = %q, want it to mention %q", got.Detail, tc.wantSays)
+			}
+			if strings.Contains(got.Detail, "same chain") {
+				t.Errorf("claimed the chains agree: %q", got.Detail)
+			}
+		})
+	}
+}
+
+// Two healthy views that disagree hold the phase at UNARMED — the transition
+// table has nowhere else to put them until the evidence accrues — and that state
+// used to outrank everything said about the chains.
+//
+// So a daemon started next to a fork showed "Getting set up — nothing to do yet",
+// the calmest sentence this software has, for as long as it lasted. Somebody who
+// installed Forktower *because* they heard the chains had split is the likely
+// reader of it.
+func TestASuspectedSplitIsNotMaskedByStillGettingSetUp(t *testing.T) {
+	t.Parallel()
+
+	got := ComputeHeadline(HeadlineInput{
+		Phase: store.StateUnarmed, AlertsReachable: true,
+		SFHealth: chainview.HealthOK, SQHealth: chainview.HealthOK,
+		Diverging: true, SplitSuspected: true, DivergingSince: 1_790_000_000,
+	})
+
+	if got.State == StateGettingReady {
+		t.Error("a possible chain split was reported as ordinary setup")
+	}
+	if !strings.Contains(got.Title, "chain split") {
+		t.Errorf("title = %q, want it to name the possibility", got.Title)
+	}
+	if strings.Contains(got.Detail, "Nothing needs your attention") {
+		t.Errorf("detail = %q, want it not to dismiss a possible split", got.Detail)
+	}
+}
+
+// And an ordinary install is still allowed to look ordinary: a view that is
+// genuinely syncing reports no tip, so no separation can be tracked and no
+// suspicion can be raised. The ordering above costs that case nothing.
+func TestAnOrdinarySetupStillReadsAsSetup(t *testing.T) {
+	t.Parallel()
+
+	got := ComputeHeadline(HeadlineInput{
+		Phase: store.StateUnarmed, AlertsReachable: true,
+		SFHealth: chainview.HealthOK, SQHealth: chainview.HealthSyncing,
+	})
+	if got.State != StateGettingReady {
+		t.Errorf("state = %q, want %q for an install that is simply starting",
+			got.State, StateGettingReady)
+	}
+}

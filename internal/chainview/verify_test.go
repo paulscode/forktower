@@ -202,16 +202,34 @@ func TestVerifyBranchWithoutASeparationPointChecksOnlySharedHistory(t *testing.T
 	}
 }
 
-func TestVerifyBranchToleratesAViewThatHasNotSyncedThatFar(t *testing.T) {
+// A view that has not synced far enough is unverifiable, which is neither wrong
+// nor confirmed.
+//
+// Heights a view does not reach are skipped, and a view holding nothing but its
+// first block skips every one of them. Reporting that as success would report a
+// check as passed that compared nothing — and agreeing at genesis says only that
+// both views are on the same network, which VerifyNetwork already establishes for
+// every view before any of this runs.
+func TestVerifyBranchNeedsSomethingAboveGenesisToCompare(t *testing.T) {
 	t.Parallel()
 
 	sf, _ := chainviewtest.NewSharedHistory(100)
 	short := chainviewtest.New("shared")
 
-	// The second view has only its first block. Heights it does not reach are
-	// skipped rather than treated as disagreement.
-	if err := chainview.VerifyBranch(context.Background(), sf, short, 99, nil); err != nil {
-		t.Errorf("a view that has not synced that far was treated as wrong: %v", err)
+	err := chainview.VerifyBranch(context.Background(), sf, short, 99, nil)
+	if !errors.Is(err, chainview.ErrCannotVerifyBranch) {
+		t.Errorf("got %v, want ErrCannotVerifyBranch", err)
+	}
+	if errors.Is(err, chainview.ErrWrongBranch) {
+		t.Error("a view that has not synced that far was treated as wrong")
+	}
+
+	// Partway is enough, though. Reaching any shared height above genesis is a real
+	// comparison, and waiting for a full sync would leave the check unavailable for
+	// days on a fresh install.
+	partial, _ := chainviewtest.NewSharedHistory(20)
+	if err := chainview.VerifyBranch(context.Background(), sf, partial, 99, nil); err != nil {
+		t.Errorf("a partially synced view reaching shared history was not accepted: %v", err)
 	}
 }
 
@@ -375,7 +393,8 @@ func TestGenesisOfReportsWhatWentWrong(t *testing.T) {
 }
 
 // Either view may be the shorter one — during initial sync, or when one node is
-// catching up after downtime — and neither case is a disagreement.
+// catching up after downtime — and neither case is a disagreement. Symmetric on
+// purpose: whichever is short, the answer is "cannot tell yet", never "wrong".
 func TestVerifyBranchWhenEitherViewIsShort(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -383,11 +402,16 @@ func TestVerifyBranchWhenEitherViewIsShort(t *testing.T) {
 	long, _ := chainviewtest.NewSharedHistory(100)
 	short := chainviewtest.New("shared")
 
-	if err := chainview.VerifyBranch(ctx, short, long, 99, nil); err != nil {
-		t.Errorf("a short first view was treated as wrong: %v", err)
-	}
-	if err := chainview.VerifyBranch(ctx, long, short, 99, nil); err != nil {
-		t.Errorf("a short second view was treated as wrong: %v", err)
+	for name, err := range map[string]error{
+		"the first view is short":  chainview.VerifyBranch(ctx, short, long, 99, nil),
+		"the second view is short": chainview.VerifyBranch(ctx, long, short, 99, nil),
+	} {
+		if errors.Is(err, chainview.ErrWrongBranch) {
+			t.Errorf("%s: a short view was treated as wrong: %v", name, err)
+		}
+		if !errors.Is(err, chainview.ErrCannotVerifyBranch) {
+			t.Errorf("%s: got %v, want ErrCannotVerifyBranch", name, err)
+		}
 	}
 }
 

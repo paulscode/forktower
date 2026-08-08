@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/btcsuite/btcd/chainhash/v2"
@@ -566,5 +567,112 @@ func TestUnknownPaths(t *testing.T) {
 	// And a method the endpoint does not offer.
 	if resp := h.do(t, http.MethodDelete, "/api/v1/status", ""); resp.StatusCode == http.StatusOK {
 		t.Errorf("DELETE on a read-only endpoint returned %d", resp.StatusCode)
+	}
+}
+
+// While the chains are apart but a split is not yet confirmed, the screen must
+// still say where they parted and how far they have got.
+//
+// Both numbers were nought for the whole of that window: the depths are measured
+// against the recorded separation, which is only set at confirmation, and nothing
+// consulted the candidate the daemon was actually looking at. So a user watching
+// two chains visibly drift apart was shown a divergence of no blocks on either.
+func TestStatusReportsTheSeparationBeforeASplitIsConfirmed(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, nil)
+	h.sen.set(func(f *fakeSentinel) {
+		f.state = sentinel.State{
+			Phase: sentinel.PhaseArmed,
+			ForkCandidate: &chainview.BlockRef{
+				Hash: hashOf("candidate"), Height: 961_631,
+			},
+			ForkCandidateSince: 1_790_000_000,
+			SFTip: &chainview.BlockMeta{
+				BlockRef: chainview.BlockRef{Hash: hashOf("sf-tip"), Height: 961_632},
+			},
+			SQTip: &chainview.BlockMeta{
+				BlockRef: chainview.BlockRef{Hash: hashOf("sq-tip"), Height: 961_634},
+			},
+			SFHealth: chainview.HealthOK,
+			SQHealth: chainview.HealthOK,
+		}
+	})
+
+	got := decode[Status](t, h.do(t, http.MethodGet, "/api/v1/status", ""))
+
+	if got.Split.Fork != nil {
+		t.Errorf("an unconfirmed disagreement was reported as a recorded separation: %+v",
+			got.Split.Fork)
+	}
+	if got.Split.ForkCandidate == nil || got.Split.ForkCandidate.Height != 961_631 {
+		t.Fatalf("fork_candidate = %+v, want the separation being looked at",
+			got.Split.ForkCandidate)
+	}
+	if got.Split.ForkCandidate.DetectedAt != 1_790_000_000 {
+		t.Errorf("detected_at = %d, want when the disagreement began",
+			got.Split.ForkCandidate.DetectedAt)
+	}
+	if d := got.Split.Branches["sf"].SinceForkDepth; d != 1 {
+		t.Errorf("sf depth past the separation = %d, want 1", d)
+	}
+	if d := got.Split.Branches["sq"].SinceForkDepth; d != 3 {
+		t.Errorf("sq depth past the separation = %d, want 3", d)
+	}
+	if strings.Contains(got.Headline.Detail, "same chain") {
+		t.Errorf("the headline claimed the chains agree: %q", got.Headline.Detail)
+	}
+}
+
+// The one figure on this screen a user can verify without trusting the daemon:
+// what each chain says the block at a given height is. Everything else asks to be
+// believed; this can be checked against any block explorer in a few seconds.
+func TestStatusShowsWhatEachChainSaysTheBlockIs(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, nil)
+	h.sen.set(func(f *fakeSentinel) {
+		f.state = sentinel.State{
+			Phase: sentinel.PhaseArmed,
+			Disagreement: &sentinel.HeightDisagreement{
+				Height: 961_632,
+				SFHash: hashOf("knots-block"),
+				SQHash: hashOf("core-block"),
+			},
+			DisagreementSince: 1_790_000_000,
+			SFTip: &chainview.BlockMeta{
+				BlockRef: chainview.BlockRef{Hash: hashOf("knots-block"), Height: 961_632},
+			},
+			SQTip: &chainview.BlockMeta{
+				BlockRef: chainview.BlockRef{Hash: hashOf("core-tip"), Height: 961_634},
+			},
+			SFHealth: chainview.HealthOK,
+			SQHealth: chainview.HealthOK,
+		}
+	})
+
+	got := decode[Status](t, h.do(t, http.MethodGet, "/api/v1/status", ""))
+
+	d := got.Split.Disagreement
+	if d == nil {
+		t.Fatal("the two chains' own answers were not shown at all")
+	}
+	if d.Height != 961_632 {
+		t.Errorf("height = %d, want 961632", d.Height)
+	}
+	if d.SFHash == d.SQHash {
+		t.Error("both chains were shown the same block for a disagreement")
+	}
+	if d.SFHash != hashOf("knots-block").String() || d.SQHash != hashOf("core-block").String() {
+		t.Errorf("the hashes shown are not the ones observed: %+v", d)
+	}
+	if d.Since != 1_790_000_000 {
+		t.Errorf("since = %d, want when they were first seen to differ", d.Since)
+	}
+	// And it counts as divergence for the headline even with no separation point,
+	// which is the case a failed search leaves behind.
+	if strings.Contains(got.Headline.Detail, "same chain") {
+		t.Errorf("claimed the chains agree while showing two different blocks: %q",
+			got.Headline.Detail)
 	}
 }

@@ -148,6 +148,13 @@ func Summarize(e bus.Event) string {
 	case bus.SplitStateChanged:
 		return summarizeSplitState(ev)
 
+	case bus.SplitSuspected:
+		if !ev.Suspected {
+			return "The chains agree again. What looked like it might be a split has passed."
+		}
+		return "The chains started following different blocks. Forktower is watching " +
+			"both while it works out whether this is a real split."
+
 	case bus.SplitBranchExtended:
 		return fmt.Sprintf("A new block arrived on %s.", branchPhrase(ev.Branch))
 

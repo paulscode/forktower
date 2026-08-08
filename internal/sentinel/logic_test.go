@@ -67,13 +67,18 @@ func ref(height int32) *chainview.BlockRef {
 // healthy is an observation with both views reporting well and agreeing.
 func healthy(at int64) Observation {
 	return Observation{
-		At:                at,
-		SFTip:             meta(1, 100, at),
-		SQTip:             meta(1, 100, at),
-		SFHealth:          chainview.HealthOK,
-		SQHealth:          chainview.HealthOK,
-		SplitConfirmDepth: 3,
-		StallFactor:       6.0,
+		At:       at,
+		SFTip:    meta(1, 100, at),
+		SQTip:    meta(1, 100, at),
+		SFHealth: chainview.HealthOK,
+		SQHealth: chainview.HealthOK,
+		// Both tips are the same block, which is what the shell reports as a
+		// comparison that was made and came back equal.
+		SharedHeightAgreed: true,
+		SplitConfirmDepth:  3,
+		SplitConfirmSecs:   600,
+		SplitSuspectSecs:   120,
+		StallFactor:        6.0,
 	}
 }
 
@@ -1066,5 +1071,601 @@ func TestUnarmedDoesNotMistakeALaggingNodeForASplit(t *testing.T) {
 	obs.SQTip = meta(10, 850_010, 1_790_000_000)
 	if caught, _ := Step(NewState(), obs); caught.Phase != PhaseArmed {
 		t.Errorf("phase = %q after catching up, want ARMED", caught.Phase)
+	}
+}
+
+// The split this rule was added for, and the one that was happening in production
+// when it was written.
+//
+// The user's own chain holds one block past the separation and then all but stops,
+// because it is the side with little hashing power behind it. The other chain keeps
+// building. The depth rule needs *both* sides to reach the confirmation depth, so
+// it never triggers — and the person whose node is on the stalling side, who has
+// the most to lose, is the one it leaves uninformed.
+func TestRowArmedToSplitWhenTheUsersOwnChainStallsJustPastTheSeparation(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+	prev.ForkCandidate = ref(100)
+	prev.ForkCandidateSince = 2000
+
+	obs := healthy(2000 + 600)
+	obs.SFTip = meta(0x10, 101, 2000)     // one past, and going nowhere
+	obs.SQTip = meta(0x20, 103, 2000+600) // three past, still building
+	obs.ForkCandidate = ref(100)
+
+	got, effects := Step(prev, obs)
+	if got.Phase != PhaseSplit {
+		t.Fatalf("phase = %q, want %q — the depth rule cannot reach this split", got.Phase, PhaseSplit)
+	}
+	if got.Fork == nil || got.Fork.Height != 100 {
+		t.Errorf("separation point = %v, want the candidate that persisted, at height 100", got.Fork)
+	}
+	if got.DetectedAt != 2000+600 {
+		t.Errorf("detected at %d, want %d", got.DetectedAt, 2000+600)
+	}
+	if !hasEffect(effects, EffectPhaseChanged) {
+		t.Error("the split was reached without being announced")
+	}
+}
+
+// One second short of the threshold is still ordinary reorganisation noise.
+func TestRowArmedStaysUntilTheDisagreementHasLastedLongEnough(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+	prev.ForkCandidate = ref(100)
+	prev.ForkCandidateSince = 2000
+
+	obs := healthy(2000 + 599)
+	obs.SFTip = meta(0x10, 101, 2000)
+	obs.SQTip = meta(0x20, 103, 2000+599)
+	obs.ForkCandidate = ref(100)
+
+	if got, _ := Step(prev, obs); got.Phase != PhaseArmed {
+		t.Errorf("phase = %q, want %q one second before the threshold", got.Phase, PhaseArmed)
+	}
+}
+
+// The clock measures one continuous disagreement, so anything that ends it stops
+// the clock. Otherwise a node that repeatedly fell a block behind and caught up
+// would accumulate its way to a split that never happened.
+func TestTheDisagreementClockStopsWhenTheChainsReconcile(t *testing.T) {
+	t.Parallel()
+
+	diverged := func(prev State, at int64) State {
+		obs := healthy(at)
+		obs.SFTip = meta(0x10, 101, at)
+		obs.SQTip = meta(0x20, 101, at)
+		obs.ForkCandidate = ref(100)
+		next, _ := Step(prev, obs)
+		return next
+	}
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+
+	apart := diverged(prev, 2000)
+	if apart.ForkCandidateSince != 2000 {
+		t.Fatalf("clock started at %d, want 2000", apart.ForkCandidateSince)
+	}
+
+	// They agree again: one tip, no candidate.
+	obs := healthy(2100)
+	together, _ := Step(apart, obs)
+	if together.ForkCandidateSince != 0 || together.ForkCandidate != nil {
+		t.Fatalf("the clock kept running after the chains agreed: %+v", together)
+	}
+
+	// And a later disagreement is timed from when *it* began, not from the first.
+	again := diverged(together, 2200)
+	if again.ForkCandidateSince != 2200 {
+		t.Errorf("clock restarted at %d, want 2200", again.ForkCandidateSince)
+	}
+	if again.Phase != PhaseArmed {
+		t.Errorf("phase = %q, want %q — the earlier disagreement must not count", again.Phase, PhaseArmed)
+	}
+}
+
+// A separation point that moves is a different disagreement. Reorganisation churn
+// shifts it about; a real split leaves it where it is.
+func TestTheDisagreementClockRestartsWhenTheSeparationMoves(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+	prev.ForkCandidate = ref(100)
+	prev.ForkCandidateSince = 2000
+
+	obs := healthy(2000 + 600)
+	obs.SFTip = meta(0x10, 105, 2000+600)
+	obs.SQTip = meta(0x20, 105, 2000+600)
+	obs.ForkCandidate = &chainview.BlockRef{Hash: hash(0x77), Height: 102}
+
+	got, _ := Step(prev, obs)
+	if got.ForkCandidateSince != 2000+600 {
+		t.Errorf("clock = %d, want it restarted at %d for a moved separation",
+			got.ForkCandidateSince, 2000+600)
+	}
+}
+
+// One view merely being behind the other is not a disagreement. The separation
+// search returns a point whenever the tips differ, so without this the clock would
+// run for any node that lagged.
+func TestNoDisagreementClockWhileOneViewIsSimplyBehind(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+
+	obs := healthy(2000)
+	obs.SFTip = meta(0x10, 100, 2000) // sitting on the separation itself
+	obs.SQTip = meta(0x20, 103, 2000)
+	obs.ForkCandidate = ref(100)
+
+	got, _ := Step(prev, obs)
+	if got.ForkCandidateSince != 0 || got.ForkCandidate != nil {
+		t.Errorf("a lagging view started the disagreement clock: %+v", got)
+	}
+}
+
+// How far apart the chains have got is the number this screen exists to show, and
+// it was nought on both branches for the whole time it mattered — the recorded
+// separation is only set at confirmation, and nothing else was consulted.
+func TestBlocksAreReportedAgainstTheCandidateSeparationBeforeASplitIsConfirmed(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+	prev.SFTip = meta(0x10, 101, 2000)
+	prev.SQTip = meta(0x20, 102, 2000)
+	prev.ForkCandidate = ref(100)
+	prev.ForkCandidateSince = 2000
+
+	obs := healthy(2100)
+	obs.SFTip = meta(0x10, 101, 2000)
+	obs.SQTip = meta(0x21, 103, 2100) // a new block on the other chain
+	obs.ForkCandidate = ref(100)
+
+	_, effects := Step(prev, obs)
+
+	var found bool
+	for _, e := range effects {
+		if e.Kind != EffectBranchExtended || e.Branch != chainview.BranchSQ {
+			continue
+		}
+		found = true
+		if e.SinceForkDepth != 3 {
+			t.Errorf("depth past the separation = %d, want 3", e.SinceForkDepth)
+		}
+	}
+	if !found {
+		t.Fatal("the new block was not reported at all")
+	}
+}
+
+// A view that cannot be read must not stop the clock.
+//
+// The threshold is measured in hours, and a second node that resynchronises for a
+// few seconds after each new block — which one observed installation did all day —
+// would restart it every few minutes. The rule would then be unreachable in exactly
+// the deployment it was written for. Losing sight of a chain is not evidence that
+// the two came back together, which is the same reasoning the both-views-down grace
+// period rests on.
+func TestTheDisagreementClockKeepsRunningWhileAViewIsUnreadable(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+	prev.ForkCandidate = ref(100)
+	prev.ForkCandidateSince = 2000
+
+	for name, blind := range map[string]func(o *Observation){
+		"the other view is resynchronising": func(o *Observation) {
+			o.SQTip, o.SQHealth = nil, chainview.HealthSyncing
+		},
+		"the user's own view is unreachable": func(o *Observation) {
+			o.SFTip, o.SFHealth = nil, chainview.HealthDown
+		},
+		"the separation search came up short": func(o *Observation) {
+			o.ForkCandidate, o.ForkSearchFailed = nil, true
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			obs := healthy(2500)
+			obs.SFTip = meta(0x10, 101, 2000)
+			obs.SQTip = meta(0x20, 103, 2500)
+			obs.ForkCandidate = ref(100)
+			blind(&obs)
+
+			got, _ := Step(prev, obs)
+			if got.ForkCandidateSince != 2000 {
+				t.Errorf("clock = %d, want it still running from 2000", got.ForkCandidateSince)
+			}
+			if got.ForkCandidate == nil {
+				t.Error("the separation was forgotten because a view went quiet")
+			}
+		})
+	}
+}
+
+// The whole sequence, as it actually unfolds: a disagreement opens, the second
+// node dips in and out of resynchronising throughout, and the split is confirmed on
+// time regardless.
+func TestASplitIsConfirmedDespiteAViewFlappingThroughout(t *testing.T) {
+	t.Parallel()
+
+	state := NewState()
+	state.Phase = PhaseArmed
+	state.SFHealth, state.SQHealth = chainview.HealthOK, chainview.HealthOK
+
+	const start, threshold = int64(2000), int64(600)
+	at := start
+	for at <= start+threshold {
+		obs := healthy(at)
+		obs.SFTip = meta(0x10, 101, start) // the user's chain has stalled
+		obs.SQTip = meta(0x20, 103, at)
+		obs.ForkCandidate = ref(100)
+		// Every other tick the second view is busy catching up and reports no tip.
+		if at/60%2 == 0 {
+			obs.SQTip, obs.SQHealth = nil, chainview.HealthSyncing
+		}
+		state, _ = Step(state, obs)
+		at += 60
+	}
+
+	if state.Phase != PhaseSplit {
+		t.Fatalf("phase = %q after the disagreement outlasted the threshold, want %q",
+			state.Phase, PhaseSplit)
+	}
+	if state.Fork == nil || state.Fork.Height != 100 {
+		t.Errorf("separation point = %v, want height 100", state.Fork)
+	}
+}
+
+// The suspicion ladder: what the user is told, at each stage, on the way to a
+// confirmed split. Silence is not one of the rungs.
+func TestSuspicionRisesBeforeASplitIsConfirmed(t *testing.T) {
+	t.Parallel()
+
+	armed := func() State {
+		s := NewState()
+		s.Phase = PhaseArmed
+		s.SFHealth, s.SQHealth = chainview.HealthOK, chainview.HealthOK
+		return s
+	}
+	// Distinct hashes per height, because new blocks are recognised by hash: a
+	// helper that reuses one up a chain produces tips the engine correctly ignores,
+	// and a test written on it proves nothing while appearing to pass.
+	diverging := func(at int64, sfHeight, sqHeight int32) Observation {
+		o := healthy(at)
+		o.SFTip = blockOn(0x10, sfHeight, at)
+		o.SQTip = blockOn(0x20, sqHeight, at)
+		o.ForkCandidate = ref(100)
+		o.SharedHeightAgreed = false
+		return o
+	}
+
+	// A block each, just noticed: a disagreement, but nothing yet to distinguish it
+	// from two blocks found at the same instant.
+	fresh, _ := Step(armed(), diverging(2000, 101, 101))
+	if fresh.ForkCandidate == nil {
+		t.Fatal("the disagreement was not noticed at all")
+	}
+	if fresh.SplitSuspected {
+		t.Error("a pair of blocks found at once was called a possible split immediately")
+	}
+
+	// The same disagreement, still standing after the suspect threshold.
+	prev := fresh
+	lasted, _ := Step(prev, diverging(2000+120, 101, 101))
+	if !lasted.SplitSuspected {
+		t.Error("a disagreement that outlasted a stale-block race was not called out")
+	}
+	if lasted.Phase != PhaseArmed {
+		t.Errorf("phase = %q, want %q — suspicion is not confirmation", lasted.Phase, PhaseArmed)
+	}
+
+	// Or, without waiting at all: one chain pulls further ahead and the other has
+	// not followed it. That is not something a lagging node does.
+	ahead, _ := Step(fresh, diverging(2001, 101, 102))
+	if !ahead.SplitSuspected {
+		t.Error("one chain pulling ahead unfollowed was not called out")
+	}
+}
+
+// Suspicion is dropped the moment the chains agree again, so a resolved
+// stale-block race does not leave a warning standing.
+func TestSuspicionIsDroppedWhenTheChainsReconcile(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+	prev.ForkCandidate = ref(100)
+	prev.ForkCandidateSince = 2000
+	prev.SplitSuspected = true
+
+	got, _ := Step(prev, healthy(2200))
+	if got.SplitSuspected {
+		t.Error("a warning outlived the disagreement that caused it")
+	}
+}
+
+// The confirmation rule that reaches a stalling chain: one side has built the
+// confirmation depth past the separation and the other has not followed it, for
+// long enough that relay cannot explain it.
+//
+// Requiring *both* sides to build discards this entirely — and it is the strongest
+// evidence available short of the user's own node rejecting a block, because a node
+// adopts a heavier valid chain within seconds of seeing one.
+func TestASplitIsConfirmedWhenOneChainLeadsAndTheOtherDoesNotFollow(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+	prev.ForkCandidate = ref(100)
+	prev.ForkCandidateSince = 2000
+
+	// Symmetric: it must not matter which side is the one that stalled.
+	for name, tc := range map[string]struct{ sf, sq int32 }{
+		"the user's own chain stalled": {101, 103},
+		"the other chain stalled":      {103, 101},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			obs := healthy(2000 + 600)
+			obs.SFTip = meta(0x10, tc.sf, 2000+600)
+			obs.SQTip = meta(0x20, tc.sq, 2000+600)
+			obs.ForkCandidate = ref(100)
+
+			got, _ := Step(prev, obs)
+			if got.Phase != PhaseSplit {
+				t.Errorf("phase = %q, want %q", got.Phase, PhaseSplit)
+			}
+		})
+	}
+}
+
+// Persistence alone is not enough: neither chain having built past the separation
+// means there is nothing to say a node refused to follow, so it stays a warning
+// rather than becoming a finding.
+func TestPersistenceAloneDoesNotConfirmASplit(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+	prev.ForkCandidate = ref(100)
+	prev.ForkCandidateSince = 2000
+
+	obs := healthy(2000 + 6000)
+	obs.SFTip = meta(0x10, 101, 2000)
+	obs.SQTip = meta(0x20, 101, 2000)
+	obs.ForkCandidate = ref(100)
+
+	got, _ := Step(prev, obs)
+	if got.Phase != PhaseArmed {
+		t.Errorf("phase = %q, want %q with one block on each side and nothing to follow",
+			got.Phase, PhaseArmed)
+	}
+	if !got.SplitSuspected {
+		t.Error("a long-standing disagreement was not even flagged as possible")
+	}
+}
+
+// Straight after a restart the clock is restored from storage but no tip has been
+// observed yet, so the depths are unknown. Unknown must read as "not enough to
+// confirm", never as a leading chain nobody followed.
+func TestARestoredClockWithNoTipsYetConfirmsNothing(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+	prev.ForkCandidate = ref(100)
+	prev.ForkCandidateSince = 2000 // restored from storage, long expired
+	// Tips deliberately absent, as they are before the first successful read.
+
+	obs := healthy(2000 + 6000)
+	obs.SFTip, obs.SFHealth = nil, chainview.HealthDown
+	obs.SQTip, obs.SQHealth = nil, chainview.HealthDown
+
+	got, _ := Step(prev, obs)
+	if got.Phase != PhaseArmed {
+		t.Errorf("phase = %q, want %q with no tips to measure", got.Phase, PhaseArmed)
+	}
+}
+
+// A rejected branch settles a split on its own, and it can land on a tick where the
+// tracked candidate is empty — one view sitting on the separation rather than past
+// it. The separation from this tick's search is then the only one available, and
+// recording nothing would lose where the chains parted.
+func TestARejectedBranchRecordsTheSeparationFromTheSearchWhenNoneIsTracked(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+	prev.SQTip = meta(0x20, 101, 1900)
+
+	obs := healthy(2000)
+	obs.SFTip = meta(0x10, 100, 2000) // on the separation, not past it
+	obs.SQTip = meta(0x20, 101, 2000)
+	obs.ForkCandidate = ref(100)
+	obs.SFTips = []chainview.ChainTip{
+		{Hash: hash(0x20), Height: 101, BranchLen: 1, Status: chainview.TipInvalid},
+	}
+
+	got, _ := Step(prev, obs)
+	if got.Phase != PhaseSplit {
+		t.Fatalf("phase = %q, want %q", got.Phase, PhaseSplit)
+	}
+	if got.ForkCandidate != nil {
+		t.Errorf("a view on the separation was tracked as being past it: %v", got.ForkCandidate)
+	}
+	if got.Fork == nil || got.Fork.Height != 100 {
+		t.Errorf("separation = %v, want the search result at height 100", got.Fork)
+	}
+}
+
+// Two nodes answering "what is the block at height N?" differently is the plainest
+// evidence of a split, and the only one a user can check against a block explorer
+// in a few seconds. It has to work when the separation search does not.
+//
+// That search walks back from both tips and can come up short — a pruned view, or a
+// separation older than its budget — and when it did, nothing noticed anything at
+// all. A comparison at one shared height cannot fail that way.
+func TestADirectHashDisagreementIsCalledOutEvenWhenTheSeparationCannotBeFound(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+
+	diverging := func(at int64) Observation {
+		o := healthy(at)
+		o.SFTip = meta(0x10, 101, at)
+		o.SQTip = meta(0x20, 101, at)
+		// The walk failed, so there is no separation point and no depth arithmetic.
+		o.ForkCandidate, o.ForkSearchFailed = nil, true
+		o.Disagreement = &HeightDisagreement{Height: 101, SFHash: hash(0x10), SQHash: hash(0x20)}
+		return o
+	}
+
+	seen, _ := Step(prev, diverging(2000))
+	if seen.Disagreement == nil || seen.DisagreementSince != 2000 {
+		t.Fatalf("the direct disagreement was not recorded: %+v", seen.Disagreement)
+	}
+	if seen.ForkCandidate != nil {
+		t.Error("a separation point was invented without the search having found one")
+	}
+	if seen.SplitSuspected {
+		t.Error("called it before it had outlasted a stale-block race")
+	}
+
+	lasted, _ := Step(seen, diverging(2000+120))
+	if !lasted.SplitSuspected {
+		t.Error("a standing hash disagreement was not called out with no separation point")
+	}
+	// Suspicion is not confirmation: a split fixes a separation point, and there is
+	// none to fix.
+	if lasted.Phase != PhaseArmed {
+		t.Errorf("phase = %q, want %q with nowhere recorded as the separation",
+			lasted.Phase, PhaseArmed)
+	}
+}
+
+// Both hashes are kept, not just the fact that they differ, because that is what
+// makes the claim checkable rather than something to be taken on trust.
+func TestTheDisagreementCarriesBothChainsAnswers(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+
+	obs := healthy(2000)
+	obs.SFTip = meta(0x10, 101, 2000)
+	obs.SQTip = meta(0x20, 103, 2000)
+	obs.ForkCandidate = ref(100)
+	obs.Disagreement = &HeightDisagreement{Height: 101, SFHash: hash(0x10), SQHash: hash(0xAB)}
+
+	got, _ := Step(prev, obs)
+	if got.Disagreement == nil {
+		t.Fatal("nothing was recorded")
+	}
+	if got.Disagreement.Height != 101 {
+		t.Errorf("height = %d, want 101", got.Disagreement.Height)
+	}
+	if got.Disagreement.SFHash != hash(0x10) || got.Disagreement.SQHash != hash(0xAB) {
+		t.Errorf("both answers were not kept: %+v", got.Disagreement)
+	}
+}
+
+// A comparison that came back equal ends the disagreement. A tick that could not
+// compare does not — the same rule the separation clock follows, because an
+// unreadable node has not reconciled with anything.
+func TestTheHashDisagreementClearsOnlyOnAComparisonThatMatched(t *testing.T) {
+	t.Parallel()
+
+	prev := NewState()
+	prev.Phase = PhaseArmed
+	prev.SFHealth, prev.SQHealth = chainview.HealthOK, chainview.HealthOK
+	prev.Disagreement = &HeightDisagreement{Height: 101, SFHash: hash(0x10), SQHash: hash(0x20)}
+	prev.DisagreementSince = 2000
+
+	blind := healthy(2100)
+	blind.SQTip, blind.SQHealth = nil, chainview.HealthSyncing
+	blind.SharedHeightAgreed = false // nothing was compared, because nothing answered
+	if got, _ := Step(prev, blind); got.Disagreement == nil {
+		t.Error("a disagreement was forgotten because a node could not be read")
+	}
+
+	// A tick where both views answered with tips but the comparison itself could
+	// not be made — a lookup that errored. Still not reconciliation.
+	unread := healthy(2100)
+	unread.SFTip = meta(0x10, 101, 2100)
+	unread.SQTip = meta(0x20, 101, 2100)
+	unread.SharedHeightAgreed = false
+	if got, _ := Step(prev, unread); got.Disagreement == nil {
+		t.Error("a failed lookup was treated as the chains having reconciled")
+	}
+
+	// Now they agree: compared, and equal.
+	if got, _ := Step(prev, healthy(2100)); got.Disagreement != nil ||
+		got.DisagreementSince != 0 {
+		t.Errorf("a matched comparison did not clear the disagreement: %+v", got.Disagreement)
+	}
+}
+
+// A view that goes quiet for a tick must not switch the warning off and on again.
+//
+// Every change of this flag publishes, so a flicker is not cosmetic: it announces
+// that the possible split has passed and then re-announces the split. The second
+// node dips into resynchronising as it follows a chain — one observed installation
+// did it every few minutes all day — so this would have been the normal case, not
+// an edge one.
+func TestTheEarlyWarningDoesNotFlickerWhenAViewGoesQuiet(t *testing.T) {
+	t.Parallel()
+
+	state := NewState()
+	state.Phase = PhaseArmed
+	state.SFHealth, state.SQHealth = chainview.HealthOK, chainview.HealthOK
+
+	seen := func(at int64, sqSyncing bool) Observation {
+		o := healthy(at)
+		o.SFTip = blockOn(0x10, 101, at)
+		o.SQTip = blockOn(0x20, 103, at) // two clear of the separation, unfollowed
+		o.ForkCandidate = ref(100)
+		o.SharedHeightAgreed = false
+		if sqSyncing {
+			o.SQTip, o.SQHealth = nil, chainview.HealthSyncing
+		}
+		return o
+	}
+
+	// Well inside the suspect window, so only the depth rule can be carrying it.
+	state, _ = Step(state, seen(2000, false))
+	if !state.SplitSuspected {
+		t.Fatal("a chain two clear of the separation was not called out")
+	}
+
+	for i, at := range []int64{2010, 2020, 2030} {
+		state, _ = Step(state, seen(at, i%2 == 0))
+		if !state.SplitSuspected {
+			t.Fatalf("the warning switched off at %d because a view went quiet", at)
+		}
 	}
 }

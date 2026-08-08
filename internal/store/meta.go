@@ -32,6 +32,18 @@ const (
 	// MetaTrustAnchorHeight is how far the user's own node is treated as already
 	// verified history.
 	MetaTrustAnchorHeight = "trust_anchor_height"
+	// MetaForkCandidateHash, MetaForkCandidateHeight and MetaForkCandidateSince
+	// hold the separation the chains are currently refusing to reconcile across,
+	// and when they were first seen to have both built past it.
+	//
+	// Persisted because a split can be confirmed by how long that has lasted, and a
+	// clock held only in memory restarts at zero every time the daemon does. On a
+	// platform that restarts an app more often than the threshold, an in-memory
+	// clock would never reach it — the confirmation would be unreachable in exactly
+	// the deployments least able to notice.
+	MetaForkCandidateHash   = "fork_candidate_hash"
+	MetaForkCandidateHeight = "fork_candidate_height"
+	MetaForkCandidateSince  = "fork_candidate_since"
 	// MetaLastSelfTestAt records when a synthetic alert was last pushed through
 	// every configured transport. Absent means it has never run, which is what
 	// makes the first one fire on its own: an alarm nobody has proven works is

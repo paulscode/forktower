@@ -137,6 +137,8 @@ func envBindings() []envBinding {
 
 		numInt("SENTINEL_POLL_INTERVAL_SECS", func(c *Config, n int) { c.Sentinel.PollIntervalSecs = n }),
 		num32("SENTINEL_SPLIT_CONFIRM_DEPTH", func(c *Config, n int32) { c.Sentinel.SplitConfirmDepth = n }),
+		num64("SENTINEL_SPLIT_CONFIRM_SECS", func(c *Config, n int64) { c.Sentinel.SplitConfirmSecs = n }),
+		num64("SENTINEL_SPLIT_SUSPECT_SECS", func(c *Config, n int64) { c.Sentinel.SplitSuspectSecs = n }),
 		num32("SENTINEL_MAX_ANCESTOR_WALK", func(c *Config, n int32) { c.Sentinel.MaxAncestorWalk = n }),
 		flt("SENTINEL_SQ_STALL_FACTOR", func(c *Config, f float64) { c.Sentinel.SQStallFactor = f }),
 		num32("SENTINEL_REORG_MARGIN", func(c *Config, n int32) { c.Sentinel.ReorgMargin = n }),

@@ -24,6 +24,12 @@ type Config struct {
 	// SplitConfirmDepth is how far past a separation both chains must build before
 	// divergence is believed.
 	SplitConfirmDepth int32
+	// SplitConfirmSecs is how long a separation must persist before one chain
+	// alone having built past it confirms a split.
+	SplitConfirmSecs int64
+	// SplitSuspectSecs is how long it must persist before the user is warned that a
+	// split may be happening. Presentation only.
+	SplitSuspectSecs int64
 	// StallFactor multiplies a chain's own measured pace to decide when it has gone
 	// quiet.
 	StallFactor float64
@@ -53,6 +59,15 @@ const (
 	// catches — a view quietly following the wrong chain — can begin at any time,
 	// and a check that ran only at startup would miss all of them.
 	BranchReverifyBlocks = 100
+	// BranchRetryInterval paces the check while it has yet to confirm anything.
+	//
+	// The block cadence above is the right pace for *re*-checking a view already
+	// known to be where it should be, but it is the wrong pace for arriving at a
+	// first answer: a hundred blocks is most of a day, and until one arrives the
+	// user is told only that nothing has been checked. Two minutes costs at most a
+	// handful of block-hash lookups against two local nodes and bounds that gap to
+	// something nobody notices.
+	BranchRetryInterval = 2 * time.Minute
 )
 
 func (c Config) withDefaults() Config {
@@ -61,6 +76,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.SplitConfirmDepth < 1 {
 		c.SplitConfirmDepth = 3
+	}
+	if c.SplitConfirmSecs < 0 {
+		c.SplitConfirmSecs = 0
+	}
+	if c.SplitSuspectSecs < 0 {
+		c.SplitSuspectSecs = 0
 	}
 	if c.StallFactor <= 0 {
 		c.StallFactor = defaultStallFactor
@@ -104,6 +125,17 @@ type Sentinel struct {
 	// blocksSinceVerify counts new blocks on the watched chain since the last
 	// branch-identity check.
 	blocksSinceVerify int
+	// lastBranchAttempt is when the branch-identity check last ran, whatever it
+	// concluded. It paces the retries that run while the check has no answer, and
+	// is deliberately not the same thing as Checks.BranchVerifiedAt: a check that
+	// keeps failing must keep being retried, and pacing those off the last success
+	// would mean never retrying at all.
+	lastBranchAttempt time.Time
+	// branchConfirmedThisRun records that the check has passed since this process
+	// started. Persisted results are restored for display, but they are not allowed
+	// to stand in for a check against the nodes as they are configured *now* — the
+	// restart may be the operator having just repointed one of them.
+	branchConfirmedThisRun bool
 	// sfBackend and sqBackend are the last full health reports, kept for the
 	// dashboard. The decision logic uses only the state; peer counts and sync
 	// progress are context for a human.
@@ -128,7 +160,16 @@ type Checks struct {
 	DistinctVerified bool
 	// OnExpectedBranch reports the last branch-identity result.
 	OnExpectedBranch bool
+	// BranchVerifiedAt is when the check last *passed*; BranchCheckedAt is when it
+	// last reached any verdict at all.
+	//
+	// Two fields because they answer different questions and the display needs
+	// both. Asking BranchVerifiedAt alone whether the check has ever run reads a
+	// failing verdict — which never sets it — as "not checked yet", so a view
+	// proven to be on the wrong chain, with watching paused, was described to the
+	// user as nothing to worry about.
 	BranchVerifiedAt int64
+	BranchCheckedAt  int64
 	// Detail explains the most recent problem, in words safe to show a user.
 	Detail string
 }
@@ -381,13 +422,85 @@ func (s *Sentinel) Load(ctx context.Context) error {
 	}
 	state.TrustAnchor = int32(anchor)
 
+	if err := s.loadForkCandidate(ctx, &state); err != nil {
+		return err
+	}
+
+	// The branch-identity verdict is restored for the same reason the trust anchor
+	// is: a restart is not evidence about the chain, and dropping the result meant
+	// the dashboard fell back to "not yet checked" after every one. The value was
+	// being written and never read, so on a platform that restarts an app more
+	// often than the re-check cadence comes round — which is most of them — the
+	// assurance was unreachable in practice.
+	//
+	// Restored, but not trusted indefinitely: maybeReverifyBranch re-checks against
+	// the live nodes on the first tick regardless, and this only decides what is
+	// shown in the seconds before that answer arrives.
+	verifiedAt, err := s.store.GetMetaInt64(ctx, store.MetaSQBranchVerifiedAt, 0)
+	if err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	s.state = state
+	if verifiedAt > 0 {
+		s.checks.OnExpectedBranch = true
+		s.checks.BranchVerifiedAt = verifiedAt
+		s.checks.BranchCheckedAt = verifiedAt
+	}
 	s.mu.Unlock()
 
 	s.log.Info("restored recorded state",
 		slog.String("phase", string(state.Phase)),
-		slog.Bool("separation_known", state.Fork != nil))
+		slog.Bool("separation_known", state.Fork != nil),
+		slog.Bool("branch_previously_verified", verifiedAt > 0))
+	return nil
+}
+
+// loadForkCandidate restores how long the chains have been refusing to reconcile.
+//
+// Restored rather than restarted, because the clock it carries is what confirms a
+// split that the depth rule cannot reach, and a daemon restarted more often than
+// the threshold would otherwise never arrive. The next tick overwrites all of this
+// if the chains have since agreed, so a stale value cannot survive being wrong.
+func (s *Sentinel) loadForkCandidate(ctx context.Context, state *State) error {
+	since, err := s.store.GetMetaInt64(ctx, store.MetaForkCandidateSince, 0)
+	if err != nil {
+		return err
+	}
+	if since <= 0 {
+		return nil
+	}
+
+	raw, err := s.store.GetMeta(ctx, store.MetaForkCandidateHash)
+	if errors.Is(err, store.ErrNotFound) || raw == "" {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	hash, err := chainhash.NewHashFromStr(raw)
+	if err != nil {
+		// Unreadable rather than absent. Starting the clock again costs at most one
+		// threshold of delay; refusing to start costs the whole dashboard, and this
+		// value is a timing hint rather than something decisions rest on — unlike the
+		// trust anchor above, which does and so is fatal when it will not parse.
+		s.log.Warn("the recorded separation candidate is unreadable; timing it afresh",
+			slog.String("recorded", raw), slog.String("error", err.Error()))
+		return nil //nolint:nilerr // an unreadable hint is re-derived, not fatal
+	}
+	height, err := s.store.GetMetaInt64(ctx, store.MetaForkCandidateHeight, 0)
+	if err != nil {
+		return err
+	}
+	if height < 0 || height > math.MaxInt32 {
+		s.log.Warn("the recorded separation candidate is not at a possible height; timing it afresh",
+			slog.Int64("height", height))
+		return nil
+	}
+
+	state.ForkCandidate = &chainview.BlockRef{Hash: *hash, Height: int32(height)}
+	state.ForkCandidateSince = since
 	return nil
 }
 
@@ -487,7 +600,119 @@ func (s *Sentinel) tick(ctx context.Context) {
 	s.mu.Unlock()
 
 	s.apply(ctx, prev, next, effects)
+	s.persistForkCandidate(ctx, prev, next)
+	s.announceSuspicion(prev, next)
 	s.maybeReverifyBranch(ctx, next, effects)
+}
+
+// persistForkCandidate records the separation the chains are currently refusing to
+// reconcile across, and since when.
+//
+// Written from the shell by comparing states rather than announced as an effect,
+// because nothing reacts to it: it is a clock being kept, not a change anyone needs
+// telling about. Only writes when it moves, so a steady disagreement costs one
+// write when it starts and none afterwards.
+func (s *Sentinel) persistForkCandidate(ctx context.Context, prev, next State) {
+	if sameCandidate(prev, next) {
+		return
+	}
+
+	ctx, cancel := writeCtx(ctx)
+	defer cancel()
+
+	hash, height := "", int64(0)
+	if next.ForkCandidate != nil {
+		hash = next.ForkCandidate.Hash.String()
+		height = int64(next.ForkCandidate.Height)
+	}
+	for key, write := range map[string]func() error{
+		store.MetaForkCandidateHash:   func() error { return s.store.SetMeta(ctx, store.MetaForkCandidateHash, hash) },
+		store.MetaForkCandidateHeight: func() error { return s.store.SetMetaInt64(ctx, store.MetaForkCandidateHeight, height) },
+		store.MetaForkCandidateSince:  func() error { return s.store.SetMetaInt64(ctx, store.MetaForkCandidateSince, next.ForkCandidateSince) },
+	} {
+		if err := write(); err != nil {
+			s.log.Debug("could not record the separation candidate",
+				slog.String("key", key), slog.String("error", err.Error()))
+		}
+	}
+
+	if next.ForkCandidateSince > 0 && prev.ForkCandidateSince == 0 {
+		s.log.Info("the two chains are holding different blocks",
+			slog.Int("separated_after_height", int(next.ForkCandidate.Height)))
+	}
+}
+
+// announceSuspicion publishes the early warning when it starts and when it ends.
+//
+// Published rather than merely displayed because on the platforms this runs on a
+// warning that is not an alert reaches nobody: the wrapper announces what it finds
+// in the alert list, and the dashboard is somewhere a user has to think to go. The
+// whole point of saying "this may be a split" early is lost if it waits to be
+// looked at.
+//
+// Only on the edges, so a disagreement standing for hours costs two events rather
+// than one per poll.
+func (s *Sentinel) announceSuspicion(prev, next State) {
+	if prev.SplitSuspected == next.SplitSuspected {
+		return
+	}
+	// Silent once a split is confirmed, in *both* directions.
+	//
+	// Saying "this may be a split" alongside "the chains have separated" is two
+	// notifications about one event. Worse is the other direction: the tracked
+	// candidate clears the moment the chains agree at a tip, and without this guard
+	// that would announce "what looked like it might be a split has passed" while
+	// the daemon was still reporting a confirmed split — the two loudest things it
+	// can say, contradicting each other. A confirmed split is announced, and later
+	// resolved, by the phase transitions alone.
+	if next.Phase == PhaseSplit || next.Phase == PhaseResolving || next.Phase.Resolved() {
+		return
+	}
+
+	ev := bus.SplitSuspected{Suspected: next.SplitSuspected}
+	if next.SplitSuspected {
+		ev.Since = earliestNonZero(next.DisagreementSince, next.ForkCandidateSince)
+		if d := next.Disagreement; d != nil {
+			ev.Height, ev.SFHash, ev.SQHash = d.Height, d.SFHash.String(), d.SQHash.String()
+		}
+		s.log.Warn("the two chains may be splitting",
+			slog.Int64("since", ev.Since), slog.Int("height", int(ev.Height)))
+	} else {
+		s.log.Info("the chains agree again; the possible split has passed")
+	}
+	s.publish(ev)
+}
+
+// earliestNonZero picks the earlier of two clocks, ignoring ones never started.
+//
+// The earlier, not the first listed: the two notice the same disagreement by
+// different routes and either may see it first, so preferring one by position
+// would report a warning as newer than it is.
+func earliestNonZero(a, b int64) int64 {
+	switch {
+	case a == 0:
+		return b
+	case b == 0:
+		return a
+	case b < a:
+		return b
+	default:
+		return a
+	}
+}
+
+func sameCandidate(a, b State) bool {
+	if a.ForkCandidateSince != b.ForkCandidateSince {
+		return false
+	}
+	switch {
+	case a.ForkCandidate == nil && b.ForkCandidate == nil:
+		return true
+	case a.ForkCandidate == nil || b.ForkCandidate == nil:
+		return false
+	default:
+		return a.ForkCandidate.Hash == b.ForkCandidate.Hash
+	}
 }
 
 // writeCtx returns a context for storage writes that survives shutdown.
@@ -513,6 +738,8 @@ func (s *Sentinel) observe(ctx context.Context) Observation {
 	obs := Observation{
 		At:                s.now().Unix(),
 		SplitConfirmDepth: s.cfg.SplitConfirmDepth,
+		SplitConfirmSecs:  s.cfg.SplitConfirmSecs,
+		SplitSuspectSecs:  s.cfg.SplitSuspectSecs,
 		StallFactor:       s.cfg.StallFactor,
 		DivergenceHeight:  s.cfg.DivergenceHeight,
 		ReorgMargin:       s.cfg.ReorgMargin,
@@ -534,6 +761,12 @@ func (s *Sentinel) observe(ctx context.Context) Observation {
 	obs.SFAncestry = s.recentHashes(ctx, store.BranchSF)
 	obs.SQAncestry = s.recentHashes(ctx, store.BranchSQ)
 
+	// Identical tips settle it without asking anything: the chains agree, and that
+	// is a comparison having been made rather than one having been skipped.
+	if obs.SFTip != nil && obs.SQTip != nil && obs.SFTip.Hash == obs.SQTip.Hash {
+		obs.SharedHeightAgreed = true
+	}
+
 	// The separation-point search is I/O, so it happens here and its result is
 	// handed to the decision logic.
 	if obs.SFTip != nil && obs.SQTip != nil && obs.SFTip.Hash != obs.SQTip.Hash {
@@ -552,8 +785,55 @@ func (s *Sentinel) observe(ctx context.Context) Observation {
 			s.log.Warn("searching for where the chains separated failed",
 				slog.String("error", err.Error()))
 		}
+		obs.Disagreement, obs.SharedHeightAgreed = s.compareAtSharedHeight(ctx, *obs.SFTip, *obs.SQTip)
 	}
 	return obs
+}
+
+// compareAtSharedHeight asks both nodes for their block at one height they both
+// reach, and reports the answer when it differs.
+//
+// **The check a user would do by hand, done by the daemon.** Everything else here
+// learns about a separation by walking back from the two tips, which is the only
+// way to find where they parted — and is also a walk that fails against a pruned
+// view or a separation older than its budget, leaving nothing to report at all.
+// Two lookups at one height cannot fail that way, and what they return is directly
+// comparable with any block explorer, which is what makes the answer checkable
+// rather than merely asserted.
+//
+// The lower of the two tips, because that is the highest block both chains are
+// certain to have. Comparing at the taller one would read as a disagreement every
+// time a view was a block behind.
+// Returns the disagreement when the two answers differ, and separately whether a
+// comparison happened at all — a node that would not answer must not be reported as
+// having agreed.
+func (s *Sentinel) compareAtSharedHeight(
+	ctx context.Context, sfTip, sqTip chainview.BlockMeta,
+) (*HeightDisagreement, bool) {
+	height := sfTip.Height
+	if sqTip.Height < height {
+		height = sqTip.Height
+	}
+	if height < 0 {
+		return nil, false
+	}
+
+	sfHash, err := s.sf.BlockHashByHeight(ctx, height)
+	if err != nil {
+		s.log.Debug("could not read your node's block for the shared-height comparison",
+			slog.Int("height", int(height)), slog.String("error", err.Error()))
+		return nil, false
+	}
+	sqHash, err := s.sq.BlockHashByHeight(ctx, height)
+	if err != nil {
+		s.log.Debug("could not read the other chain's block for the shared-height comparison",
+			slog.Int("height", int(height)), slog.String("error", err.Error()))
+		return nil, false
+	}
+	if sfHash == sqHash {
+		return nil, true
+	}
+	return &HeightDisagreement{Height: height, SFHash: sfHash, SQHash: sqHash}, false
 }
 
 func (s *Sentinel) readView(
@@ -756,6 +1036,17 @@ func (s *Sentinel) publish(e bus.Event) {
 // Repeated because the failure it catches can begin at any time: a view's peers
 // may all upgrade, leaving it quietly following the same chain as the user's own
 // node. A check that ran only at startup would miss every such case.
+//
+// **But a check that runs only every hundred blocks misses the beginning.** The
+// block cadence alone left roughly seventeen hours after each start in which the
+// check had never run, the phase had not moved, and the dashboard therefore had
+// nothing to report — which is how an installation could sit through the opening
+// blocks of a real split still saying it had not looked. So an unresolved check
+// retries on a short clock until it produces an answer, and only then falls back
+// to the block cadence. Unresolved covers three cases that all need the same
+// treatment: never run, run but unable to tell, and run and failed. The last
+// matters most — watching is paused there, and retrying is the only thing that
+// ever lifts it.
 func (s *Sentinel) maybeReverifyBranch(ctx context.Context, st State, effects []Effect) {
 	justSplit := false
 	for _, e := range effects {
@@ -764,16 +1055,21 @@ func (s *Sentinel) maybeReverifyBranch(ctx context.Context, st State, effects []
 		}
 	}
 
+	now := s.now()
 	s.mu.RLock()
 	due := s.blocksSinceVerify >= BranchReverifyBlocks
+	unresolved := !s.branchConfirmedThisRun || !s.checks.OnExpectedBranch
+	retryDue := unresolved &&
+		(s.lastBranchAttempt.IsZero() || !now.Before(s.lastBranchAttempt.Add(BranchRetryInterval)))
 	s.mu.RUnlock()
 
-	if !justSplit && !due {
+	if !justSplit && !due && !retryDue {
 		return
 	}
 
 	s.mu.Lock()
 	s.blocksSinceVerify = 0
+	s.lastBranchAttempt = now
 	s.mu.Unlock()
 
 	err := chainview.VerifyBranch(ctx, s.sf, s.sq, st.TrustAnchor, st.Fork)
@@ -781,23 +1077,40 @@ func (s *Sentinel) maybeReverifyBranch(ctx context.Context, st State, effects []
 	case err == nil:
 		s.mu.Lock()
 		s.checks.OnExpectedBranch = true
-		s.checks.BranchVerifiedAt = s.now().Unix()
+		s.checks.BranchVerifiedAt = now.Unix()
+		s.checks.BranchCheckedAt = now.Unix()
 		s.checks.Detail = ""
+		s.branchConfirmedThisRun = true
 		wasPaused := s.paused
 		s.paused = false
 		s.mu.Unlock()
 		if wasPaused {
 			s.log.Info("the second view is on the expected chain again; watching resumed")
 		}
-		if err := s.store.SetMetaInt64(ctx, store.MetaSQBranchVerifiedAt, s.now().Unix()); err != nil {
+		if err := s.store.SetMetaInt64(ctx, store.MetaSQBranchVerifiedAt, now.Unix()); err != nil {
 			s.log.Debug("could not record the verification time", slog.String("error", err.Error()))
 		}
 
 	case errors.Is(err, chainview.ErrCannotVerifyBranch):
 		// Not enough history yet. Expected in the first blocks of a split, and not a
-		// reason to stop.
+		// reason to stop — but it is also not a verdict, so nothing is recorded and
+		// the retry clock above brings us back shortly.
 		s.log.Debug("not enough history to check the second view's chain yet",
 			slog.String("detail", err.Error()))
+
+	case !errors.Is(err, chainview.ErrWrongBranch):
+		// A node that would not answer has not disagreed about anything. VerifyBranch
+		// is careful to keep the two apart, and this used to throw that away by
+		// treating everything that was not "cannot verify" as proof of the wrong
+		// chain — so a busy or still-starting node paused watching and was announced
+		// as following the wrong chain, which is a far more alarming thing than what
+		// had actually happened.
+		//
+		// Reaching this at all is now normal rather than rare: the check runs within
+		// the first minutes of a start, which is exactly when the second node is most
+		// likely to still be opening its RPC socket.
+		s.log.Warn("could not check which chain the second view follows",
+			slog.String("error", err.Error()))
 
 	default:
 		// Watching pauses. Scanning the wrong chain produces a clean report about a
@@ -805,9 +1118,22 @@ func (s *Sentinel) maybeReverifyBranch(ctx context.Context, st State, effects []
 		// — the user would be told they are covered while the exposure went unseen.
 		s.mu.Lock()
 		s.checks.OnExpectedBranch = false
+		// A verdict was reached, so it is stamped even though it is a bad one. This
+		// is what the dashboard reads to tell "checked, and wrong" from "not checked
+		// yet", and leaving it unset described a paused daemon as having nothing to
+		// report.
+		s.checks.BranchCheckedAt = now.Unix()
 		s.checks.Detail = "the second view is not on the chain it should be; watching is paused"
+		s.branchConfirmedThisRun = false
 		s.paused = true
 		s.mu.Unlock()
+
+		// The recorded pass is cleared too. It says "last known good", and carrying a
+		// stale one across a restart would show green for the first tick after every
+		// start of a daemon that is, right now, watching the wrong chain.
+		if err := s.store.SetMetaInt64(ctx, store.MetaSQBranchVerifiedAt, 0); err != nil {
+			s.log.Debug("could not clear the verification time", slog.String("error", err.Error()))
+		}
 
 		s.log.Error("the second chain view is not following the expected chain; watching paused "+
 			"because scanning the wrong chain would look like safety",

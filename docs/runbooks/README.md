@@ -5,7 +5,7 @@ moment it is needed — short, and assuming you are in a hurry.
 
 | | |
 |---|---|
-| [The chains have separated](chains-separated.md) | Forktower says a split is real. What now |
+| [The chains have separated](chains-separated.md) | Forktower says a split is real, or that one may be starting. What now |
 | [A channel is at risk](channel-at-risk.md) | A countdown is running on the other chain |
 | [The other chain is unreachable](other-chain-unreachable.md) | The second node cannot see anything |
 | [Forktower is not sure](not-sure.md) | It is reporting that it cannot tell |

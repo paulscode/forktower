@@ -264,7 +264,16 @@ func TestTheDaemonWatchesTheOtherChain(t *testing.T) {
 func TestARescanRediscoversWhatWasWipedFromTheRecord(t *testing.T) {
 	t.Parallel()
 
-	h := newHarnessWith(t, nil, func(d *app.Deps) {
+	h := newHarnessWith(t, func(_ *config.Config, sf, sq *chainviewtest.View) {
+		// The two views genuinely separate, because the recorded split below says
+		// they have. A fabricated separation point over two identical chains is the
+		// exact condition the branch-identity check exists to catch — it means the
+		// second view is following the first and watching nothing — so the daemon is
+		// right to pause on it, and a fixture that asks for a rescan has to describe
+		// a split that could actually have happened.
+		sf.Extend("ours", 5)
+		sq.Extend("theirs", 5)
+	}, func(d *app.Deps) {
 		d.LNSources = []registry.Source{}
 	})
 
@@ -272,7 +281,10 @@ func TestARescanRediscoversWhatWasWipedFromTheRecord(t *testing.T) {
 	// the daemon runs, for the reason in the test below.
 	st := openDaemonStore(t, h)
 	if err := st.SaveSplitState(context.Background(), store.Split{
-		State: store.StateSplit, ForkHeight: 1, ForkHash: "aa", DetectedAt: 1,
+		State:      store.StateSplit,
+		ForkHeight: sharedHistory,
+		ForkHash:   chainviewtest.TaggedHash("shared", sharedHistory).String(),
+		DetectedAt: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}

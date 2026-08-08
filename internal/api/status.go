@@ -25,8 +25,28 @@ type Status struct {
 type SplitStatus struct {
 	State string `json:"state"`
 	// Fork is where the chains separated, once that is known.
-	Fork     *ForkPoint            `json:"fork"`
-	Branches map[string]BranchInfo `json:"branches"`
+	Fork *ForkPoint `json:"fork"`
+	// ForkCandidate is where they are currently disagreeing, before that has been
+	// confirmed as a split. Separate from Fork so the two can never be confused: one
+	// is a finding the daemon stands behind and anchors rescans to, the other is
+	// what it is presently looking at.
+	ForkCandidate *ForkPoint `json:"fork_candidate,omitempty"`
+	// Disagreement is the two chains' own answers at one height, side by side.
+	//
+	// Included because it is the one thing on this screen a user can verify without
+	// trusting the daemon at all: open any block explorer at that height and see
+	// which hash it shows. Everything else here asks to be believed.
+	Disagreement *HeightDisagreement   `json:"disagreement,omitempty"`
+	Branches     map[string]BranchInfo `json:"branches"`
+}
+
+// HeightDisagreement is what each chain says is the block at one height.
+type HeightDisagreement struct {
+	Height int32  `json:"height"`
+	SFHash string `json:"sf_hash"`
+	SQHash string `json:"sq_hash"`
+	// Since is when the two were first seen to differ here.
+	Since int64 `json:"since"`
 }
 
 // ForkPoint locates the separation.
@@ -76,9 +96,16 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			SFHealth:        state.SFHealth,
 			SQHealth:        state.SQHealth,
 			Paused:          s.sentinel.Paused(),
-			PausedSince:     checks.BranchVerifiedAt,
+			PausedSince:     checks.BranchCheckedAt,
 			AlertsReachable: alertsReachable(readiness),
 			FailingChecks:   blockingFailures(readiness),
+			// Either source counts as "the chains differ": the separation search finds
+			// where, the direct comparison proves that. Reading only the first meant a
+			// failed search left the screen with nothing to say.
+			Diverging: state.Fork == nil &&
+				(state.ForkCandidate != nil || state.Disagreement != nil),
+			DivergingSince: firstOf(state.ForkCandidateSince, state.DisagreementSince),
+			SplitSuspected: state.Fork == nil && state.SplitSuspected,
 		}),
 		Split: splitStatus(state),
 		Views: map[string]View{
@@ -103,6 +130,21 @@ func alertsReachable(items []ReadinessItem) bool {
 	return true
 }
 
+// firstOf returns the earliest non-zero of the two clocks, so "since" reflects
+// whichever noticed the disagreement first rather than whichever is listed first.
+func firstOf(a, b int64) int64 {
+	switch {
+	case a == 0:
+		return b
+	case b == 0:
+		return a
+	case b < a:
+		return b
+	default:
+		return a
+	}
+}
+
 func splitStatus(st sentinel.State) SplitStatus {
 	out := SplitStatus{
 		State:    string(st.Phase),
@@ -115,8 +157,32 @@ func splitStatus(st sentinel.State) SplitStatus {
 			DetectedAt: st.DetectedAt,
 		}
 	}
-	out.Branches[string(chainview.BranchSF)] = branchInfo(st.SFTip, st.Fork, st.SFCadence)
-	out.Branches[string(chainview.BranchSQ)] = branchInfo(st.SQTip, st.Fork, st.SQCadence)
+	if st.Fork == nil && st.ForkCandidate != nil {
+		out.ForkCandidate = &ForkPoint{
+			Hash:       st.ForkCandidate.Hash.String(),
+			Height:     st.ForkCandidate.Height,
+			DetectedAt: st.ForkCandidateSince,
+		}
+	}
+	if st.Disagreement != nil {
+		out.Disagreement = &HeightDisagreement{
+			Height: st.Disagreement.Height,
+			SFHash: st.Disagreement.SFHash.String(),
+			SQHash: st.Disagreement.SQHash.String(),
+			Since:  st.DisagreementSince,
+		}
+	}
+
+	// Measured against whichever separation is known. Passing only the confirmed
+	// fork reported both chains as nought blocks past a separation while they were
+	// visibly drifting apart, which is the one number on this screen that says how
+	// far apart they have got.
+	fork := st.Fork
+	if fork == nil {
+		fork = st.ForkCandidate
+	}
+	out.Branches[string(chainview.BranchSF)] = branchInfo(st.SFTip, fork, st.SFCadence)
+	out.Branches[string(chainview.BranchSQ)] = branchInfo(st.SQTip, fork, st.SQCadence)
 	return out
 }
 

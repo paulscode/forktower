@@ -1076,3 +1076,58 @@ test('an unknown platform gets no invented menu path', () => {
   assert.strictEqual(byID['tower-steps'].textContent.trim(), '',
     'steps were shown for a platform with none');
 });
+
+// While a split is only suspected there is no `fork`, and everything in Advanced
+// used to be gated on it — so for the whole time somebody is most likely to be
+// looking, the daemon knew where the chains had parted, how far each had gone, and
+// what each said the disputed block was, and showed none of it.
+test('a suspected split shows where the chains parted and what each says', () => {
+  // The real response, committed by a test in internal/api. Building the object
+  // here instead would agree with itself whatever the Go side calls these fields,
+  // which is the rename that empties this panel with nothing failing.
+  const status = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'testdata', 'status-suspected.json'), 'utf8'));
+
+  app.renderHeadline(status.headline);
+  app.renderAdvanced(status);
+  const advanced = textOf(byID['branches']);
+
+  assert.ok(advanced.includes(String(status.split.fork_candidate.height)),
+    'the separation the daemon is looking at is not shown');
+  assert.ok(advanced.includes(status.split.disagreement.sf_hash),
+    "your own chain's answer for the disputed block is not shown");
+  assert.ok(advanced.includes(status.split.disagreement.sq_hash),
+    "the other chain's answer for the disputed block is not shown");
+  // Both together are what makes this checkable against a block explorer; either
+  // one alone is just an assertion.
+  assert.ok(status.split.disagreement.sf_hash !== status.split.disagreement.sq_hash,
+    'the fixture does not actually describe a disagreement');
+  assert.ok(advanced.includes(String(status.split.branches.sf.since_fork_depth)) &&
+    advanced.includes(String(status.split.branches.sq.since_fork_depth)),
+    'how far each chain has gone past the separation is not shown');
+  // It must not read as settled: the daemon has not committed to this.
+  assert.ok(advanced.includes('not yet'),
+    'an unconfirmed separation is presented as a finding');
+  // And the headline says so above the fold, not only in Advanced.
+  assert.ok(!byID['headline-detail'].textContent.includes('same chain'),
+    'the headline claimed the chains agree');
+});
+
+// And a confirmed split still reads as a finding rather than a question.
+test('a confirmed split is not described as merely suspected', () => {
+  const status = {
+    split: {
+      state: 'SPLIT',
+      fork: { hash: 'ff', height: 961631, detected_at: 1790000000 },
+      branches: { sf: {}, sq: {} },
+    },
+    views: {},
+  };
+
+  app.renderAdvanced(status);
+  const advanced = textOf(byID['branches']);
+  assert.ok(advanced.includes('Where the chains separated'),
+    'a confirmed separation lost its heading');
+  assert.ok(!advanced.includes('not yet'),
+    'a confirmed separation is hedged as though it were not');
+});

@@ -145,7 +145,7 @@ func New(
 		now:    now,
 		log:    log,
 		events: b.Subscribe(SubscriberName,
-			bus.KindSplitStateChanged, bus.KindViewHealthChanged,
+			bus.KindSplitStateChanged, bus.KindSplitSuspected, bus.KindViewHealthChanged,
 			bus.KindFundingSpent, bus.KindMempoolSighting, bus.KindSpendReorgedOut,
 			bus.KindDeadlineEscalated, bus.KindDeadlineResolved,
 			bus.KindDeadlineExpiredLoss,

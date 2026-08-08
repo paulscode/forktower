@@ -118,19 +118,60 @@ type Observation struct {
 	// tell", which are different pieces of evidence.
 	ForkSearchFailed bool
 
+	// Disagreement is a direct comparison of the two views' block hashes at one
+	// height they both reach, or nil when they agreed there or it could not be read.
+	//
+	// Everything else about a separation is learned by walking back from the two
+	// tips, which is the only way to find *where* they parted — but it is also a
+	// walk that can fail, on a pruned view or a separation older than the search
+	// allows, and when it fails nothing else notices anything at all. Asking each
+	// node for its hash at one shared height cannot fail that way: it is two
+	// lookups, it needs no history, and it answers the one question a user would
+	// ask by hand. It is also the number they can check against a block explorer,
+	// which is why it is carried through to the screen rather than only used here.
+	Disagreement *HeightDisagreement
+	// SharedHeightAgreed is true only when that comparison was actually made and
+	// came back equal.
+	//
+	// A separate field because a nil Disagreement means two opposite things —
+	// "asked, and they matched" and "could not ask" — and only the first ends a
+	// disagreement. Inferring it from the surrounding fields instead let a single
+	// failed lookup read as reconciliation and wipe a standing disagreement,
+	// restarting a clock that is supposed to measure how long one has lasted.
+	SharedHeightAgreed bool
+
 	// OperatorOutcome, when set, is an operator recording which chain persisted.
 	// Only meaningful while resolving.
 	OperatorOutcome Phase
 
 	// Configuration, supplied per tick so this file need not read it.
 	SplitConfirmDepth int32
-	StallFactor       float64
+	// SplitConfirmSecs is how long a disagreement must persist before it is
+	// believed on the strength of one chain alone having built past it.
+	SplitConfirmSecs int64
+	// SplitSuspectSecs is how long a disagreement must persist before the user is
+	// told it may be a split. Presentation only: it confirms nothing and starts no
+	// countdown, it decides when a factual note becomes a warning.
+	SplitSuspectSecs int64
+	StallFactor      float64
 	// DivergenceHeight is the first height at which the two rule sets could
 	// disagree, or zero when unknown.
 	DivergenceHeight int32
 	// ReorgMargin is the safety margin below the user's tip when bounding how far
 	// their chain is treated as already verified.
 	ReorgMargin int32
+}
+
+// HeightDisagreement is the two views answering "what is the block at height N?"
+// differently.
+//
+// The plainest evidence of a split there is, and the only one a user can check for
+// themselves in a few seconds against any block explorer. Both hashes are kept, not
+// just the fact that they differ, because "they disagree" is something to be taken
+// on trust and "yours is X, theirs is Y" is something to be verified.
+type HeightDisagreement struct {
+	Height         int32
+	SFHash, SQHash chainhash.Hash
 }
 
 // State is everything the decision logic remembers between ticks.
@@ -144,6 +185,36 @@ type State struct {
 	// ForkCandidate is the most recent search result while still armed — a
 	// separation that has not yet persisted long enough to be believed.
 	ForkCandidate *chainview.BlockRef
+	// ForkCandidateSince is when the chains were first seen to have *both* built
+	// past the current candidate, and have done so without interruption since. Zero
+	// whenever that is not the case.
+	//
+	// The clock this starts is the only evidence that reaches a stalling chain. The
+	// depth rule needs both sides to keep producing blocks, so a user whose own node
+	// is on the side that has slowed to a crawl — the side whose owner most needs
+	// telling — could wait a very long time for it. How long two chains have
+	// refused to reconcile does not depend on either of them making progress.
+	ForkCandidateSince int64
+	// Disagreement is the direct hash comparison, and DisagreementSince is when the
+	// two views were first seen to differ at a shared height without interruption.
+	//
+	// Kept beside the separation candidate rather than folded into it because they
+	// fail independently: the walk that finds a separation point can come up short
+	// while a comparison at one height still proves the chains differ. That case
+	// used to leave the daemon with nothing to say.
+	Disagreement      *HeightDisagreement
+	DisagreementSince int64
+
+	// SplitSuspected means the chains are disagreeing in a way that is worth
+	// warning about, without that having been confirmed.
+	//
+	// Kept apart from the phase deliberately. The phase is what the daemon commits
+	// to — it fixes a separation point, anchors rescans and decides which channels
+	// count as exposed — so it is right to be slow. What the *user* is told need not
+	// wait for any of that, and must not: anyone can open a block explorer and see
+	// two chains, and software that stays quiet through that has taught them it is
+	// not worth reading.
+	SplitSuspected bool
 	// DetectedAt is when the split was confirmed, in unix seconds.
 	DetectedAt int64
 
@@ -250,8 +321,22 @@ func Step(prev State, obs Observation) (State, []Effect) {
 	var effects []Effect
 
 	effects = append(effects, trackHealth(&next, obs)...)
+	// Before the blocks, so that this tick's blocks are measured against this
+	// tick's separation point rather than the previous one's.
+	trackDisagreement(&next, obs)
+	trackForkCandidate(&next, obs)
 	effects = append(effects, trackBlocks(&next, obs)...)
 	effects = append(effects, trackTrustAnchor(&next, obs)...)
+	// After the blocks, so it reads tips that are both current and *retained*.
+	//
+	// Reading this tick's observation instead made the answer depend on whether
+	// every view happened to answer this second: a node that dips into
+	// resynchronising — which one observed installation did every few minutes —
+	// reports no tip, the depths read as zero, and inside the first couple of
+	// minutes the warning would switch off and back on again. That is not a
+	// display flicker; each edge publishes, so it would have announced that the
+	// possible split had passed and then re-announced it, repeatedly.
+	next.SplitSuspected = suspectSplit(next, obs)
 
 	// The phase is decided last, so it sees this tick's blocks and health.
 	newPhase, detail := decidePhase(next, obs)
@@ -312,16 +397,165 @@ func trackHealth(next *State, obs Observation) []Effect {
 	return effects
 }
 
+// trackDisagreement maintains the direct hash comparison and how long it has held.
+//
+// Independent of the separation search on purpose. That search is the only thing
+// that can say *where* two chains parted, and it is rightly what a confirmed split
+// is anchored to — but it walks history, and a walk can come up short against a
+// pruned view or a separation older than its budget. This cannot: it is one lookup
+// per node at a height they both reach. When the walk fails, this is the whole of
+// what the daemon knows, and without it that was nothing.
+//
+// Cleared only on a comparison that came back equal, never on a tick that could not
+// compare, for the same reason the separation clock is: an unreadable node has not
+// reconciled with anything.
+func trackDisagreement(next *State, obs Observation) {
+	if obs.Disagreement == nil {
+		// Only a comparison that was made and came back equal ends a disagreement.
+		// Anything else is silence, and silence is not reconciliation.
+		if obs.SharedHeightAgreed {
+			next.Disagreement = nil
+			next.DisagreementSince = 0
+		}
+		return
+	}
+
+	found := *obs.Disagreement
+	moved := next.Disagreement == nil ||
+		next.Disagreement.SFHash != found.SFHash ||
+		next.Disagreement.SQHash != found.SQHash
+	next.Disagreement = &found
+	if moved || next.DisagreementSince == 0 {
+		next.DisagreementSince = obs.At
+	}
+}
+
+// trackForkCandidate maintains the current separation point and how long the two
+// chains have been refusing to reconcile across it.
+//
+// Runs every tick, which the previous arrangement did not: the candidate was
+// written only by applyPhase, and applyPhase runs only when the phase changes. So
+// while armed — the state a split actually begins in — it held whatever had been
+// found at the moment arming happened, which for a daemon that started next to two
+// agreeing chains is nothing at all. Every reader of it downstream was therefore
+// reading a value that never moved.
+//
+// **Mutual is the requirement, not merely a candidate.** A search returns a
+// separation point whenever the two tips differ, and one view simply being behind
+// the other satisfies that. Only when both chains hold a block the other does not
+// have they actually disagreed, and only then is there anything to time.
+//
+// **The clock stops only on evidence that the disagreement ended**, never on the
+// absence of evidence — the same rule the both-views-down grace period is built on,
+// and for the same reason. A view that is resynchronising reports no tip, and a
+// node briefly catching up after each new block is completely ordinary: one
+// observed installation did it every few minutes, all day. Treating that as "the
+// chains agree again" would restart the clock every few minutes, so a threshold
+// measured in tens of minutes would rarely be reached and one measured in hours
+// never — the rule would be present, tested, and dead.
+func trackForkCandidate(next *State, obs Observation) {
+	// Nothing was seen this tick, so nothing is concluded and the clock keeps
+	// running. A view that cannot be read has not reconciled with anything.
+	if obs.SFTip == nil || obs.SQTip == nil || obs.ForkSearchFailed {
+		return
+	}
+
+	mutual := obs.ForkCandidate != nil &&
+		obs.SFTip.Height > obs.ForkCandidate.Height &&
+		obs.SQTip.Height > obs.ForkCandidate.Height
+
+	if !mutual {
+		next.ForkCandidate = nil
+		next.ForkCandidateSince = 0
+		return
+	}
+
+	candidate := *obs.ForkCandidate
+	moved := next.ForkCandidate == nil || next.ForkCandidate.Hash != candidate.Hash
+	next.ForkCandidate = &candidate
+	// A separation point that moves is a different disagreement, so its clock
+	// starts again. Reorganisation churn shifts it about; a real split does not.
+	if moved || next.ForkCandidateSince == 0 {
+		next.ForkCandidateSince = obs.At
+	}
+}
+
+// suspectSplit reports whether a disagreement is worth warning about yet.
+//
+// Two ways in, because two quite different things are both worth saying early:
+//
+//   - it has outlasted a stale-block race. Two blocks found at once are reconciled
+//     by the next block on either side, so a disagreement still standing after a
+//     couple of minutes is already unusual.
+//
+//   - one chain has pulled ahead and the other has not followed. This is the
+//     signal a depth rule discards by insisting both sides advance, and it is the
+//     strongest thing available short of a rejected block: a node adopts a heavier
+//     valid chain within seconds of seeing it, so a view sitting behind one it can
+//     reach is either partitioned from it or refusing it, and both are what this
+//     software was installed to notice.
+//
+// Neither confirms anything. They decide when a calm note becomes a warning.
+// Reads the tips from the state rather than the observation, because the state
+// keeps the last tip each view reported and the observation only holds what
+// answered this second. A view that went quiet has not lost its chain, and this
+// must not conclude anything from the silence.
+func suspectSplit(s State, obs Observation) bool {
+	lasted := func(since int64) bool {
+		return obs.SplitSuspectSecs > 0 && since > 0 &&
+			obs.At-since >= obs.SplitSuspectSecs
+	}
+
+	// Two nodes answering "what is the block at height N?" differently, and going on
+	// doing so, is a split as far as anyone reading this can tell — and it holds
+	// whether or not the separation point was ever found. This is the rung that
+	// survives a failed search, where previously there was nothing to report.
+	if s.Disagreement != nil && lasted(s.DisagreementSince) {
+		return true
+	}
+
+	if s.ForkCandidate == nil || s.ForkCandidateSince == 0 {
+		return false
+	}
+	sfDepth := divergedDepth(tipHeight(s.SFTip), s.ForkCandidate.Height)
+	sqDepth := divergedDepth(tipHeight(s.SQTip), s.ForkCandidate.Height)
+	if sfDepth > 1 || sqDepth > 1 {
+		return true
+	}
+	return lasted(s.ForkCandidateSince)
+}
+
+func tipHeight(tip *chainview.BlockMeta) int32 {
+	if tip == nil {
+		return 0
+	}
+	return tip.Height
+}
+
+// separation is the point the chains are measured against: the recorded one once
+// a split is confirmed, and the candidate before that.
+//
+// Depths reported while armed were all zero without this, because the recorded
+// fork is only set at confirmation — so the dashboard showed a user watching two
+// chains visibly drift apart a divergence of nought blocks on both of them.
+func separation(s State) *chainview.BlockRef {
+	if s.Fork != nil {
+		return s.Fork
+	}
+	return s.ForkCandidate
+}
+
 // trackBlocks folds new blocks into the cadence estimates and reports them.
 func trackBlocks(next *State, obs Observation) []Effect {
 	var effects []Effect
 
+	fork := separation(*next)
 	if e, ok := trackBranch(chainview.BranchSF, obs.SFTip, &next.SFTip,
-		&next.SFCadence, &next.LastSFBlockAt, next.Fork, obs.At); ok {
+		&next.SFCadence, &next.LastSFBlockAt, fork, obs.At); ok {
 		effects = append(effects, e)
 	}
 	if e, ok := trackBranch(chainview.BranchSQ, obs.SQTip, &next.SQTip,
-		&next.SQCadence, &next.LastSQBlockAt, next.Fork, obs.At); ok {
+		&next.SQCadence, &next.LastSQBlockAt, fork, obs.At); ok {
 		effects = append(effects, e)
 	}
 	return effects
@@ -517,12 +751,15 @@ func decideFromUnarmed(s State, obs Observation) (phase Phase, detail string) {
 		return PhaseArmed, "both chains can be seen and they agree"
 	}
 
-	rejected, diverged := splitEvidence(s, obs)
+	rejected, diverged, sustained := splitEvidence(s, obs)
 	switch {
 	case rejected:
 		return PhaseSplit, "your node had already rejected a block from the other chain"
 	case diverged:
 		return PhaseSplit, "the chains had already separated before Forktower started"
+	case sustained:
+		return PhaseSplit, "the chains have been holding different blocks for long enough " +
+			"that this is not an ordinary reorganisation"
 	default:
 		// They disagree, but not yet by enough to tell a split from one node being
 		// briefly behind. Staying here is right: this is the state that says so.
@@ -535,12 +772,15 @@ func decideFromArmed(s State, obs Observation) (phase Phase, detail string) {
 		return PhaseArmed, ""
 	}
 
-	rejected, diverged := splitEvidence(s, obs)
+	rejected, diverged, sustained := splitEvidence(s, obs)
 	switch {
 	case rejected:
 		return PhaseSplit, "your node has rejected a block from the other chain"
 	case diverged:
 		return PhaseSplit, "both chains have built past the point where they separated"
+	case sustained:
+		return PhaseSplit, "the chains have gone on holding different blocks for long " +
+			"enough that this is not an ordinary reorganisation"
 	default:
 		return PhaseArmed, ""
 	}
@@ -559,28 +799,62 @@ func decideFromArmed(s State, obs Observation) (phase Phase, detail string) {
 //
 // divergedFar means both chains have built past the separation point by more than
 // ordinary reorganisation noise would explain.
-func splitEvidence(s State, obs Observation) (rejectedBlock, divergedFar bool) {
+//
+// divergedSustained is the same conclusion reached from one chain rather than
+// two, and it exists because divergedFar cannot be reached from one side.
+//
+// **Requiring both chains to advance discards the clearest evidence there is.** A
+// node adopts a heavier valid chain within seconds of seeing it. So a view holding
+// its own block while the other view has built several on top of a different one
+// is not a view that is lagging — it is one that cannot see that chain or will not
+// have it, and there is nothing else that produces that. Insisting the stalled side
+// also advance ties the alarm to the progress of the chain that has, by
+// hypothesis, stopped progressing; in a split with any real imbalance of hashing
+// power that is the user's own node, so the worse their side does, the longer they
+// wait to be told. That inverts the urgency exactly.
+//
+// The persistence requirement alongside it is what keeps this honest: relay is not
+// instant, and a view can legitimately be a block or two behind for a short while.
+// Minutes settle that. Nothing about a stale-block race survives them — it is
+// resolved by the next block on either side.
+func splitEvidence(s State, obs Observation) (rejectedBlock, divergedFar, divergedSustained bool) {
 	if s.SQTip != nil {
 		for _, tip := range obs.SFTips {
 			if invalidTipMatchesSQ(obs.SQAncestry, s.SQTip.Hash, tip) {
-				return true, false
+				return true, false, false
 			}
 		}
 	}
 
+	depth := obs.SplitConfirmDepth
+	if depth < 1 {
+		depth = 1
+	}
+
 	if obs.ForkCandidate != nil && s.SFTip != nil && s.SQTip != nil {
-		depth := obs.SplitConfirmDepth
-		if depth < 1 {
-			depth = 1
-		}
 		sfDepth := divergedDepth(s.SFTip.Height, obs.ForkCandidate.Height)
 		sqDepth := divergedDepth(s.SQTip.Height, obs.ForkCandidate.Height)
 		if sfDepth >= depth && sqDepth >= depth {
-			return false, true
+			return false, true, false
 		}
 	}
 
-	return false, false
+	// Read from the tracked candidate rather than this tick's search result: the
+	// question is how long *this* disagreement has stood, and only the tracked one
+	// carries that. It is non-zero only while both chains hold a block the other
+	// does not, so the mutual test is already behind us here.
+	if obs.SplitConfirmSecs <= 0 || s.ForkCandidateSince == 0 ||
+		obs.At-s.ForkCandidateSince < obs.SplitConfirmSecs {
+		return false, false, false
+	}
+	if s.ForkCandidate == nil {
+		return false, false, false
+	}
+	lead := divergedDepth(tipHeight(s.SFTip), s.ForkCandidate.Height)
+	if d := divergedDepth(tipHeight(s.SQTip), s.ForkCandidate.Height); d > lead {
+		lead = d
+	}
+	return false, false, lead >= depth
 }
 
 func decideFromSplit(s State, obs Observation) (phase Phase, detail string) {
@@ -622,7 +896,15 @@ func stalledBranch(s State, obs Observation, candidate Phase) bool {
 func applyPhase(s *State, to Phase, obs Observation) {
 	switch to {
 	case PhaseSplit:
-		if s.Fork == nil && obs.ForkCandidate != nil {
+		// The tracked candidate first, this tick's search second. When the split is
+		// confirmed by persistence the tracked one is the separation that persisted,
+		// and it is the one whose clock ran out; falling back to the search result
+		// covers the tick where a rejected branch settles it before any search has.
+		if s.Fork == nil && s.ForkCandidate != nil {
+			fork := *s.ForkCandidate
+			s.Fork = &fork
+			s.DetectedAt = obs.At
+		} else if s.Fork == nil && obs.ForkCandidate != nil {
 			fork := *obs.ForkCandidate
 			s.Fork = &fork
 			s.DetectedAt = obs.At
@@ -636,15 +918,10 @@ func applyPhase(s *State, to Phase, obs Observation) {
 		s.ResolvingCandidate = ""
 	case PhaseResolving:
 		s.ResolvingCandidate = resolvingCandidate(*s, obs)
-	case PhaseArmed:
-		if obs.ForkCandidate != nil {
-			candidate := *obs.ForkCandidate
-			s.ForkCandidate = &candidate
-		} else {
-			s.ForkCandidate = nil
-		}
-	case PhaseUnarmed, PhaseResolvedSFWon, PhaseResolvedSQWon:
-		// Nothing extra. A recorded outcome deliberately changes no behaviour.
+	case PhaseArmed, PhaseUnarmed, PhaseResolvedSFWon, PhaseResolvedSQWon:
+		// Nothing extra. A recorded outcome deliberately changes no behaviour, and
+		// the separation candidate is now maintained every tick by
+		// trackForkCandidate rather than only when the phase happens to move.
 	}
 	s.Phase = to
 }

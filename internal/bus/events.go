@@ -4,6 +4,7 @@ package bus
 // one cannot quietly mistype it and receive nothing.
 const (
 	KindSplitStateChanged   = "split.state_changed"
+	KindSplitSuspected      = "split.suspected"
 	KindSplitBranchExtended = "split.branch_extended"
 	KindViewHealthChanged   = "view.health_changed"
 	KindAlertRaised         = "alert.raised"
@@ -58,6 +59,32 @@ type SplitStateChanged struct {
 
 // Kind implements Event.
 func (SplitStateChanged) Kind() string { return KindSplitStateChanged }
+
+// SplitSuspected reports that the two chains are disagreeing in a way worth
+// warning about, before that has been confirmed as a split.
+//
+// A separate event from SplitStateChanged because it is deliberately raised
+// earlier and claims less. Anyone can see a fork on a block explorer the moment
+// there is one; a daemon that says nothing until it is certain has left the user
+// less informed than a web page, during the one event it exists for. Suspected is
+// the honest thing to say in between, and it has to travel to the alert layer to
+// be said at all — on the platforms this runs on, nothing reaches the user except
+// through a raised alert.
+type SplitSuspected struct {
+	// Suspected is false when the disagreement has ended without becoming a split,
+	// which closes the warning rather than leaving it standing.
+	Suspected bool `json:"suspected"`
+	// Height, SFHash and SQHash are the two chains' own answers at one height, when
+	// a direct comparison was available. They are what makes the warning checkable
+	// against any block explorer.
+	Height int32  `json:"height,omitempty"`
+	SFHash string `json:"sf_hash,omitempty"`
+	SQHash string `json:"sq_hash,omitempty"`
+	Since  int64  `json:"since,omitempty"`
+}
+
+// Kind implements Event.
+func (SplitSuspected) Kind() string { return KindSplitSuspected }
 
 // SplitBranchExtended reports a new block on one of the chains.
 type SplitBranchExtended struct {
@@ -286,6 +313,7 @@ func (DeadlineExpiredLoss) Kind() string { return KindDeadlineExpiredLoss }
 func AllKinds() []string {
 	return []string{
 		KindSplitStateChanged,
+		KindSplitSuspected,
 		KindSplitBranchExtended,
 		KindViewHealthChanged,
 		KindAlertRaised,

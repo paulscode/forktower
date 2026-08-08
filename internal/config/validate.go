@@ -286,6 +286,19 @@ func (c Config) validateSentinel() []string {
 		p = append(p, fmt.Sprintf(
 			"sentinel.split_confirm_depth %d is out of range [1, 100]", s.SplitConfirmDepth))
 	}
+	// Zero disables the persistence rule, leaving depth as the only route to a
+	// split. Allowed, because an operator may want exactly that, but it is not the
+	// default and it is not something to arrive at by mistyping a number.
+	if s.SplitConfirmSecs < 0 {
+		p = append(p, fmt.Sprintf(
+			"sentinel.split_confirm_secs %d is out of range (must be at least 0)",
+			s.SplitConfirmSecs))
+	}
+	if s.SplitSuspectSecs < 0 {
+		p = append(p, fmt.Sprintf(
+			"sentinel.split_suspect_secs %d is out of range (must be at least 0)",
+			s.SplitSuspectSecs))
+	}
 	if s.PollIntervalSecs < 1 {
 		p = append(p, fmt.Sprintf(
 			"sentinel.poll_interval_secs %d is out of range (must be at least 1)", s.PollIntervalSecs))
