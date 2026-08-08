@@ -325,6 +325,14 @@ noseedbackup=true
 # Nothing peers with this. It is not a Lightning node in any sense that matters;
 # it accepts watchtower sessions on the address below and does nothing else.
 nolisten=true
+# **And it does not go looking, either.** nolisten stops it accepting peers; it
+# does not stop lnd asking the DNS seeds for some at every start, failing to use
+# them, and logging `Unable to retrieve initial bootstrap peers` as an error.
+# Reported by a user reading the log — which is the problem: a recurring error
+# that is expected and harmless teaches people to skim past the ones that are
+# not. On a node routing through Tor those lookups and dials are not free
+# either, and they are for connections this tower never wants.
+nobootstrap=true
 # Forktower reads this to report on the tower. Loopback only: it is the same
 # container, and anything wider would publish an interface nobody needs.
 restlisten=127.0.0.1:${FORKTOWER_TOWER_LND_REST_PORT:-8090}

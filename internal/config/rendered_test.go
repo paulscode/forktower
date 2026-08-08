@@ -539,3 +539,49 @@ func TestTheOlderPackagingFallsBackToTheSiblingHostname(t *testing.T) {
 			"only one there is:\n%s", got)
 	}
 }
+
+// The companion tower does not go looking for Lightning peers.
+//
+// **Reported by a user reading their log.** `nolisten` stops the tower accepting
+// peers; it does not stop lnd asking the DNS seeds for some at every start,
+// failing to use them, and logging `Unable to retrieve initial bootstrap peers`
+// as an error. Harmless — the tower needs a chain backend and inbound watchtower
+// connections, and peers are neither — but a recurring error that is expected
+// teaches people to skim past the ones that are not. On a node routing through
+// Tor the lookups and dials are not free either.
+func TestTheTowerDoesNotHuntForPeersItDoesNotWant(t *testing.T) {
+	t.Parallel()
+	entrypoint := "../../docker_entrypoint.sh"
+	if _, err := os.Stat(entrypoint); err != nil {
+		t.Skipf("no entrypoint to run: %v", err)
+	}
+
+	dir := t.TempDir()
+	cmd := exec.Command("sh", entrypoint, "--render-only")
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"FORKTOWER_DATA_DIR=" + dir,
+		"FORKTOWER_SF_RPC_URL=http://127.0.0.1:8332",
+		"FORKTOWER_SF_RPC_USER=u",
+		"FORKTOWER_SF_RPC_PASS=p",
+		"FORKTOWER_TOWER_LND_ENABLED=true",
+		"FORKTOWER_TOWER_LND_BIND=0.0.0.0:9911",
+		// Without an address clients could dial, the entrypoint switches the
+		// tower off and writes no configuration at all.
+		"FORKTOWER_TOWER_LND_EXTERNAL_ADDR=abcdef.onion:9911",
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the entrypoint failed: %v\n%s", err, out)
+	}
+
+	conf, err := os.ReadFile(filepath.Join(dir, "tower", "lnd.conf"))
+	if err != nil {
+		t.Fatalf("the tower's configuration was not written: %v", err)
+	}
+	text := string(conf)
+	for _, want := range []string{"nobootstrap=true", "nolisten=true"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the tower's configuration is missing %q:\n%s", want, text)
+		}
+	}
+}
